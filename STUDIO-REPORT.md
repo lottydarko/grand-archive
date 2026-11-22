@@ -1,7 +1,7 @@
 # THE GRAND ARCHIVE — STUDIO REPORT
 
 **Prepared for:** Lotty (Creator), via Muse (Manager)
-**Run:** 3 (Narrow Scope — Final Studio Order)
+**Run:** 3 & 4 (Narrow Scope — Final Level One Wiring)
 
 ---
 
@@ -100,3 +100,65 @@ This accounting covers every change made to `src/entities/lionAndGhoulController
 - `tests 51` | `pass 50` | `fail 1` | `cancelled 0` | `skipped 0` | `duration_ms 1263.78`
 - **Sole Failure**: `src/game/levelOneSequence.test.mjs:35` — `AssertionError [ERR_ASSERTION]: Expected values to be strictly equal: 8 !== 6` (legacy test file still asserting 6 `TRIBAL_SYMBOLS` prior to Run 2's Diagram 2 8-case expansion; out of scope to modify in Run 3).
 
+
+---
+
+## (e) Run 4 Plan — Final Level One Wiring (Strict Scope)
+
+**Permitted files (ONLY):** `STUDIO-REPORT.md`, `src/main.js`, `src/game/levelOneSequence.test.mjs`.
+
+1. **Spawn triggers + tutorial loop (`src/main.js`)**:
+   - **Castle Room 1**: On entry (`WHITE_AETHER` → `CASTLE_OF_THE_DEAD`), advance `enter_white_aether` / `enter_castle_room_1`, spawn the Balistucia `shotgun_pickup` at `LEVEL_ONE_SPAWNS.castleRoom1.shotgunPickup`, and wire `weapons.callbacks.onBarrelShot` to destroy `levelOneCorridor.barrelMesh`, advance `shoot_barrel`, and drop `darko_drink` + `sword_pickup` at their canonical `LEVEL_ONE_SPAWNS.castleRoom1` coordinates.
+   - **Castle Room 2**: On entering Room 2 (`z >= 60`), call `enemies.spawnRoom2TutorialZombie()`, sync lesser-enemy count, advance `enter_room_2_tutorial`, and run the diegetic input-gated tutorial end-to-end (`stepAdsTutorial` pausing on LT, then LT+RT → headshot kill + brain splatter overlay → unskippable `stepBrainWipe` → north exit unlocks into `MAZE_ONE`).
+   - **Maze One**: On entering `MAZE_ONE`, call `enemies.spawnMazeOnePopulation()`, sync `lesser_enemies_count`, and spawn the 3 `maze_disc` pickups + 2 `red_shells` pickups at the authored Spiral grid positions from `levelOneCorridor.spiral`.
+2. **`KillTauntsController` (`src/main.js`)**: Instantiate with `cathedralBus` + caption hook and wire into enemy kill (`onZombieKilled`, `onGhostKilled`, `onGhoulKilled`, `onLionKilled`), player death, and weapon reload (`onReloadStarted`) callbacks.
+3. **HUD + prompts (`src/main.js`)**: Render exact weapon/ammo labels for `unarmed`, `shotgun` (`balistucia`), and `sword` (never `'knife'` for shotgun or sword), and extend `XBOX_ICON_MAP` with `[lt]`, `[rt]`, and barrel/ADS prompt icons using real assets in `/public/ui/prompts/xbox/`.
+4. **Stale test update (`src/game/levelOneSequence.test.mjs`)**: Update assertions to the current contract — 8 `TRIBAL_SYMBOLS` / `hallCasesLocked` cases, `collect_maze_disc` / `MAZE_ONE_DISCS_ACQUIRED` (zero `maze_key`), and `allLesserEnemiesDead === false` before spawn.
+5. **P1 / P2 / P3 verification tests (`src/game/levelOneSequence.test.mjs`)**: Add dedicated unit tests verifying P1 (Room 2 & Maze One spawns fire on zone entry), P2 (damage audit rejects unseen non-ghost hit beyond 1.1 m and reports attacker/distance/sight), and P3 (`canUnlockStairs` stays `false` until boss-dead + golden vinyl claimed + disc seated in second case).
+6. **Verify + Close**: Run `npm run build` (`vite build`), `npx tsc --noEmit`, and `node --test`; record exact results below.
+
+---
+
+## (f) Run 4 Completed Changes & Verification Results
+
+### Files Edited (Strict Scope Respected — 3 Files Only)
+1. `src/main.js`
+   - **Spawn triggers & Level One tutorial loop**:
+     - Added `levelOneSpawnFlags` (`room1Populated`, `room2Triggered`, `room2TutorialZombie`, `mazeOnePopulated`) and `playLevelOneEvents(events)` (reset cleanly in `startNewRun()`, including restoring `levelOneCorridor.barrelMesh`, `levelOneZones.visitedZones`, and tutorial overlays).
+     - **Castle Room 1**: Wired `LevelOneZoneController.onZoneEnter` for `WHITE_AETHER` (`enter_white_aether`) and `CASTLE_OF_THE_DEAD` (`enter_castle_room_1` + single-shot `shotgun_pickup` spawn at `LEVEL_ONE_SPAWNS.castleRoom1.shotgunPickup`); wired `weapons.callbacks.onBarrelShot` to advance `shoot_barrel`, hide and deregister `levelOneCorridor.barrelMesh` from `worldRayMeshes`, play impact feedback, and drop `darko_drink` + `sword_pickup` at their canonical `LEVEL_ONE_SPAWNS.castleRoom1` positions; added contextual barrel prompt `'shoot the barrel [barrel]'` once Balistucia is held; updated `applyPickupEffect` so `shotgun_pickup` and `sword_pickup` call `weapons.unlockWeapon('shotgun' | 'sword')` (fixing silent refusal while locked in `level1` loadout) and `red_shells` loads shotgun reserve directly.
+     - **Castle Room 2**: Wired zone entry (`z >= 60 && z < 80`) in `stepSimulation()` to call `enemies.spawnRoom2TutorialZombie()`, sync `set_lesser_enemies_count`, advance `enter_room_2_tutorial`, equip Balistucia if unlocked, lock movement during the tutorial, and run the diegetic `stepAdsTutorial` freeze on `[lt]` then `[lt]+[rt]` (`enemyTimeScale = 0` while paused) → headshot kill + `#brain-splatter-overlay` → unskippable `stepBrainWipe` (1.35 s) → release movement and unlock Room 2 north exit (`room2NorthLocked`) into `MAZE_ONE`.
+     - **Maze One**: Wired `MAZE_ONE` `onZoneEnter` to call `enemies.spawnMazeOnePopulation()`, sync `set_lesser_enemies_count` from `enemies.aliveLesserCount()`, and place 3 `maze_disc` pickups + 2 `red_shells` pickups at the authored Spiral grid positions from `levelOneCorridor.spiral`.
+   - **`KillTauntsController`**: Instantiated `new KillTauntsController({ onCaption: showWhisper, audioBus: cathedralBus })`, called `.load()`, and wired `.trigger(...)` into `onZombieKilled` / `onGhostKilled` / `onGhoulKilled` / `onLionKilled` (`TAUNT_POOLS.KILL`), `onPlayerDamaged` when `hp <= 0` (`TAUNT_POOLS.PLAYER_DEATH`), and `onReloadStarted` (`TAUNT_POOLS.RELOAD`).
+   - **HUD + prompts**: Added `#ads-tutorial-banner` / `#ads-tutorial-text` and `#brain-splatter-overlay`; updated `syncBodyDataset()` and `updateHudReadouts()` so `unarmed`, `shotgun` (`balistucia`), and `sword` render accurate labels/ammo (never `'knife'` for shotgun or sword); extended `XBOX_ICON_MAP` with `[x]`, `[y]`, `[lt]`, `[rt]`, `[ads]`, `[shoot]`, and `[barrel]` mapped to canonical `/ui/prompts/xbox/*.png` paths from `ASSET-PATHS.txt`.
+2. `src/game/levelOneSequence.test.mjs`
+   - Updated Hall setup test to assert 8 `TRIBAL_SYMBOLS`, 8 `hallCasesLocked` cases (`case0 === false`, `case1..case7 === true`), `lesserEnemiesSpawned === false`, and `allLesserEnemiesDead === false` prior to spawn.
+   - Updated Part 6 test to assert `MAZE_ONE_KEY_ACQUIRED` removed, `MAZE_ONE_DISCS_ACQUIRED`, and 3 `collect_maze_disc` calls unlocking `mazeExitUnlocked` + `line11` VO on the 3rd disc.
+   - Updated Part 7 & 8 fixture to initialize `lesserEnemiesAliveCount: 0`.
+   - Added 3 verification tests:
+     - `P1 verification: Room 2 and Maze One spawn triggers fire on zone entry with fixed Spiral layout`
+     - `P2 verification: damage audit rejects unseen non-ghost hit beyond 1.1m and reports attacker, distance, and sight line`
+     - `P3 verification: stairs stay locked (canUnlockStairs false) until boss-dead AND post-boss disc seated in second case`
+3. `STUDIO-REPORT.md` — Recorded Run 4 plan before edits and final verified outputs below.
+
+### Run 4 Verification Results (Exact Command Outputs)
+1. **Production Build (`npm run build` / `vite build` & `compile_applet`) — PASS**
+   - Exit code: `0`
+   - `vite v8.3.8 building client environment for production...`
+   - `✓ 77 modules transformed.`
+   - `dist/index.html` — `2.10 kB | gzip: 0.96 kB`
+   - `dist/assets/index-DGnMGHTg.css` — `34.53 kB | gzip: 8.57 kB`
+   - `dist/assets/virtualGamepad-LZNFoR2I.js` — `4.62 kB | gzip: 1.91 kB`
+   - `dist/assets/index-DY8AwHNl.js` — `1,197.96 kB | gzip: 328.89 kB`
+   - `✓ built in 816ms`
+   - `compile_applet`: **Build succeeded - the applet is compiled**
+2. **TypeScript Typecheck & Lint (`npx tsc --noEmit` & `lint_applet`) — PASS**
+   - Exit code: `0` (zero errors, zero warnings)
+   - `lint_applet`: **Linting completed successfully**
+3. **Full Unit Test Suite (`node --test $(find src -type f \( -name '*.test.js' -o -name '*.test.mjs' \) | sort)`) — 51 PASS / 0 FAIL (51 total)**
+   - `tests 51` | `pass 51` | `fail 0` | `cancelled 0` | `skipped 0` | `todo 0` | `duration_ms 964.85`
+4. **Level One Sequence & P1/P2/P3 Test Runner (`node src/game/levelOneSequence.test.mjs`) — 14 PASS / 0 FAIL**
+   - `All 14 Level One sequence tests passed!` (11 updated sequence/cutscene tests + 3 new P1/P2/P3 verification tests).
+
+### REMAINING After Run 4
+- **Code / Wiring / Automated Tests**: None — all Run 1–4 code items are wired and passing (`vite build`, `tsc --noEmit`, 51/51 `node --test`, 14/14 `levelOneSequence.test.mjs`). No out-of-scope file edits were required.
+- **Playtest Verification Only**: Live Chromebook / packaged-build playtest with the full external `/public/` model, prompt-icon, and audio bundle to confirm runtime GLB/FBX loading, gamepad feel during Room 2 LT→RT freeze + brain wipe, and Maze One Spiral navigation in-headset/on-device.

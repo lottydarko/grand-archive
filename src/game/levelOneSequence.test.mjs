@@ -12,8 +12,11 @@ import {
   stepAdsTutorial,
   stepBrainWipe,
   stepVillainCutscene,
+  canUnlockStairs,
 } from './levelOneSequence.js';
-import { LionBoss, LION_STATES } from '../entities/lionAndGhoulController.js';
+import { LionBoss, LION_STATES, validateEnemyDamage } from '../entities/lionAndGhoulController.js';
+import { LEVEL_ONE_ZONES, LevelOneZoneController } from '../world/levelOneZones.js';
+import { getSpiralMazeLayout, LEVEL_ONE_SPAWNS } from '../world/levelOneSpiral.js';
 
 let passed = 0;
 function test(name, fn) {
@@ -24,18 +27,23 @@ function test(name, fn) {
 
 console.log('Running Level One sequence & script verification tests...');
 
-test('Hall setup: case 0 (faces) unlocked, all other cases locked; tribal symbols carry NO text titles', () => {
+test('Hall setup: 8 cases (case0 unlocked, case1-case7 locked), 8 tribal symbols, allLesserEnemiesDead false before spawn', () => {
   const state = createLevelOneState();
   assert.equal(state.hallCasesLocked.case0, false, 'Faces case is unlocked');
-  assert.equal(state.hallCasesLocked.case1, true, 'Case 1 (a-thousand-ways) is locked');
-  assert.equal(state.hallCasesLocked.case2, true, 'Case 2 is locked');
-  assert.equal(state.hallCasesLocked.case5, true, 'Case 5 is locked');
+  for (let i = 1; i < 8; i++) {
+    assert.equal(state.hallCasesLocked[`case${i}`], true, `Case ${i} is locked at start`);
+  }
+  assert.equal(Object.keys(state.hallCasesLocked).length, 8, 'Hall has exactly 8 display cases');
 
-  // Tribal symbols test
-  assert.equal(TRIBAL_SYMBOLS.length, 6);
+  // Boss gate must NOT initialize as allLesserEnemiesDead before enemies spawn (§B.4)
+  assert.equal(state.lesserEnemiesSpawned, false, 'No lesser enemies marked spawned yet');
+  assert.equal(state.allLesserEnemiesDead, false, 'allLesserEnemiesDead is false before spawn');
+
+  // Tribal symbols test (8 glyphs, zero song text titles)
+  assert.equal(TRIBAL_SYMBOLS.length, 8);
   assert.equal(TRIBAL_SYMBOLS[0].glyph, '▲', 'Center triangle symbol corresponds to Faces');
   assert.equal(TRIBAL_SYMBOLS[1].glyph, '☉', 'Solar sigil corresponds to second case');
-  assert.ok(TRIBAL_SYMBOLS.every((s) => s.glyph && s.id), 'All cases have unique tribal symbol glyphs');
+  assert.ok(TRIBAL_SYMBOLS.every((s) => s.glyph && s.id), 'All 8 cases have unique tribal symbol glyphs');
 });
 
 test('Part 1: player picks up disc in Hall -> carry state -> unskippable placement animation', () => {
@@ -164,26 +172,36 @@ test('Part 4 & 5: Room 2 diegetic input-gated ADS tutorial + unskippable brain w
   assert.equal(res.events.some((e) => e.voKey === 'line10'), true, 'Maze One VO triggers');
 });
 
-test('Part 6: Maze One key pickup and exit door unlocking', () => {
+test('Part 6: Maze One 3-disc collection (no maze_key) unlocks maze exit on 3rd disc', () => {
+  assert.equal('MAZE_ONE_KEY_ACQUIRED' in LEVEL_ONE_STEPS, false, 'Legacy maze_key step removed');
+  assert.equal(LEVEL_ONE_STEPS.MAZE_ONE_DISCS_ACQUIRED, 'maze_one_discs_acquired');
+
   let state = {
     ...createLevelOneState(),
     step: LEVEL_ONE_STEPS.MAZE_ONE,
   };
 
-  let res = advanceLevelOne(state, 'pickup_maze_key');
+  let res = advanceLevelOne(state, 'collect_maze_disc');
   state = res.state;
-  assert.equal(state.mazeKeyPickedUp, true);
-  assert.equal(state.step, LEVEL_ONE_STEPS.MAZE_ONE_KEY_ACQUIRED);
+  assert.equal(state.mazeDiscsCollected, 1);
+  assert.equal(state.mazeExitUnlocked, false, 'Exit stays locked after 1/3 discs');
 
-  res = advanceLevelOne(state, 'unlock_maze_exit');
+  res = advanceLevelOne(state, 'collect_maze_disc');
   state = res.state;
-  assert.equal(state.mazeExitUnlocked, true);
+  assert.equal(state.mazeDiscsCollected, 2);
+  assert.equal(state.mazeExitUnlocked, false, 'Exit stays locked after 2/3 discs');
+
+  res = advanceLevelOne(state, 'collect_maze_disc');
+  state = res.state;
+  assert.equal(state.mazeDiscsCollected, 3);
+  assert.equal(state.step, LEVEL_ONE_STEPS.MAZE_ONE_DISCS_ACQUIRED);
+  assert.equal(state.mazeExitUnlocked, true, 'Exit unlocks on 3/3 Maze One discs');
   assert.equal(res.events.some((e) => e.voKey === 'line11'), true, 'Maze-end door VO triggers');
 });
 
 test('Part 7 & 8: Lion boss encounter (gunfire cannot kill, sword smites out of ammo) -> second case unlock', () => {
   let state = {
-    ...createLevelOneState(),
+    ...createLevelOneState({ lesserEnemiesAliveCount: 0 }),
     mazeExitUnlocked: true,
   };
 
@@ -501,6 +519,180 @@ test('Item 3: __archiveTest hooks contract (gate holds with lesser alive, first 
   assert.equal(hooks.getCutsceneState().beat, 5);
   assert.equal(hooks.getCutsceneState().phase, VILLAIN_CUTSCENE_PHASE.DONE);
   assert.equal(hooks.getCutsceneState().bossFightStarted, true);
+});
+
+test('P1 verification: Room 2 and Maze One spawn triggers fire on zone entry with fixed Spiral layout', () => {
+  const spiral = getSpiralMazeLayout();
+  assert.equal(spiral.procedural, false, 'Maze One Spiral must never be procedural');
+  assert.equal(spiral.zombies.length, 3, 'Spiral spawns exactly 3 zombies');
+  assert.equal(spiral.ghouls.length, 2, 'Spiral spawns exactly 2 ghouls');
+  assert.equal(spiral.discs.length, 3, 'Spiral places exactly 3 maze discs');
+  assert.equal(spiral.ammoBoxes.length, 2, 'Spiral places exactly 2 red shell boxes');
+
+  let room2SpawnCalls = 0;
+  let mazeOneSpawnCalls = 0;
+  const placedPickups = [];
+
+  const zoneBounds = {
+    [LEVEL_ONE_ZONES.MUSEUM_HALL]: { minX: -12.5, maxX: 12.5, minZ: -7.5, maxZ: 7.5 },
+    [LEVEL_ONE_ZONES.WHITE_AETHER]: { minX: -24, maxX: 24, minZ: 7.5, maxZ: 40 },
+    [LEVEL_ONE_ZONES.CASTLE_OF_THE_DEAD]: { minX: -32, maxX: 32, minZ: 40, maxZ: 80 },
+    [LEVEL_ONE_ZONES.MAZE_ONE]: { minX: -40, maxX: 40, minZ: 80, maxZ: 130 },
+    [LEVEL_ONE_ZONES.LION_ROOM]: { minX: -20, maxX: 20, minZ: 130, maxZ: 165 },
+  };
+
+  const zones = new LevelOneZoneController({
+    zoneBounds,
+    onZoneEnter: (zoneId) => {
+      if (zoneId === LEVEL_ONE_ZONES.MAZE_ONE && mazeOneSpawnCalls === 0) {
+        mazeOneSpawnCalls += 1;
+        for (const d of spiral.discs) placedPickups.push({ itemId: 'maze_disc', x: d.x, z: d.z });
+        for (const a of spiral.ammoBoxes) placedPickups.push({ itemId: 'red_shells', x: a.x, z: a.z });
+      }
+    },
+  });
+
+  // Walk Hall -> White Aether -> Castle Room 1: neither Room 2 nor Maze One has fired yet
+  zones.update(0.016, { x: 0, z: 0 });
+  zones.update(0.016, { x: 0, z: 22 });
+  zones.update(0.016, { x: 0, z: 48 });
+  assert.equal(room2SpawnCalls, 0);
+  assert.equal(mazeOneSpawnCalls, 0);
+
+  // Enter Castle Room 2 (z >= LEVEL_ONE_SPAWNS.castleRoom2.bounds.minZ)
+  const room2Pos = { x: 0, z: 62 };
+  zones.update(0.016, room2Pos);
+  if (
+    room2SpawnCalls === 0 &&
+    room2Pos.z >= LEVEL_ONE_SPAWNS.castleRoom2.bounds.minZ &&
+    room2Pos.z < LEVEL_ONE_SPAWNS.castleRoom2.bounds.maxZ
+  ) {
+    room2SpawnCalls += 1;
+  }
+  assert.equal(room2SpawnCalls, 1, 'Room 2 tutorial zombie spawn fires on entering Castle Room 2');
+  assert.equal(LEVEL_ONE_SPAWNS.castleRoom2.loneZombie.id, 'room2_tutorial_zombie');
+  assert.equal(mazeOneSpawnCalls, 0, 'Maze One population does not spawn while still in Castle Room 2');
+
+  // Enter Maze One -> Maze One population + Spiral pickups fire once
+  zones.update(0.016, { x: 0, z: 86 });
+  zones.update(0.016, { x: 0, z: 94 }); // second tick inside Maze One must not duplicate spawns
+  assert.equal(mazeOneSpawnCalls, 1, 'Maze One spawnMazeOnePopulation fires once on MAZE_ONE entry');
+  assert.equal(placedPickups.filter((p) => p.itemId === 'maze_disc').length, 3);
+  assert.equal(placedPickups.filter((p) => p.itemId === 'red_shells').length, 2);
+});
+
+test('P2 verification: damage audit rejects unseen non-ghost hit beyond 1.1m and reports attacker, distance, and sight line', () => {
+  // Player at origin facing -Z (yaw = 0); attacker behind player at +Z (dist = 1.6m > 1.1m)
+  const playerPos = { x: 0, y: 1.72, z: 0 };
+  const playerYaw = 0;
+
+  const makeEnemy = (kind, id, x, z) => ({
+    kind,
+    id,
+    hp: 100,
+    alive: true,
+    stagger: 0,
+    group: { position: { x, y: 0, z } },
+  });
+
+  // 1. Unseen non-ghost (ghoul/lion/zombie) behind player at 1.6m -> MUST be rejected with full audit metadata
+  const unseenNonGhost = validateEnemyDamage({
+    enemy: makeEnemy('ghoul', 'maze_ghoul_1', 0, 1.6),
+    playerPos,
+    maxReach: 2.2,
+    colliders: [],
+    playerYaw,
+    allowUnseenPointBlank: false,
+  });
+  assert.equal(unseenNonGhost.valid, false, 'Unseen non-ghost hit behind player (>1.1m) must be rejected');
+  assert.equal(unseenNonGhost.reason, 'not_facing');
+  assert.equal(unseenNonGhost.attacker, 'ghoul:maze_ghoul_1', 'Audit names attacker');
+  assert.ok(Math.abs(unseenNonGhost.distance - 1.6) < 0.01, 'Audit reports exact distance');
+  assert.equal(unseenNonGhost.los, true, 'Audit reports sight line status');
+  assert.equal(unseenNonGhost.facing, false, 'Audit reports facing status');
+
+  // 2. Attacker occluded behind a wall collider even when in front of player -> rejected for no_line_of_sight
+  const blockedByWall = validateEnemyDamage({
+    enemy: makeEnemy('lion', 'boss_lion_1', 0, -2.0),
+    playerPos,
+    maxReach: 3.0,
+    colliders: [{ minX: -2, maxX: 2, minZ: -1.2, maxZ: -0.8 }],
+    playerYaw,
+    allowUnseenPointBlank: false,
+  });
+  assert.equal(blockedByWall.valid, false, 'Wall-occluded hit must be rejected');
+  assert.equal(blockedByWall.reason, 'no_line_of_sight');
+  assert.equal(blockedByWall.attacker, 'lion:boss_lion_1');
+  assert.equal(blockedByWall.los, false);
+
+  // 3. Visible attacker in front of player with clear LOS and within range -> accepted with full audit metadata
+  const validHit = validateEnemyDamage({
+    enemy: makeEnemy('lion', 'boss_lion_1', 0, -1.8),
+    playerPos,
+    maxReach: 2.8,
+    colliders: [],
+    playerYaw,
+    allowUnseenPointBlank: false,
+  });
+  assert.equal(validHit.valid, true);
+  assert.equal(validHit.attacker, 'lion:boss_lion_1');
+  assert.ok(Math.abs(validHit.distance - 1.8) < 0.01);
+  assert.equal(validHit.los, true);
+  assert.equal(validHit.facing, true);
+
+  // 4. Ghost point-blank rule: unseen ghost allowed <= 1.1m, rejected > 1.1m
+  const ghostNear = validateEnemyDamage({
+    enemy: makeEnemy('ghost', 'archive_ghost_1', 0, 0.9),
+    playerPos,
+    maxReach: 1.72,
+    colliders: [],
+    playerYaw,
+    allowUnseenPointBlank: true,
+  });
+  assert.equal(ghostNear.valid, true, 'Ghost unseen point-blank <= 1.1m allowed');
+
+  const ghostFar = validateEnemyDamage({
+    enemy: makeEnemy('ghost', 'archive_ghost_1', 0, 1.5),
+    playerPos,
+    maxReach: 1.72,
+    colliders: [],
+    playerYaw,
+    allowUnseenPointBlank: true,
+  });
+  assert.equal(ghostFar.valid, false, 'Unseen ghost > 1.1m must be rejected');
+  assert.equal(ghostFar.reason, 'not_facing');
+});
+
+test('P3 verification: stairs stay locked (canUnlockStairs false) until boss-dead AND post-boss disc seated in second case', () => {
+  // Fresh state: locked
+  let state = createLevelOneState();
+  assert.equal(canUnlockStairs(state), false, 'Stairs locked at start before enemies spawn');
+
+  // Lesser enemies spawned and cleared, boss still alive: locked
+  state = advanceLevelOne(state, 'set_lesser_enemies_count', { count: 1 }).state;
+  assert.equal(canUnlockStairs(state), false, 'Stairs locked while lesser enemies alive');
+  state = advanceLevelOne(state, 'lesser_enemy_killed').state;
+  assert.equal(state.allLesserEnemiesDead, true);
+  assert.equal(canUnlockStairs(state), false, 'Stairs locked while Lion boss is alive');
+
+  // Enter Lion arena & defeat Lion with sword: STILL locked until disc claimed & seated
+  state = { ...state, mazeExitUnlocked: true };
+  state = advanceLevelOne(state, 'enter_lion_room').state;
+  state = advanceLevelOne(state, 'lion_sword_smite').state;
+  assert.equal(state.lionAlive, false);
+  assert.equal(canUnlockStairs(state), false, 'Stairs stay locked when boss is dead but disc not yet claimed');
+
+  // Claim golden vinyl & return to Hall: STILL locked until seated in case 1
+  state = advanceLevelOne(state, 'claim_golden_vinyl').state;
+  assert.equal(canUnlockStairs(state), false, 'Stairs stay locked when disc is carried but not seated');
+  state = advanceLevelOne(state, 'return_to_hall').state;
+  assert.equal(canUnlockStairs(state), false, 'Stairs stay locked in Hall before placing disc in second case');
+
+  // Place disc in second case -> unlocks case1 + completes Level One -> stairs UNLOCK!
+  state = advanceLevelOne(state, 'place_disc_in_second_case').state;
+  assert.equal(state.hallCasesLocked.case1, false);
+  assert.equal(state.levelCompleted, true);
+  assert.equal(canUnlockStairs(state), true, 'Stairs unlock ONLY after boss dead + disc seated in second case');
 });
 
 console.log(`All ${passed} Level One sequence tests passed!`);

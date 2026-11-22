@@ -51,10 +51,14 @@ import {
   ASSET_BUDGETS,
 } from './engine/localAssetBudget.js';
 import { PlayerQuipsController } from './game/playerQuipsController.js';
+import { KillTauntsController, TAUNT_POOLS } from './audio/killTaunts.js';
 import {
   LEVEL_ONE_STEPS,
+  ADS_TUTORIAL_PHASE,
   createLevelOneState,
   advanceLevelOne,
+  stepAdsTutorial,
+  stepBrainWipe,
   stepVillainCutscene,
   canUnlockStairs,
   VILLAIN_CUTSCENE_VO,
@@ -238,9 +242,17 @@ hudRoot.innerHTML = `
 
     <!-- Bottom-Right Minimal Weapon & Ammo -->
     <div class="fixed bottom-7 right-8 flex flex-col items-end gap-1">
-      <div id="ammo-main" class="horror-text text-5xl text-[#ece3d2] leading-none">15 / 60</div>
-      <div id="weapon-label" class="horror-text text-2xl text-[#b9ae9c] leading-none">glock</div>
+      <div id="ammo-main" class="horror-text text-5xl text-[#ece3d2] leading-none"></div>
+      <div id="weapon-label" class="horror-text text-2xl text-[#b9ae9c] leading-none">unarmed</div>
     </div>
+
+    <!-- Room 2 Diegetic ADS Tutorial Prompt Banner -->
+    <div id="ads-tutorial-banner" class="fixed top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none opacity-0 transition-opacity duration-150 z-30">
+      <span id="ads-tutorial-text" class="horror-text text-5xl text-[#efe7d8] drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)]"></span>
+    </div>
+
+    <!-- Room 2 Visor Brain Splatter Overlay (fades via unskippable stepBrainWipe) -->
+    <div id="brain-splatter-overlay" class="fixed inset-0 pointer-events-none opacity-0 z-30 bg-[radial-gradient(circle_at_52%_46%,rgba(122,14,18,0.92)_0%,rgba(78,8,12,0.85)_34%,rgba(44,4,8,0.58)_62%,transparent_88%)]"></div>
 
     <!-- Pass 2: gentle bottom-right song title (title only, fades out) -->
     <div id="bottom-right-track-title" class="horror-text fixed bottom-28 right-8 text-3xl text-white/85 leading-none pointer-events-none"></div>
@@ -338,6 +350,9 @@ const dom = {
   postureLabel: document.getElementById('posture-label'),
   ammoMain: document.getElementById('ammo-main'),
   weaponLabel: document.getElementById('weapon-label'),
+  adsTutorialBanner: document.getElementById('ads-tutorial-banner'),
+  adsTutorialText: document.getElementById('ads-tutorial-text'),
+  brainSplatterOverlay: document.getElementById('brain-splatter-overlay'),
   terminalOverlay: document.getElementById('terminal-overlay'),
   terminalForm: document.getElementById('terminal-form'),
   seedInput: document.getElementById('seed-input'),
@@ -364,14 +379,21 @@ function renderHealthScratches(hp) {
 
 const XBOX_ICON_MAP = {
   '[e]': '/ui/prompts/xbox/xbox_button_color_x.png',
+  '[x]': '/ui/prompts/xbox/xbox_button_color_x.png',
   '[r]': '/ui/prompts/xbox/xbox_button_color_x.png',
   '[f]': '/ui/prompts/xbox/xbox_lb.png',
   '[g]': '/ui/prompts/xbox/xbox_rb.png',
   '[n]': '/ui/prompts/xbox/xbox_dpad_right.png',
   '[space]': '/ui/prompts/xbox/xbox_button_color_a.png',
   '[c]': '/ui/prompts/xbox/xbox_button_color_b.png',
+  '[y]': '/ui/prompts/xbox/xbox_button_color_y.png',
   '[m]': '/ui/prompts/xbox/xbox_button_view.png',
   '[tab]': '/ui/prompts/xbox/xbox_button_view.png',
+  '[lt]': '/ui/prompts/xbox/xbox_lt.png',
+  '[rt]': '/ui/prompts/xbox/xbox_rt.png',
+  '[ads]': '/ui/prompts/xbox/xbox_lt.png',
+  '[shoot]': '/ui/prompts/xbox/xbox_rt.png',
+  '[barrel]': '/ui/prompts/xbox/xbox_rt.png',
 };
 
 function formatPromptHtml(rawText, useXboxIcons) {
@@ -422,6 +444,7 @@ let inventory = createInventory();
 const vinylPlayer = new VinylPlayer(camera, showWhisper);
 cathedralBus.attachContext(vinylPlayer.getAudioContext());
 let playerQuips = null;
+let killTaunts = null;
 
 // Audio diagnostics (only with ?audiodebug=1): lets the playtest rig prove
 // the context stays running and the loops stay alive end to end.
@@ -446,6 +469,28 @@ let hallVinyls = null;
 let caseController = null;
 let levelOneZones = null;
 let levelOneState = createLevelOneState({ villainCutsceneSeenCount: 0 });
+const levelOneSpawnFlags = {
+  room1Populated: false,
+  room2Triggered: false,
+  room2TutorialZombie: null,
+  mazeOnePopulated: false,
+};
+
+function playLevelOneEvents(events) {
+  if (!Array.isArray(events)) return;
+  for (const ev of events) {
+    if (ev.type === 'play_vo' && ev.url) {
+      try {
+        cathedralBus.playBuffer(ev.url, { volume: 0.9, dry: false }).catch(() => {});
+      } catch {}
+    } else if (ev.type === 'play_cutscene_vo' && ev.url) {
+      if (ev.text) showWhisper(ev.text, ev.durationSec || 2.4);
+      try {
+        cathedralBus.playBuffer(ev.url, { volume: 0.9, dry: false }).catch(() => {});
+      } catch {}
+    }
+  }
+}
 
 function trySkipVillainCutscene() {
   if (!levelOneState || !levelOneState.villainCutsceneActive) return false;
@@ -779,8 +824,16 @@ function syncBodyDataset() {
   document.body.dataset.mode = transformer ? transformer.mode : 'exploration';
   document.body.dataset.floor = transformer ? String(transformer.floor) : '0';
   document.body.dataset.hp = String(Math.round(gameState.hp));
-  document.body.dataset.weapon = weapons ? weapons.activeWeapon : 'glock';
-  document.body.dataset.ammo = weapons ? `${weapons.ammoInMag}/${weapons.reserveAmmo}` : '15/60';
+  document.body.dataset.weapon = weapons ? weapons.activeWeapon : 'unarmed';
+  document.body.dataset.ammo = weapons
+    ? weapons.activeWeapon === 'shotgun'
+      ? `${weapons.shotgunAmmoInMag}/${weapons.shotgunReserve}`
+      : weapons.activeWeapon === 'glock'
+        ? `${weapons.ammoInMag}/${weapons.reserveAmmo}`
+        : weapons.activeWeapon === 'sword' || weapons.activeWeapon === 'knife'
+          ? 'blade'
+          : 'unarmed'
+    : 'unarmed';
   document.body.dataset.trapdoor =
     transformer && transformer.trapdoorOpenAmount > 0.5 ? 'open' : 'closed';
   document.body.dataset.inventory = gameState.phase === 'inventory' ? 'open' : 'closed';
@@ -813,9 +866,21 @@ function updateHudReadouts() {
   }
 
   if (weapons) {
-    if (weapons.holstered) {
+    if (weapons.activeWeapon === 'unarmed') {
+      dom.ammoMain.textContent = '';
+      dom.weaponLabel.textContent = 'unarmed';
+    } else if (weapons.holstered) {
       dom.ammoMain.textContent = 'holstered';
-      dom.weaponLabel.textContent = '';
+      dom.weaponLabel.textContent =
+        weapons.activeWeapon === 'shotgun' ? 'balistucia' : weapons.activeWeapon;
+    } else if (weapons.activeWeapon === 'shotgun') {
+      dom.ammoMain.textContent = weapons.reloading
+        ? 'reloading...'
+        : `${weapons.shotgunAmmoInMag} / ${weapons.shotgunReserve}`;
+      dom.weaponLabel.textContent = 'balistucia';
+    } else if (weapons.activeWeapon === 'sword') {
+      dom.ammoMain.textContent = 'blade';
+      dom.weaponLabel.textContent = 'sword';
     } else if (weapons.activeWeapon === 'glock') {
       dom.ammoMain.textContent = weapons.reloading
         ? 'reloading...'
@@ -914,8 +979,15 @@ function startNewRun(lockPointer = true, cinemaReel = null) {
   levelOneState = createLevelOneState({
     villainCutsceneSeenCount: levelOneState ? levelOneState.villainCutsceneSeenCount : 0,
   });
+  levelOneSpawnFlags.room1Populated = false;
+  levelOneSpawnFlags.room2Triggered = false;
+  levelOneSpawnFlags.room2TutorialZombie = null;
+  levelOneSpawnFlags.mazeOnePopulated = false;
+  if (dom.brainSplatterOverlay) dom.brainSplatterOverlay.style.opacity = '0';
+  if (dom.adsTutorialBanner) dom.adsTutorialBanner.style.opacity = '0';
   if (levelOneZones) {
     levelOneZones.currentZone = LEVEL_ONE_ZONES.MUSEUM_HALL;
+    levelOneZones.visitedZones = new Set([LEVEL_ONE_ZONES.MUSEUM_HALL]);
     levelOneZones.lionBossStarted = false;
     levelOneZones.lionBossDefeated = false;
     levelOneZones.caseRiseState = 'hidden';
@@ -926,6 +998,12 @@ function startNewRun(lockPointer = true, cinemaReel = null) {
     levelOneCorridor.mazeExitGateMesh.visible = true;
     levelOneCorridor.risingCaseMesh.visible = false;
     levelOneCorridor.risingCaseMesh.position.y = -2.2;
+    if (levelOneCorridor.barrelMesh) {
+      levelOneCorridor.barrelMesh.visible = true;
+      if (!worldRayMeshes.includes(levelOneCorridor.barrelMesh)) {
+        worldRayMeshes.push(levelOneCorridor.barrelMesh);
+      }
+    }
   }
   if (library?.trapdoor?.group) {
     library.trapdoor.group.visible = false;
@@ -1425,6 +1503,15 @@ async function bootstrap() {
     console.warn('[PlayerQuipsController] Non-fatal load failure:', err);
   });
 
+  // §E — Rare non-overlapping voiced kill/player-death/reload taunts (20s cooldown)
+  killTaunts = new KillTauntsController({
+    onCaption: (text, dur) => showWhisper(text, dur),
+    audioBus: cathedralBus,
+  });
+  killTaunts.load().catch((err) => {
+    console.warn('[KillTauntsController] Non-fatal load failure:', err);
+  });
+
   // Pass 2 (Nov 20, 2026): Batch 2 collectibles + case-lock controller.
   // The bus adapter maps the controller's dryNode name onto the bus's
   // dryGain; the key-turn rumble routes through the convolver like every
@@ -1490,6 +1577,42 @@ async function bootstrap() {
         gameState.hitstop = 0.045;
       }
     },
+    onAmmoChanged: () => {
+      updateHudReadouts();
+    },
+    onReloadStarted: () => {
+      killTaunts?.trigger(TAUNT_POOLS.RELOAD);
+    },
+    onOutOfAmmo: () => {
+      showWhisper('out of shells — draw the sword [y]', 2.6);
+      updateHudReadouts();
+    },
+    onBarrelShot: (barrelObj) => {
+      if (levelOneState.barrelDestroyed) return;
+      if (levelOneState.step === LEVEL_ONE_STEPS.PORTAL_RUMBLE) {
+        levelOneState = advanceLevelOne(levelOneState, 'enter_white_aether').state;
+      }
+      if (levelOneState.step === LEVEL_ONE_STEPS.WHITE_AETHER) {
+        levelOneState = advanceLevelOne(levelOneState, 'enter_castle_room_1').state;
+      }
+      const res = advanceLevelOne(levelOneState, 'shoot_barrel');
+      levelOneState = res.state;
+      playLevelOneEvents(res.events);
+      if (barrelObj) {
+        barrelObj.visible = false;
+        const idx = worldRayMeshes.indexOf(barrelObj);
+        if (idx >= 0) worldRayMeshes.splice(idx, 1);
+        enemies?.spawnBurst(barrelObj.position, 22, 0x5c3a21, 3.8, 9.2);
+      }
+      sfx.playFleshImpact?.(false);
+      if (worldItems) {
+        const { darkoDrop, swordDrop } = LEVEL_ONE_SPAWNS.castleRoom1;
+        worldItems.spawn('darko_drink', darkoDrop.x, darkoDrop.y, darkoDrop.z, 1);
+        worldItems.spawn('sword_pickup', swordDrop.x, swordDrop.y, swordDrop.z, 1);
+      }
+      showWhisper('barrel shattered — claim DARKO and the Sword', 3.0);
+      updateHudReadouts();
+    },
   });
   weapons.root.visible = false;
 
@@ -1507,24 +1630,29 @@ async function bootstrap() {
 
       if (gameState.hp <= 0) {
         gameState.dyingDelay = 0.55;
+        killTaunts?.trigger(TAUNT_POOLS.PLAYER_DEATH);
       }
     },
     onZombieKilled: () => {
       levelOneState = advanceLevelOne(levelOneState, 'lesser_enemy_killed').state;
+      killTaunts?.trigger(TAUNT_POOLS.KILL);
       updateHudReadouts();
     },
     onGhostKilled: () => {
       levelOneState = advanceLevelOne(levelOneState, 'lesser_enemy_killed').state;
+      killTaunts?.trigger(TAUNT_POOLS.KILL);
       updateHudReadouts();
     },
     onGhoulKilled: () => {
       // Single decrement path: MazeOneGhoul.die() fires onGhoulKilled once (enemies.js does NOT double-call onZombieKilled).
       levelOneState = advanceLevelOne(levelOneState, 'lesser_enemy_killed').state;
+      killTaunts?.trigger(TAUNT_POOLS.KILL);
       updateHudReadouts();
     },
     onLionKilled: () => {
       // Boss death NEVER decrements lesser-enemy count; LionBoss.die() already invokes levelOneZones.notifyLionDefeated().
       levelOneState = advanceLevelOne(levelOneState, 'lion_sword_smite').state;
+      killTaunts?.trigger(TAUNT_POOLS.KILL);
       updateHudReadouts();
     },
     onDropLoot: (x, z, itemId) => {
@@ -1552,6 +1680,45 @@ async function bootstrap() {
       [LEVEL_ONE_ZONES.CASTLE_OF_THE_DEAD]: { minX: -32, maxX: 32, minZ: 40, maxZ: 80 },
       [LEVEL_ONE_ZONES.MAZE_ONE]: { minX: -40, maxX: 40, minZ: 80, maxZ: 130 },
       [LEVEL_ONE_ZONES.LION_ROOM]: { minX: -20, maxX: 20, minZ: 130, maxZ: 165 },
+    },
+    onZoneEnter: (zoneId) => {
+      if (zoneId === LEVEL_ONE_ZONES.WHITE_AETHER) {
+        const res = advanceLevelOne(levelOneState, 'enter_white_aether');
+        levelOneState = res.state;
+        playLevelOneEvents(res.events);
+      } else if (zoneId === LEVEL_ONE_ZONES.CASTLE_OF_THE_DEAD) {
+        if (levelOneState.step === LEVEL_ONE_STEPS.PORTAL_RUMBLE) {
+          const aetherRes = advanceLevelOne(levelOneState, 'enter_white_aether');
+          levelOneState = aetherRes.state;
+          playLevelOneEvents(aetherRes.events);
+        }
+        const castleRes = advanceLevelOne(levelOneState, 'enter_castle_room_1');
+        levelOneState = castleRes.state;
+        playLevelOneEvents(castleRes.events);
+        if (!levelOneSpawnFlags.room1Populated && worldItems) {
+          levelOneSpawnFlags.room1Populated = true;
+          const sg = LEVEL_ONE_SPAWNS.castleRoom1.shotgunPickup;
+          worldItems.spawn('shotgun_pickup', sg.x, sg.y, sg.z, 1);
+          showWhisper('claim Balistucia — shoot the barrel', 3.0);
+        }
+      } else if (zoneId === LEVEL_ONE_ZONES.MAZE_ONE) {
+        if (!levelOneSpawnFlags.mazeOnePopulated) {
+          levelOneSpawnFlags.mazeOnePopulated = true;
+          enemies.spawnMazeOnePopulation();
+          levelOneState = advanceLevelOne(levelOneState, 'set_lesser_enemies_count', {
+            count: enemies.aliveLesserCount(),
+          }).state;
+          if (worldItems && levelOneCorridor?.spiral) {
+            for (const disc of levelOneCorridor.spiral.discs) {
+              worldItems.spawn('maze_disc', disc.x, 0, disc.z, 1);
+            }
+            for (const ammo of levelOneCorridor.spiral.ammoBoxes) {
+              worldItems.spawn('red_shells', ammo.x, 0, ammo.z, 6);
+            }
+          }
+          updateHudReadouts();
+        }
+      }
     },
     canTriggerBoss: () => {
       return levelOneState.allLesserEnemiesDead && levelOneState.lesserEnemiesAliveCount === 0;
@@ -1752,6 +1919,12 @@ function stepSimulation(dt) {
   const mazeExitOpen = Boolean(
     levelOneState && levelOneState.mazeExitUnlocked && levelOneState.allLesserEnemiesDead
   );
+  const room2NorthLocked = Boolean(
+    levelOneSpawnFlags.room2Triggered &&
+      (levelOneState.step === LEVEL_ONE_STEPS.ROOM_2_ADS_TUTORIAL ||
+        levelOneState.step === LEVEL_ONE_STEPS.BRAIN_SPLATTED ||
+        levelOneState.step === LEVEL_ONE_STEPS.BRAIN_WIPE)
+  );
   if (levelOneCorridor) {
     levelOneCorridor.portalGateMesh.visible = !portalOpen;
     levelOneCorridor.mazeExitGateMesh.visible = !mazeExitOpen;
@@ -1759,12 +1932,42 @@ function stepSimulation(dt) {
   const allColliders = library.staticColliders.concat(
     transformer.getLiveShelfColliders(),
     levelOneCorridor ? levelOneCorridor.staticColliders : [],
-    levelOneCorridor ? levelOneCorridor.getGateColliders({ portalOpen, mazeExitOpen }) : []
+    levelOneCorridor ? levelOneCorridor.getGateColliders({ portalOpen, mazeExitOpen }) : [],
+    room2NorthLocked ? [{ minX: -12.5, maxX: 12.5, minZ: 79.2, maxZ: 80.5 }] : []
   );
   const prevPosture = document.body.dataset.posture;
   const prevClimbing = controls.isClimbing;
 
   controls.update(simDt, elapsed, allColliders, library.crawlUnderColliders, library.climbZones);
+
+  // §A.5 / P1: Castle Room 2 entry — spawn lone tutorial zombie + start diegetic LT->RT ADS tutorial
+  if (
+    !levelOneSpawnFlags.room2Triggered &&
+    controls.position.z >= LEVEL_ONE_SPAWNS.castleRoom2.bounds.minZ &&
+    controls.position.z < LEVEL_ONE_SPAWNS.castleRoom2.bounds.maxZ
+  ) {
+    levelOneSpawnFlags.room2Triggered = true;
+    const tutZ = enemies.spawnRoom2TutorialZombie();
+    levelOneSpawnFlags.room2TutorialZombie = tutZ;
+    levelOneState = advanceLevelOne(levelOneState, 'set_lesser_enemies_count', {
+      count: enemies.aliveLesserCount(),
+    }).state;
+    const tutRes = advanceLevelOne(levelOneState, 'enter_room_2_tutorial');
+    levelOneState = tutRes.state;
+    playLevelOneEvents(tutRes.events);
+    if (levelOneState.step === LEVEL_ONE_STEPS.ROOM_2_ADS_TUTORIAL) {
+      if (weapons.weaponsUnlocked.shotgun && weapons.activeWeapon !== 'shotgun') {
+        weapons.equip('shotgun');
+      }
+      if (tutZ) {
+        const dx = tutZ.group.position.x - controls.position.x;
+        const dz = tutZ.group.position.z - controls.position.z;
+        controls.yaw = Math.atan2(-dx, -dz);
+        controls.pitch = -0.02;
+      }
+      controls.movementLocked = true;
+    }
+  }
 
   if (levelOneState && levelOneState.villainCutsceneActive) {
     if (controls) {
@@ -1876,6 +2079,71 @@ function stepSimulation(dt) {
     hudDirty = true;
   }
 
+  const useXboxIcons = controls.gamepadConnected;
+  let tutorialBlockedFire = false;
+
+  // Room 2 diegetic ADS tutorial (input-gated LT -> LT+RT -> brain splatter -> unskippable wipe)
+  if (levelOneState.step === LEVEL_ONE_STEPS.ROOM_2_ADS_TUTORIAL) {
+    controls.movementLocked = true;
+    tutorialBlockedFire = true;
+    const adsRes = stepAdsTutorial(levelOneState, {
+      ltHeld: Boolean(controls.isAiming),
+      rtPressed: Boolean(act.fire),
+    });
+    levelOneState = adsRes.state;
+
+    if (dom.adsTutorialBanner && dom.adsTutorialText) {
+      if (levelOneState.adsPhase === ADS_TUTORIAL_PHASE.AWAITING_AIM) {
+        dom.adsTutorialText.innerHTML = formatPromptHtml('hold [lt] to aim', useXboxIcons);
+        dom.adsTutorialBanner.style.opacity = '1';
+      } else if (levelOneState.adsPhase === ADS_TUTORIAL_PHASE.AWAITING_SHOOT) {
+        dom.adsTutorialText.innerHTML = formatPromptHtml('hold [lt] + press [rt] to shoot', useXboxIcons);
+        dom.adsTutorialBanner.style.opacity = '1';
+      }
+    }
+
+    if (adsRes.events.some((e) => e.type === 'zombie_headshot')) {
+      if (dom.adsTutorialBanner) dom.adsTutorialBanner.style.opacity = '0';
+      weapons.triggerPrimary(enemies, worldRayMeshes);
+      const tutZ = levelOneSpawnFlags.room2TutorialZombie;
+      if (tutZ && tutZ.alive) {
+        camera.getWorldDirection(_camForward);
+        enemies.handleWeaponHit(
+          tutZ.id,
+          'shotgun',
+          true,
+          tutZ.group.position.clone().add(new THREE.Vector3(0, 1.62, 0)),
+          _camForward,
+          false
+        );
+      }
+      if (dom.brainSplatterOverlay) {
+        dom.brainSplatterOverlay.style.opacity = String(levelOneState.brainSplatterOpacity);
+      }
+      const wipeStart = advanceLevelOne(levelOneState, 'start_brain_wipe');
+      levelOneState = wipeStart.state;
+      weapons.startGrab({ profile: 'fast', pose: 'open' });
+      hudDirty = true;
+    }
+  } else if (levelOneState.step === LEVEL_ONE_STEPS.BRAIN_WIPE) {
+    controls.movementLocked = true;
+    tutorialBlockedFire = true;
+    const wipeRes = stepBrainWipe(levelOneState, dt, 1.35);
+    levelOneState = wipeRes.state;
+    if (dom.brainSplatterOverlay) {
+      dom.brainSplatterOverlay.style.opacity = String(Math.max(0, levelOneState.brainSplatterOpacity));
+    }
+    if (levelOneState.step === LEVEL_ONE_STEPS.MAZE_ONE) {
+      controls.movementLocked = false;
+      if (dom.brainSplatterOverlay) dom.brainSplatterOverlay.style.opacity = '0';
+      playLevelOneEvents(wipeRes.events);
+      showWhisper('visor clear — Maze One lies ahead', 2.8);
+      hudDirty = true;
+    }
+  } else if (dom.adsTutorialBanner) {
+    dom.adsTutorialBanner.style.opacity = '0';
+  }
+
   if (!controls.isClimbing) {
     if (act.holster) {
       weapons.toggleHolster();
@@ -1916,7 +2184,7 @@ function stepSimulation(dt) {
       weapons.triggerKnifeSlash(true);
       hudDirty = true;
     }
-    if (act.fire) {
+    if (act.fire && !tutorialBlockedFire) {
       if (weapons.triggerPrimary(enemies, worldRayMeshes)) hudDirty = true;
     }
   }
@@ -1925,7 +2193,6 @@ function stepSimulation(dt) {
   const interactable = findActiveInteractable();
   const climbCandidate = controls.findClimbableLedge(library.climbZones);
   gameState.currentInteractable = interactable;
-  const useXboxIcons = controls.gamepadConnected;
 
   if (interactable) {
     dom.interactText.innerHTML = formatPromptHtml(interactable.getPrompt(), useXboxIcons);
@@ -1935,6 +2202,14 @@ function stepSimulation(dt) {
     dom.interactPrompt.style.opacity = '1';
   } else if (isNearCrawlArch()) {
     dom.interactText.innerHTML = formatPromptHtml('[c] duck to crawl under', useXboxIcons);
+    dom.interactPrompt.style.opacity = '1';
+  } else if (
+    levelOneState.step === LEVEL_ONE_STEPS.CASTLE_ROOM_1 &&
+    levelOneState.weaponsUnlocked.shotgun &&
+    !levelOneState.barrelDestroyed &&
+    levelOneCorridor?.barrelMesh?.visible
+  ) {
+    dom.interactText.innerHTML = formatPromptHtml('shoot the barrel [barrel]', useXboxIcons);
     dom.interactPrompt.style.opacity = '1';
   } else {
     dom.interactPrompt.style.opacity = '0';
@@ -1980,19 +2255,30 @@ function stepSimulation(dt) {
           worldItems.removeById(interactable.id);
           sfx.playAmmoPickup();
           showWhisper('acquired Balistucia shotgun', 2.6);
-          weapons.equip('shotgun');
+          weapons.unlockWeapon('shotgun');
           if (levelOneState) {
-            levelOneState = advanceLevelOne(levelOneState, 'pickup_shotgun').state;
+            const res = advanceLevelOne(levelOneState, 'pickup_shotgun');
+            levelOneState = res.state;
+            playLevelOneEvents(res.events);
           }
           hudDirty = true;
         } else if (interactable.itemId === 'sword_pickup') {
           worldItems.removeById(interactable.id);
           sfx.playAmmoPickup();
           showWhisper('acquired hero sword', 2.6);
-          weapons.equip('sword');
+          weapons.unlockWeapon('sword');
           if (levelOneState) {
-            levelOneState = advanceLevelOne(levelOneState, 'pickup_sword').state;
+            const res = advanceLevelOne(levelOneState, 'pickup_sword');
+            levelOneState = res.state;
+            playLevelOneEvents(res.events);
           }
+          hudDirty = true;
+        } else if (interactable.itemId === 'red_shells' || interactable.itemId === 'shotgun_ammo') {
+          worldItems.removeById(interactable.id);
+          const shells = interactable.qty || 6;
+          weapons.shotgunReserve = Math.min(48, weapons.shotgunReserve + shells);
+          sfx.playAmmoPickup();
+          showWhisper(`+${shells} shells loaded`, 2.0);
           hudDirty = true;
         } else {
           const addRes = addItemToInventory(inventory, interactable.itemId, interactable.qty);
@@ -2058,7 +2344,11 @@ function stepSimulation(dt) {
   weapons.update(simDt, controls, enemies, gameState.hp);
   if (wasReloading && !weapons.reloading) hudDirty = true;
 
-  const enemyTimeScale = gameState.timeSlowTimer > 0 ? 0.38 : 1.0;
+  const enemyTimeScale = levelOneState.adsPaused
+    ? 0
+    : gameState.timeSlowTimer > 0
+      ? 0.38
+      : 1.0;
   enemies.update(
     simDt,
     elapsed,
