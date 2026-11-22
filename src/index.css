@@ -1,0 +1,654 @@
+@import "tailwindcss";
+
+:root {
+  --font-horror: "Reenie Beanie", "Nothing You Could Do", cursive;
+  --font-horror-alt: "Nothing You Could Do", "Reenie Beanie", cursive;
+  --ink-pale: #e8e1d4;
+  --ink-dim: rgba(226, 217, 200, 0.72);
+  --ink-crimson: #c9342b;
+  --ink-amber: #d99b43;
+  --ink-crt: #92d89f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #050507;
+  color: var(--ink-pale);
+  font-family: var(--font-horror);
+  -webkit-font-smoothing: antialiased;
+}
+
+#viewport canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.horror-text {
+  font-family: var(--font-horror);
+  letter-spacing: 0.03em;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.92), 0 0 2px rgba(0, 0, 0, 0.95);
+}
+
+.horror-text-alt {
+  font-family: var(--font-horror-alt);
+  letter-spacing: 0.02em;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.92);
+}
+
+.horror-btn {
+  font-family: var(--font-horror);
+  background: rgba(9, 8, 10, 0.78);
+  color: var(--ink-pale);
+  border: 1px solid rgba(224, 212, 192, 0.28);
+  cursor: pointer;
+  transition: transform 150ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms ease, color 150ms ease, background-color 150ms ease;
+}
+
+.horror-btn:hover,
+.horror-btn:focus-visible {
+  border-color: rgba(201, 52, 43, 0.85);
+  color: #fff8ee;
+  background: rgba(28, 10, 12, 0.86);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.horror-btn:focus-visible {
+  box-shadow: 0 0 0 2px rgba(217, 155, 67, 0.65);
+}
+
+.crt-panel {
+  background: rgba(7, 13, 9, 0.94);
+  border: 1px solid rgba(146, 216, 159, 0.35);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.85), inset 0 0 36px rgba(80, 180, 105, 0.12);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(146, 216, 159, 0.04) 0px,
+    rgba(146, 216, 159, 0.04) 1px,
+    transparent 2px,
+    transparent 4px
+  );
+}
+
+.damage-vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at center, transparent 48%, rgba(140, 14, 14, 0.72) 100%);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.low-hp-vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at center, transparent 52%, rgba(96, 8, 12, 0.68) 100%);
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+.crosshair-dot {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  margin-top: -2px;
+  border-radius: 50%;
+  background: rgba(238, 232, 220, 0.82);
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.95);
+  pointer-events: none;
+  transition: transform 90ms ease, background-color 90ms ease;
+}
+
+.crosshair-dot.hit-zombie {
+  transform: scale(2.1);
+  background: #d94136;
+}
+
+.crosshair-dot.hit-ghost {
+  transform: scale(1.7);
+  background: #e5a94c;
+}
+
+/* Cinema Movie Loading Intertitle Screen (inspired by bold crimson Japanese thriller title cards) */
+.cinema-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: #dc2443;
+  color: #f8cbd3;
+  transition: opacity 280ms ease;
+  overflow: hidden;
+}
+
+.cinema-loader.theme-obsidian {
+  background-color: #08070a;
+  color: #f4d6dc;
+}
+
+.cinema-loader::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.04) 0px,
+    rgba(0, 0, 0, 0.04) 1px,
+    transparent 2px,
+    transparent 5px
+  );
+}
+
+.cinema-title {
+  font-family: "Anton", Impact, sans-serif;
+  font-size: clamp(4.5rem, 13.5vw, 11.5rem);
+  line-height: 0.88;
+  letter-spacing: -0.025em;
+  text-transform: uppercase;
+  transform: scaleX(0.84) scaleY(1.06);
+  color: #f8cad3;
+  margin: 0;
+  user-select: none;
+}
+
+.cinema-jp {
+  font-family: "Noto Sans JP", sans-serif;
+  font-weight: 900;
+  font-size: clamp(1.35rem, 3.1vw, 2.75rem);
+  letter-spacing: 0.08em;
+  color: #f8cad3;
+  margin-top: 1.15rem;
+  user-select: none;
+}
+
+.cinema-bar-track {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: rgba(248, 202, 211, 0.18);
+}
+
+.cinema-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: #f8cad3;
+  transition: width 120ms linear;
+}
+
+/* Alice in Wonderland Horror Gothic Satchel */
+.wonderland-satchel {
+  background: rgba(14, 11, 13, 0.96);
+  border: 1px solid rgba(217, 188, 146, 0.34);
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.9), inset 0 0 42px rgba(135, 28, 42, 0.14);
+}
+
+.satchel-slot {
+  background: rgba(24, 18, 20, 0.85);
+  border: 1px solid rgba(217, 188, 146, 0.22);
+  transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
+}
+
+.satchel-slot:hover,
+.satchel-slot:focus-visible {
+  border-color: rgba(220, 166, 94, 0.72);
+  outline: none;
+}
+
+.satchel-slot[data-selected="true"] {
+  border-color: rgba(220, 56, 74, 0.92);
+  background: rgba(54, 15, 22, 0.86);
+  transform: translateY(-1px);
+}
+
+/* Official "Sign in with Google" Material Button Styling */
+.gsi-material-button {
+  -moz-user-select: none;
+  -webkit-user-select: none;
+  -ms-user-select: none;
+  -webkit-appearance: none;
+  background-color: #ffffff;
+  background-image: none;
+  border: 1px solid #747775;
+  border-radius: 4px;
+  box-sizing: border-box;
+  color: #1f1f1f;
+  cursor: pointer;
+  font-family: "Roboto", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  height: 42px;
+  letter-spacing: 0.25px;
+  outline: none;
+  overflow: hidden;
+  padding: 0 16px;
+  position: relative;
+  text-align: center;
+  transition: background-color 0.218s, border-color 0.218s, box-shadow 0.218s;
+  vertical-align: middle;
+  white-space: nowrap;
+  width: auto;
+  max-width: 320px;
+  min-width: min-content;
+}
+
+.gsi-material-button .gsi-material-button-icon {
+  height: 20px;
+  margin-right: 12px;
+  min-width: 20px;
+  width: 20px;
+}
+
+.gsi-material-button .gsi-material-button-content-wrapper {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  height: 100%;
+  justify-content: space-between;
+  position: relative;
+  width: 100%;
+}
+
+.gsi-material-button .gsi-material-button-contents {
+  flex-grow: 1;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+}
+
+.gsi-material-button .gsi-material-button-state {
+  transition: opacity 0.218s;
+  bottom: 0;
+  left: 0;
+  opacity: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+
+.gsi-material-button:hover:not(:disabled) {
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
+}
+
+.gsi-material-button:hover:not(:disabled) .gsi-material-button-state {
+  background-color: #303030;
+  opacity: 0.08;
+}
+
+.gsi-material-button:disabled {
+  cursor: default;
+  background-color: #ffffff88;
+  border-color: #1f1f1f22;
+}
+
+/* ============================================================================
+   PASS 1 — STARTUP SEQUENCE (HOLLYWOOD SUNSHINE -> TABALTIA GAMES -> CREDITS)
+   ============================================================================ */
+.startup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: auto;
+  background-color: #040406;
+  overflow: hidden;
+  transition: opacity 220ms ease;
+}
+
+.startup-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  will-change: opacity, transform;
+}
+
+.startup-stage.hidden {
+  display: none;
+}
+
+/* Stage 1: HOLLYWOOD SUNSHINE — Konami-style crisp production card */
+.startup-stage-hollywood {
+  background: radial-gradient(circle at 50% 50%, #150e08 0%, #050406 62%, #020203 100%);
+}
+
+.hs-glow-backdrop {
+  position: absolute;
+  width: min(680px, 78vw);
+  height: min(320px, 42vh);
+  border-radius: 999px;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(255, 198, 92, 0.34) 0%,
+    rgba(229, 108, 42, 0.16) 44%,
+    rgba(0, 0, 0, 0) 74%
+  );
+  filter: blur(26px);
+  pointer-events: none;
+  will-change: opacity;
+}
+
+.hs-lockup {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.35rem;
+  will-change: transform;
+}
+
+.hs-ribbon {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  will-change: transform;
+}
+
+.hs-bar {
+  display: block;
+  height: 5px;
+  border-radius: 1px;
+}
+
+.hs-bar-amber {
+  width: clamp(90px, 16vw, 200px);
+  background: linear-gradient(90deg, #ffdf80 0%, #f5a623 100%);
+  box-shadow: 0 0 18px rgba(255, 194, 77, 0.55);
+}
+
+.hs-bar-vermilion {
+  width: clamp(36px, 6vw, 76px);
+  background: linear-gradient(90deg, #e85828 0%, #ff8b3d 100%);
+  box-shadow: 0 0 14px rgba(232, 88, 40, 0.45);
+}
+
+.hs-wordmark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  text-align: center;
+}
+
+.hs-line-primary {
+  font-family: "Cinzel", Georgia, serif;
+  font-weight: 700;
+  font-size: clamp(2.15rem, 5.1vw, 4.4rem);
+  letter-spacing: 0.34em;
+  padding-left: 0.34em;
+  color: #fff6e0;
+  text-shadow:
+    0 0 28px rgba(255, 189, 89, 0.42),
+    0 2px 10px rgba(0, 0, 0, 0.9);
+  line-height: 1.05;
+}
+
+.hs-line-secondary {
+  font-family: "Cinzel", Georgia, serif;
+  font-weight: 600;
+  font-size: clamp(1.35rem, 3.1vw, 2.55rem);
+  letter-spacing: 0.52em;
+  padding-left: 0.52em;
+  color: #f8c66b;
+  text-shadow:
+    0 0 22px rgba(245, 166, 35, 0.48),
+    0 2px 8px rgba(0, 0, 0, 0.85);
+  line-height: 1.1;
+}
+
+/* Stage 2: TABALTIA GAMES — curvy minimal hippie wordmark beneath 3D Three.js sculpture */
+.startup-stage-tabaltia {
+  justify-content: flex-end;
+  padding-bottom: clamp(3.5rem, 10vh, 6.5rem);
+  pointer-events: none;
+}
+
+.tabaltia-wordmark-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  will-change: transform, opacity;
+}
+
+.tabaltia-title {
+  font-family: "Caprasimo", Georgia, serif;
+  font-size: clamp(2.8rem, 6.2vw, 4.9rem);
+  letter-spacing: 0.04em;
+  line-height: 0.96;
+  background: linear-gradient(95deg, #ff6b35 0%, #e63975 34%, #7c4dff 66%, #00b4a6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 6px 14px rgba(34, 24, 52, 0.14));
+}
+
+.tabaltia-sub {
+  font-family: "Caprasimo", Georgia, serif;
+  font-size: clamp(1.05rem, 1.9vw, 1.45rem);
+  letter-spacing: 0.36em;
+  padding-left: 0.36em;
+  color: #463a5c;
+  text-transform: lowercase;
+}
+
+/* Stage 3: Director & Composer Credits */
+.startup-stage-credits {
+  padding: 2rem;
+  text-align: center;
+}
+
+.startup-credit-text {
+  font-family: "Cormorant Garamond", Georgia, serif;
+  font-weight: 400;
+  font-style: italic;
+  font-size: clamp(1.55rem, 3.1vw, 2.5rem);
+  letter-spacing: 0.06em;
+  color: #f3eee5;
+  margin: 0;
+  text-wrap: balance;
+  will-change: transform, opacity;
+}
+
+/* ============================================================================
+   PASS 1 — NON-NEGOTIABLE STARK BRIGHT-WHITE TITLE MENU
+   - BRIGHT WHITE (#ffffff), barebones, stark, almost empty
+   - White text in chalky, freaky handwriting
+   - Highlighted option turns BLOOD RED (red ONLY for the highlight)
+   - Alive, breathing, never static; ZERO on-screen control hints anywhere
+   ============================================================================ */
+.stark-title-root {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background-color: #ffffff;
+  pointer-events: auto;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stark-title-root.hidden {
+  display: none;
+}
+
+.stark-svg-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.stark-breath-field {
+  position: absolute;
+  inset: -6%;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 44%, rgba(255, 255, 255, 1) 42%, rgba(242, 242, 244, 0.55) 100%);
+  will-change: opacity;
+}
+
+.stark-center-stage {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: min(980px, 92vw);
+  min-height: 68vh;
+  gap: clamp(3.4rem, 7.5vh, 6rem);
+}
+
+.stark-center-stage.hidden {
+  display: none;
+}
+
+/* White chalky freaky handwriting carved out of blinding white space */
+.chalk-white-text {
+  font-family: "Rock Salt", "Reenie Beanie", cursive;
+  color: #ffffff;
+  -webkit-text-stroke: 1.55px rgba(22, 22, 26, 0.78);
+  paint-order: stroke fill;
+  text-shadow:
+    0 0 1px rgba(18, 18, 22, 0.85),
+    1px 2px 0 rgba(28, 28, 32, 0.42),
+    -1px -1px 0 rgba(28, 28, 32, 0.34),
+    0 3px 9px rgba(16, 16, 20, 0.22);
+  filter: url(#chalk-freak);
+  user-select: none;
+}
+
+.stark-main-title {
+  margin: 0;
+  font-weight: 400;
+  font-size: clamp(2.5rem, 5.2vw, 4.65rem);
+  line-height: 1.25;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-wrap: balance;
+  will-change: transform;
+}
+
+.stark-menu-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(1.35rem, 3.2vh, 2.35rem);
+}
+
+.stark-menu-item {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0.45rem 1.8rem;
+  cursor: pointer;
+  font-size: clamp(1.65rem, 3.05vw, 2.65rem);
+  line-height: 1.3;
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+  transition:
+    color 140ms ease,
+    -webkit-text-stroke-color 140ms ease,
+    text-shadow 160ms ease,
+    opacity 180ms ease;
+  will-change: transform;
+}
+
+.stark-menu-item:focus-visible {
+  outline: none;
+}
+
+/* Subtle ghostly restraint on ENTER while waiting for controller (never red unless highlighted) */
+.stark-menu-item.is-enter-locked:not(.is-highlighted) {
+  opacity: 0.68;
+}
+
+/* BLOOD RED — strictly and ONLY for the highlighted option */
+.stark-menu-item.is-highlighted {
+  color: #a4080e;
+  -webkit-text-stroke: 1.25px #5e0306;
+  text-shadow:
+    0 0 2px rgba(130, 6, 12, 0.62),
+    1px 2px 0 rgba(82, 3, 6, 0.48),
+    0 4px 16px rgba(164, 8, 14, 0.28);
+}
+
+.stark-subview-heading {
+  margin: 0;
+  font-weight: 400;
+  font-size: clamp(1.9rem, 3.6vw, 3rem);
+  letter-spacing: 0.16em;
+}
+
+.stark-settings-rows {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.45rem;
+}
+
+.stark-sub-item {
+  font-size: clamp(1.3rem, 2.3vw, 1.95rem);
+}
+
+.stark-credits-lines {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.4rem;
+  text-align: center;
+  max-width: 760px;
+}
+
+.stark-credit-row {
+  margin: 0;
+  font-size: clamp(1.15rem, 2.05vw, 1.65rem);
+  line-height: 1.6;
+  letter-spacing: 0.05em;
+  -webkit-text-stroke: 1.35px rgba(22, 22, 26, 0.8);
+}
+
+.stark-credit-studio {
+  margin-top: 0.8rem;
+  font-size: clamp(0.95rem, 1.45vw, 1.2rem);
+  letter-spacing: 0.18em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chalk-white-text {
+    filter: none;
+  }
+}
+
+
+
+
+/* Pass 2 (Nov 20, 2026): Batch 2 title fade + collectible toast states.
+   HallVinylCollectibles toggles these classes; title only, no labels. */
+#bottom-right-track-title { opacity: 0; transition: opacity 1.4s ease; }
+#bottom-right-track-title.is-fading-in { opacity: 0.92; transition: opacity 0.6s ease; }
+#bottom-right-track-title.is-fading-out { opacity: 0; }
+#first-play-collectible-toast { opacity: 0; transform: translate(-50%, 8px); transition: opacity 0.5s ease, transform 0.5s ease; }
+#first-play-collectible-toast.is-shown { opacity: 1; transform: translate(-50%, 0); }

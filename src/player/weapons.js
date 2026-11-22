@@ -1,0 +1,1575 @@
+import * as THREE from 'three';
+import { sfx } from '../audio/sfx.js';
+import { tryLoadModel } from '../utils/assetLoader.js';
+import { createViewmodelIdleState, stepViewmodelIdle } from './viewmodelIdleLogic.js';
+import {
+  applyProceduralGlockKickback,
+  updateProceduralGlockRecoil,
+} from '../entities/clipAnimator.js';
+import { pulseRumble } from '../game/levelOneBindings.js';
+import { ShellCasingSystem } from './shellCasings.js';
+import { GrabAnimator } from './grabAnimator.js';
+import { GRAB_POSES, lerpPose, clonePose } from './grabPoses.js';
+import { ShotgunAnimator } from '../weapons/shotgunAnimator.js';
+
+// Grab pose layer constants: per-joint share of a chain's total curl, and
+// the curl direction sign for this rig's finger bones (verified by render).
+const GRAB_JOINT_WEIGHTS = [0.45, 0.33, 0.22];
+const GRAB_CURL_SIGN = 1;
+
+/**
+ * First-Person 3D Weapons Viewmodels & Combat System:
+ * - Rigged `fps_arms.glb` viewmodel with AnimationMixer crossfading (Idle / Grip / Reload / Shoot, 180-220 ms)
+ * - Hero `glock.glb` parented to `Hand.R.001` (oriented barrel-forward along -Z)
+ * - Hero `knife.glb` combat blade for active weapon & quick melee (RS click / V)
+ * - Organic non-repeating procedural idle layered over Idle clip (`viewmodelIdleLogic.js`):
+ *   4-5 s breathing + 2 noise layers + 7-14 s weight shifts + low-HP tremor + post-sprint heave + 40% ADS
+ * - ADS (`LT`/`RMB`), Sprint cancels reload, Inspect (`D-pad Up`/`T`), Holster (`D-pad Down`/`H`), Shove (`RB`/`G`)
+ */
+export class WeaponSystem {
+  constructor(camera, callbacks = {}) {
+    this.camera = camera;
+    this.callbacks = callbacks;
+
+    this.activeWeapon = 'glock'; // 'glock' | 'knife' | 'shotgun' | 'sword'
+    this.loadout = 'standard'; // 'standard' (glock/knife) | 'level1' (shotgun/sword)
+    this.magSize = 15;
+    this._ammoInMag = 15;
+    this._reserveAmmo = 60;
+
+    // Level One Arsenal (Shotgun + Sword)
+    this.shotgunMagSize = 6;
+    this.shotgunAmmoInMag = 6;
+    this.shotgunReserve = 18;
+    this.shotgunPump = 0;
+    this.swordSlashing = false;
+    this.swordSlashTimer = 0;
+    this.swordSlashDuration = 0.44;
+    this.swordHitChecked = false;
+
+    // Timers & animation state
+    this.fireCooldown = 0;
+    this.recoilKick = 0;
+    this.slideBack = 0;
+    this.muzzleFlashTimer = 0;
+    this.reloading = false;
+    this.reloadTimer = 0;
+    this.reloadDuration = 1.55;
+
+    // Knife slash animation (also supports instant quick-knife while holding Glock)
+    this.slashing = false;
+    this.slashTimer = 0;
+    this.slashDuration = 0.34;
+    this.slashHitChecked = false;
+    this.quickKnifeActive = false;
+
+    // Inspect, holster, shove, ADS, swap states
+    this.swapAnim = 0; // 0 = ready, 1 = lowered
+    this.holstered = true; // Holstered by default (Lotty, Nov 20, 2026)
+    this.holsterBlend = 1; // 0 = drawn, 1 = holstered
+    this.inspecting = false;
+    this.inspectTimer = 0;
+    this.inspectDuration = 1.65;
+    this.shoving = false;
+    this.shoveTimer = 0;
+    this.shoveDuration = 0.36;
+
+    // Organic procedural idle state (layered on top of fps_arms Idle clip)
+    this.idleState = createViewmodelIdleState(7109);
+
+    // fps_arms.glb mixer & actions
+    this.armsMixer = null;
+    this.armsActions = {};
+    this.activeArmsAction = null;
+    this.armsLoaded = false;
+    this.armsRoot = null;
+    this._heroGlockScene = null;
+    this._mountedGlockOnArms = false;
+
+    // Grab system (Stage 4 Slot 2): procedural finger-pose layer over the
+    // arms mixer + reach motion on the arms pivot. See grabAnimator.js.
+    this.grabAnimator = new GrabAnimator();
+    this._grabBones = null; // { R: {index:[..3 bones], thumb:[..], doubles:[..]}, L: {...} }
+    this._grabRest = new Map(); // bone -> rest quaternion
+    this._grabFromPose = clonePose(GRAB_POSES.open);
+    this._grabPoseCurrent = clonePose(GRAB_POSES.open);
+    this._grabRelease = 0; // 0..1 fade of the additive layer after a grab ends
+    this._armsPivotBasePos = null;
+    this._grabTmpQ = new THREE.Quaternion();
+    this._grabAxisX = new THREE.Vector3(1, 0, 0);
+    this._grabAxisZ = new THREE.Vector3(0, 0, 1);
+
+    // Shotgun Animator (Balistucia)
+    this.shotgunAnimator = null;
+    this._initFallbackShotgunAnimator();
+
+    this.root = new THREE.Group();
+    this.camera.add(this.root);
+    this.shellCasings = new ShellCasingSystem(this.root);
+
+    this._raycaster = new THREE.Raycaster();
+    this._centerNDC = new THREE.Vector2(0, 0);
+    this._camDir = new THREE.Vector3();
+    this._toTarget = new THREE.Vector3();
+
+    this._buildGlock();
+    this._buildKnife();
+    this._buildShotgun();
+    this._buildSword();
+    this._loadHeroWeaponModels();
+    this._syncVisibility();
+  }
+
+  get ammoInMag() {
+    return this.activeWeapon === 'shotgun' ? this.shotgunAmmoInMag : this._ammoInMag;
+  }
+
+  set ammoInMag(val) {
+    if (this.activeWeapon === 'shotgun') this.shotgunAmmoInMag = val;
+    else this._ammoInMag = val;
+  }
+
+  get reserveAmmo() {
+    return this.activeWeapon === 'shotgun' ? this.shotgunReserve : this._reserveAmmo;
+  }
+
+  set reserveAmmo(val) {
+    if (this.activeWeapon === 'shotgun') this.shotgunReserve = val;
+    else this._reserveAmmo = val;
+  }
+
+  setLoadout(loadout) {
+    this.loadout = loadout;
+    if (loadout === 'level1') {
+      this.equip('shotgun');
+    } else {
+      this.equip('glock');
+    }
+  }
+
+  // ---- Grab system (Stage 4 Slot 2, Nov 21, 2026) ----
+
+  get isGrabbing() {
+    return this.grabAnimator.active;
+  }
+
+  /**
+   * Starts an unskippable first-person grab. Returns false if the arms are
+   * not loaded or a grab is already running. `onClose` fires at the take
+   * moment (hands closed on the object) — callers apply pickup effects
+   * there, never at button press.
+   */
+  startGrab({ profile = 'fast', pose = 'gripWrap', onClose = null, onDone = null } = {}) {
+    if (!this.armsLoaded || !this._grabBones) return false;
+    const target = GRAB_POSES[pose];
+    if (!target) return false;
+    this._grabFromPose = clonePose(this._grabPoseCurrent);
+    this._grabTargetPose = target;
+    const ok = this.grabAnimator.start({ profile, poseName: pose, onClose, onDone });
+    if (ok) this._grabRelease = 0;
+    return ok;
+  }
+
+  getGrabState() {
+    return {
+      active: this.grabAnimator.active,
+      profile: this.grabAnimator.profileName || null,
+      pose: this.grabAnimator.poseName || null,
+      t: Number(this.grabAnimator.t.toFixed(3)),
+      poseCurrent: clonePose(this._grabPoseCurrent),
+    };
+  }
+
+  _collectGrabBones() {
+    if (!this.armsRoot) return;
+    const chains = {
+      R: {
+        index: ['IndexBeginning.R.001', 'Index.R.001', 'IndexTip.R.001'],
+        thumb: ['ThumbBeginning.R.001', 'Thumb.R.001', 'ThumbTip.R.001'],
+        doubles: ['DoubleFingersBeginning.001', 'DoubleFingers.R.001', 'DoubleFingersTip.R.001'],
+      },
+      L: {
+        index: ['IndexBeginning.L', 'Index.L', 'IndexTip.L'],
+        thumb: ['ThumbBeginning.L', 'Thumb.L', 'ThumbTip.L'],
+        doubles: ['DoubleFingersBeginning', 'DoubleFingers.L', 'DoubleFingersTip.L'],
+      },
+    };
+    const byName = new Map();
+    this.armsRoot.traverse((o) => {
+      // GLTFLoader sanitizes node names (dots are stripped: 'Hand.R.001'
+      // loads as 'HandR001'), so match on alphanumeric-only keys.
+      if (o.isBone) byName.set(o.name.replace(/[^a-zA-Z0-9]/g, ''), o);
+    });
+    const out = { R: {}, L: {} };
+    for (const hand of ['R', 'L']) {
+      for (const chain of ['index', 'thumb', 'doubles']) {
+        out[hand][chain] = chains[hand][chain]
+          .map((n) => byName.get(n.replace(/[^a-zA-Z0-9]/g, '')))
+          .filter(Boolean);
+        for (const b of out[hand][chain]) this._grabRest.set(b, b.quaternion.clone());
+      }
+    }
+    this._grabBones = out;
+    this._armsPivotBasePos = this.armsRoot.position.clone();
+  }
+
+  _applyGrabPose(pose) {
+    if (!this._grabBones) return;
+    // Chain curl limits (radians) matched to the fps_arms rig:
+    const CHAIN_MAX = { index: 2.0, doubles: 2.1, thumb: 1.5 };
+    for (const hand of ['R', 'L']) {
+      const pHand = pose[hand];
+      if (!pHand) continue;
+      for (const chain of ['index', 'thumb', 'doubles']) {
+        const bones = this._grabBones[hand][chain];
+        if (!bones || bones.length === 0) continue;
+        const curl = THREE.MathUtils.clamp(pHand[chain] ?? 0, 0, 1);
+        const max = CHAIN_MAX[chain];
+        // Thumb curls along local Z; fingers curl along local X.
+        const axis = chain === 'thumb' ? this._grabAxisZ : this._grabAxisX;
+        for (let i = 0; i < bones.length; i++) {
+          const rest = this._grabRest.get(bones[i]);
+          if (!rest) continue;
+          const ang = GRAB_CURL_SIGN * curl * max * GRAB_JOINT_WEIGHTS[i];
+          this._grabTmpQ.setFromAxisAngle(axis, ang);
+          bones[i].quaternion.copy(rest).multiply(this._grabTmpQ);
+        }
+      }
+    }
+  }
+
+  _updateGrab(dt) {
+    if (!this._grabBones || !this.armsRoot || !this._armsPivotBasePos) return;
+    const snap = this.grabAnimator.update(dt);
+    if (snap.active || snap.phase === 'done') {
+      const target = this._grabTargetPose || GRAB_POSES.open;
+      const pose = lerpPose(this._grabFromPose, target, snap.curlAmt);
+      this._grabPoseCurrent = pose;
+      this._applyGrabPose(pose);
+      // Reach: the arms pivot pushes forward/down from its base position.
+      const ritual = snap.profileName === 'ritual';
+      const depth = (ritual ? 0.2 : 0.13) * snap.reachAmt;
+      const drop = (ritual ? 0.06 : 0.03) * snap.reachAmt;
+      const center = (ritual ? 0.03 : 0) * snap.reachAmt;
+      this.armsRoot.position.set(
+        this._armsPivotBasePos.x + center,
+        this._armsPivotBasePos.y - drop,
+        this._armsPivotBasePos.z - depth
+      );
+      if (snap.phase === 'done') this._grabRelease = 0.0001; // begin fade-out
+      return;
+    }
+    if (this._grabRelease > 0) {
+      // Fade the additive pose back to the underlying clip (~0.35 s) and
+      // rest the pivot exactly at base when the fade completes.
+      this._grabRelease = Math.min(1, this._grabRelease + dt / 0.35);
+      const pose = lerpPose(GRAB_POSES.open, this._grabPoseCurrent, 1 - this._grabRelease);
+      this._applyGrabPose(pose);
+      if (this._grabRelease >= 1) {
+        this._grabPoseCurrent = clonePose(GRAB_POSES.open);
+        this.armsRoot.position.copy(this._armsPivotBasePos);
+        this._grabRelease = 0;
+      }
+    }
+  }
+
+  // ---- Shotgun Animator (Balistucia) ----
+
+  _initFallbackShotgunAnimator() {
+    const dummyRoot = new THREE.Object3D();
+    const dummyShell = new THREE.Object3D();
+    const dummyWorld = new THREE.Object3D();
+    this.shotgunAnimator = new ShotgunAnimator({
+      root: dummyRoot,
+      shellTemplate: dummyShell,
+      worldShellParent: dummyWorld,
+    });
+  }
+
+  getShotgunAnimState() {
+    return this.shotgunAnimator ? this.shotgunAnimator.getAnimState() : null;
+  }
+
+  _playArmsClip(clipKey, { loop = true, fade = 0.19, timeScale = 1.0 } = {}) {
+    if (!this.armsMixer || !this.armsActions[clipKey]) return;
+    const next = this.armsActions[clipKey];
+    if (this.activeArmsAction === next && loop) return;
+
+    next.reset();
+    next.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1);
+    next.clampWhenFinished = !loop;
+    next.timeScale = timeScale;
+    next.enabled = true;
+
+    if (this.activeArmsAction && this.activeArmsAction !== next) {
+      next.crossFadeFrom(this.activeArmsAction, fade, true);
+    }
+    next.play();
+    this.activeArmsAction = next;
+  }
+
+  _tryMountHeroGlockToArms() {
+    if (this._mountedGlockOnArms || !this.armsLoaded || !this._heroGlockScene || !this.armsRoot) {
+      return;
+    }
+
+    // Find Hand.R.001 bone and existing Glock19 reference mesh inside fps_arms.glb
+    // GLTFLoader sanitizes node names (dots are stripped: 'Hand.R.001' loads as 'HandR001')
+    let handBone = null;
+    let refGlockMesh = null;
+    this.armsRoot.traverse((obj) => {
+      if (obj.isBone) {
+        const clean = obj.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        if (clean === 'handr001' || clean === 'handr') {
+          handBone = obj;
+        }
+      }
+      if (obj.isMesh) {
+        const clean = obj.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        if (clean === 'glock19') {
+          refGlockMesh = obj;
+        }
+      }
+    });
+
+    if (!handBone) return;
+
+    // Compute exact world-space bounding box of the rigged reference Glock19 in bind/idle pose
+    this.armsRoot.updateMatrixWorld(true);
+    let targetLen = 0.25;
+    let refCenterWorld = new THREE.Vector3(0.0, 0.0, -0.05);
+    if (refGlockMesh) {
+      const refBox = new THREE.Box3().setFromObject(refGlockMesh);
+      const refSize = new THREE.Vector3();
+      refBox.getSize(refSize);
+      refBox.getCenter(refCenterWorld);
+      targetLen = Math.max(refSize.x, refSize.y, refSize.z, 0.22);
+      refGlockMesh.visible = false;
+    }
+
+    // Normalize hero glock.glb around its own center
+    const glockModel = this._heroGlockScene.clone(true);
+    const gBox = new THREE.Box3().setFromObject(glockModel);
+    const gSize = new THREE.Vector3();
+    const gCenter = new THREE.Vector3();
+    gBox.getSize(gSize);
+    gBox.getCenter(gCenter);
+    glockModel.position.sub(gCenter);
+
+    // Orient hero glock.glb so its muzzle (-X in raw Tripo export) points straight downrange (-Z in glockGroup space)
+    const glockAligned = new THREE.Group();
+    glockAligned.add(glockModel);
+    const maxDim = Math.max(gSize.x, gSize.y, gSize.z, 0.001);
+    const desiredWorldScale = targetLen / maxDim;
+    glockAligned.rotation.y = -Math.PI * 0.5; // maps -X muzzle -> -Z downrange!
+
+    // Convert world-aligned orientation & position into Hand.R.001 local bone space
+    const handWorldMat = new THREE.Matrix4().copy(handBone.matrixWorld);
+    const handInv = handWorldMat.clone().invert();
+    const handWorldScale = new THREE.Vector3();
+    const handWorldPos = new THREE.Vector3();
+    const handWorldQuat = new THREE.Quaternion();
+    handWorldMat.decompose(handWorldPos, handWorldQuat, handWorldScale);
+
+    // Build wrapper parented directly to Hand.R.001 bone
+    const mount = new THREE.Group();
+    mount.name = 'HeroGlockHandMount';
+    // Cancel out hand bone world rotation so glock stays aligned to -Z barrel-forward, then follow hand bone animation!
+    const invQuat = handWorldQuat.clone().invert();
+    const localCenter = refCenterWorld.clone().applyMatrix4(handInv);
+    mount.position.copy(localCenter);
+    mount.quaternion.copy(invQuat);
+    const invBoneScale = 1 / Math.max(0.0001, handWorldScale.x);
+    mount.scale.setScalar(desiredWorldScale * invBoneScale);
+    mount.add(glockAligned);
+
+    handBone.add(mount);
+    this._mountedGlockOnArms = true;
+  }
+
+  _loadHeroWeaponModels() {
+    // 1. Load rigged fps_arms.glb (clips: Armature|Grip, Armature|Idle, Armature|Reload, Armature|Shoot)
+    tryLoadModel('heroes/fps_arms', { castShadow: false, receiveShadow: false }).then((gltf) => {
+      if (!gltf || !this.glockGroup) return;
+      const armsScene = gltf.scene;
+
+      // De-plasticize untextured arm/glove materials so they read realistic under flashlight & HDRI
+      armsScene.traverse((child) => {
+        if (child.isMesh) {
+          child.frustumCulled = false;
+          const mats = Array.isArray(child.material) ? child.material : [child.material];
+          for (const m of mats) {
+            if (!m) continue;
+            const n = (m.name || '').toLowerCase();
+            if (n.includes('skin')) {
+              m.metalness = 0.02;
+              m.roughness = 0.74;
+              if (m.color) m.color.multiplyScalar(0.78);
+            } else if (n.includes('shirt')) {
+              m.metalness = 0.04;
+              m.roughness = 0.9;
+              if (m.color) m.color.setHex(0x282b27);
+            } else if (n.includes('glove')) {
+              m.metalness = 0.05;
+              m.roughness = 0.84;
+              if (m.color) m.color.multiplyScalar(0.75);
+            } else {
+              m.metalness = Math.min(m.metalness ?? 0.4, 0.55);
+              m.roughness = Math.max(m.roughness ?? 0.45, 0.35);
+            }
+          }
+        }
+      });
+
+      const armsPivot = new THREE.Group();
+      armsPivot.name = 'FPSArmsRig';
+      // Measure arms bounding box in raw pose, then scale & frame cleanly in camera view
+      armsScene.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(armsScene);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
+
+      const maxSpan = Math.max(size.x, size.y, size.z, 0.001);
+      const targetSpan = 0.92; // Hands BIGGER on screen (Lotty, Nov 20, 2026; was 0.68)
+      const sc = targetSpan / maxSpan;
+      armsScene.scale.setScalar(sc);
+      armsScene.position.set(-center.x * sc, -center.y * sc, -center.z * sc);
+
+      // fps_arms extends from shoulders (-X) to hands (+X): rotate +90° Y so arms aim straight downrange (-Z)
+      armsPivot.rotation.y = Math.PI * 0.5;
+      armsPivot.position.set(-0.07, -0.05, 0.05);
+      armsPivot.add(armsScene);
+
+      // Hide procedural fallback Glock meshes while keeping muzzle flash & muzzle light active
+      for (const child of this.glockGroup.children) {
+        if (child !== this.muzzleFlashMesh && child !== this.muzzleLight && child !== this._standaloneGlockPivot) {
+          child.visible = false;
+        }
+      }
+      if (this._standaloneGlockPivot) {
+        this._standaloneGlockPivot.visible = false;
+      }
+
+      this.glockGroup.add(armsPivot);
+      this.armsRoot = armsPivot;
+      this.armsLoaded = true;
+
+      // Setup AnimationMixer with 150-250 ms crossfade actions
+      if (gltf.animations && gltf.animations.length > 0) {
+        this.armsMixer = new THREE.AnimationMixer(armsScene);
+        for (const clip of gltf.animations) {
+          const lower = clip.name.toLowerCase();
+          if (lower.includes('idle')) this.armsActions.idle = this.armsMixer.clipAction(clip);
+          else if (lower.includes('grip')) this.armsActions.grip = this.armsMixer.clipAction(clip);
+          else if (lower.includes('reload')) this.armsActions.reload = this.armsMixer.clipAction(clip);
+          else if (lower.includes('shoot')) this.armsActions.shoot = this.armsMixer.clipAction(clip);
+        }
+        // Sample frame 0 of Idle before mounting glock.glb so bone matrices are in exact Idle pose
+        if (this.armsActions.idle) {
+          this._playArmsClip('idle', { loop: true, fade: 0.0 });
+          this.armsMixer.update(0.016);
+        }
+      }
+
+      this._collectGrabBones();
+      this._tryMountHeroGlockToArms();
+    });
+
+    // 2. Load high-detail hero Glock (glock.glb) — mounted onto Hand.R.001 once fps_arms loads
+    tryLoadModel('heroes/glock', { castShadow: false, receiveShadow: false }).then((gltf) => {
+      if (!gltf || !this.glockGroup) return;
+      this._heroGlockScene = gltf.scene;
+
+      if (this.armsLoaded) {
+        this._tryMountHeroGlockToArms();
+        return;
+      }
+
+      // Temporary standalone mount until fps_arms arrives (muzzle along -X -> rotate -PI/2 so barrel points -Z!)
+      const model = gltf.scene.clone(true);
+      const box = new THREE.Box3().setFromObject(model);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
+
+      model.position.sub(center);
+      const pivot = new THREE.Group();
+      pivot.add(model);
+
+      const maxDim = Math.max(size.x, size.y, size.z, 0.001);
+      const s = 0.28 / maxDim;
+      pivot.scale.setScalar(s);
+      pivot.rotation.y = size.x > size.z * 1.15 ? -Math.PI * 0.5 : 0;
+      pivot.position.set(0, -0.015, -0.025);
+
+      for (const child of this.glockGroup.children) {
+        if (child !== this.muzzleFlashMesh && child !== this.muzzleLight) {
+          child.visible = false;
+        }
+      }
+      this._standaloneGlockPivot = pivot;
+      this.glockGroup.add(pivot);
+    });
+
+    // 3. Load hero Combat Knife (knife.glb)
+    tryLoadModel('heroes/knife', { castShadow: false, receiveShadow: false }).then((gltf) => {
+      if (!gltf || !this.knifeGroup) return;
+      const model = gltf.scene;
+      const box = new THREE.Box3().setFromObject(model);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
+
+      model.position.sub(center);
+      const pivot = new THREE.Group();
+      pivot.add(model);
+
+      const maxDim = Math.max(size.x, size.y, size.z, 0.001);
+      const s = 0.36 / maxDim;
+      pivot.scale.setScalar(s);
+      if (size.x > size.y && size.x >= size.z) {
+        pivot.rotation.z = Math.PI * 0.5;
+      } else if (size.z > size.y && size.z > size.x) {
+        pivot.rotation.x = -Math.PI * 0.5;
+      }
+      pivot.position.set(0, 0.02, 0);
+
+      for (const child of this.knifeGroup.children) {
+        child.visible = false;
+      }
+      this.knifeGroup.add(pivot);
+    });
+
+    // 4. Load hero Shotgun (balistucia.glb) & shell (shotgun_shell.glb)
+    Promise.all([
+      tryLoadModel('weapons/balistucia', { castShadow: false, receiveShadow: false }),
+      tryLoadModel('weapons/shotgun_shell', { castShadow: false, receiveShadow: false }),
+    ]).then(([shotgunGltf, shellGltf]) => {
+      if (!shotgunGltf || !this.shotgunGroup) return;
+      const shotgunScene = shotgunGltf.scene;
+
+      // Find hierarchy nodes per spec:
+      // shotgun_root > shotgun_body, pump_forend, breech_bolt, ejection_port_socket, loading_port_socket, holo_sight
+      let shotgunRoot = null;
+      let pumpForend = null;
+      let breechBolt = null;
+      let ejectionPort = null;
+      let loadingPort = null;
+
+      shotgunScene.traverse((obj) => {
+        if (obj.name === 'shotgun_root') shotgunRoot = obj;
+        else if (obj.name === 'pump_forend') pumpForend = obj;
+        else if (obj.name === 'breech_bolt') breechBolt = obj;
+        else if (obj.name === 'ejection_port_socket') ejectionPort = obj;
+        else if (obj.name === 'loading_port_socket') loadingPort = obj;
+
+        if (obj.isMesh) {
+          if (obj.name === 'holo_sight_2' || (obj.material && obj.material.name === 'holo_reticle_red')) {
+            obj.material = new THREE.MeshBasicMaterial({
+              color: 0xff2a2a,
+              transparent: true,
+              depthWrite: false,
+              side: THREE.DoubleSide,
+            });
+          } else if (obj.name === 'forend_vents' || (obj.material && obj.material.name === 'forend_vents_cyan')) {
+            if (obj.material) {
+              obj.material.emissive = new THREE.Color(0x22d3ee);
+              obj.material.emissiveIntensity = 2.0;
+            }
+          }
+        }
+      });
+
+      if (!shotgunRoot) shotgunRoot = shotgunScene;
+
+      // Model forward is +X, up is +Y, ejection side is +Z. Rotate +90° Y so muzzle points -Z!
+      shotgunRoot.rotation.y = Math.PI * 0.5;
+
+      // Hide procedural fallback shotgun meshes while keeping muzzle flash & muzzle light active
+      for (const child of this.shotgunGroup.children) {
+        if (child !== this.shotgunMuzzleFlash && child !== this.shotgunMuzzleLight) {
+          child.visible = false;
+        }
+      }
+      this.shotgunGroup.add(shotgunRoot);
+
+      if (this.shotgunMuzzleFlash) this.shotgunMuzzleFlash.position.set(0, 0.024, -0.52);
+      if (this.shotgunMuzzleLight) this.shotgunMuzzleLight.position.set(0, 0.024, -0.54);
+
+      let shellTemplate = shellGltf ? shellGltf.scene : null;
+      if (!shellTemplate) {
+        const shellGeo = new THREE.CylinderGeometry(0.013, 0.013, 0.07, 12);
+        const shellMat = new THREE.MeshStandardMaterial({ color: 0xb5893b, roughness: 0.35, metalness: 0.88 });
+        shellTemplate = new THREE.Mesh(shellGeo, shellMat);
+      }
+
+      this.shotgunAnimator = new ShotgunAnimator(
+        {
+          root: shotgunRoot,
+          pumpForend,
+          breechBolt,
+          ejectionPortSocket: ejectionPort,
+          loadingPortSocket: loadingPort,
+          shellTemplate,
+          worldShellParent: this.root,
+        },
+        {
+          onPumpBack: () => {
+            sfx._playStudioClip?.('slideRack', { volume: 0.65, rate: 1.15 });
+          },
+          onPumpForward: () => {
+            sfx._playStudioClip?.('slideRack', { volume: 0.55, rate: 1.45 });
+          },
+          onShellEjected: () => {
+            sfx.playShellDrop?.('shotgun');
+          },
+          onShellInserted: () => {
+            if (this.shotgunReserve > 0 && this.shotgunAmmoInMag < this.shotgunMagSize) {
+              this.shotgunAmmoInMag += 1;
+              this.shotgunReserve -= 1;
+              this.callbacks.onAmmoChanged?.();
+            }
+          },
+          onReloadComplete: () => {
+            this.reloading = false;
+            this.callbacks.onAmmoChanged?.();
+          },
+        }
+      );
+    });
+  }
+
+  reset() {
+    this.activeWeapon = 'glock';
+    this.ammoInMag = this.magSize;
+    this.reserveAmmo = 60;
+    this.fireCooldown = 0;
+    this.recoilKick = 0;
+    this.slideBack = 0;
+    this.muzzleFlashTimer = 0;
+    this.reloading = false;
+    this.reloadTimer = 0;
+    this.slashing = false;
+    this.slashTimer = 0;
+    this.quickKnifeActive = false;
+    this.swapAnim = 0;
+    this.holstered = true; // Holstered by default at every (re)start (Lotty, Nov 20, 2026)
+    this.holsterBlend = 1;
+    this.inspecting = false;
+    this.inspectTimer = 0;
+    this.shoving = false;
+    this.shoveTimer = 0;
+    this.muzzleLight.intensity = 0;
+    this.muzzleFlashMesh.visible = false;
+    if (this.shellCasings) this.shellCasings.reset();
+    this._playArmsClip('idle', { loop: true, fade: 0.18 });
+    this._syncVisibility();
+  }
+
+  addAmmo(amount) {
+    this.reserveAmmo = Math.min(180, this.reserveAmmo + amount);
+  }
+
+  toggleHolster() {
+    this.holstered = !this.holstered;
+    this.inspecting = false;
+    if (this.holstered) this.cancelReload();
+    return this.holstered;
+  }
+
+  triggerInspect() {
+    if (this.holstered || this.reloading || this.slashing || this.shoving || this.grabAnimator.active) return false;
+    this.inspecting = true;
+    this.inspectTimer = 0;
+    if (this.activeWeapon === 'glock') {
+      this._playArmsClip('grip', { loop: false, fade: 0.22 });
+    }
+    return true;
+  }
+
+  triggerShove() {
+    if (this.shoving || this.slashing || this.grabAnimator.active) return false;
+    this.cancelReload();
+    this.inspecting = false;
+    this.shoving = true;
+    this.shoveTimer = 0;
+    return true;
+  }
+
+  cancelReload() {
+    if (!this.reloading) return;
+    this.reloading = false;
+    this.reloadTimer = 0;
+    if (this.shotgunAnimator) {
+      this.shotgunAnimator.interruptReload();
+    }
+    this._playArmsClip('idle', { loop: true, fade: 0.18 });
+  }
+
+  equip(weapon) {
+    if (this.grabAnimator.active) return; // never yank the viewmodel mid-grab
+    if (weapon !== 'glock' && weapon !== 'knife' && weapon !== 'shotgun' && weapon !== 'sword') return;
+    if (this.holstered) this.holstered = false;
+    if (this.activeWeapon === weapon && !this.quickKnifeActive) return;
+    this.cancelReload();
+    this.inspecting = false;
+    this.quickKnifeActive = false;
+    this.activeWeapon = weapon;
+    this.swapAnim = 0.85;
+    this._syncVisibility();
+  }
+
+  swap() {
+    if (this.loadout === 'level1') {
+      this.equip(this.activeWeapon === 'shotgun' ? 'sword' : 'shotgun');
+    } else {
+      this.equip(this.activeWeapon === 'glock' ? 'knife' : 'glock');
+    }
+  }
+
+  _syncVisibility() {
+    const isShotgun = this.activeWeapon === 'shotgun' && !this.quickKnifeActive;
+    const isSword = this.activeWeapon === 'sword' && !this.quickKnifeActive;
+    const showKnife = (this.activeWeapon === 'knife' || this.quickKnifeActive) && !isSword;
+    const showGlock = this.activeWeapon === 'glock' && !showKnife;
+
+    if (this.glockGroup) this.glockGroup.visible = showGlock;
+    if (this.knifeGroup) this.knifeGroup.visible = showKnife;
+    if (this.shotgunGroup) this.shotgunGroup.visible = isShotgun;
+    if (this.swordGroup) this.swordGroup.visible = isSword;
+  }
+
+  _buildGlock() {
+    const g = new THREE.Group();
+    g.position.set(0.22, -0.21, -0.43);
+
+    const polymerMat = new THREE.MeshStandardMaterial({
+      color: 0x16171a,
+      roughness: 0.74,
+      metalness: 0.14,
+    });
+    const slideMat = new THREE.MeshStandardMaterial({
+      color: 0x1f2127,
+      roughness: 0.34,
+      metalness: 0.72,
+    });
+    const steelMat = new THREE.MeshStandardMaterial({
+      color: 0x2d3038,
+      roughness: 0.28,
+      metalness: 0.88,
+    });
+    const tritiumMat = new THREE.MeshBasicMaterial({ color: 0x9df5b0 });
+
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(0.044, 0.036, 0.255), polymerMat);
+    frame.position.set(0, 0.0, -0.02);
+
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.012, 0.09), polymerMat);
+    rail.position.set(0, -0.02, -0.095);
+
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.042, 0.135, 0.068), polymerMat);
+    grip.position.set(0, -0.072, 0.072);
+    grip.rotation.x = 0.22;
+
+    const mag = new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.125, 0.052), steelMat);
+    mag.position.set(0, -0.082, 0.076);
+    mag.rotation.x = 0.22;
+    const baseplate = new THREE.Mesh(new THREE.BoxGeometry(0.044, 0.014, 0.068), polymerMat);
+    baseplate.position.set(0, -0.068, 0);
+    mag.add(baseplate);
+    this.glockMag = mag;
+    this.glockMagRestY = -0.082;
+
+    const guardBottom = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.008, 0.065), polymerMat);
+    guardBottom.position.set(0, -0.052, 0.012);
+    const guardFront = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.038, 0.009), polymerMat);
+    guardFront.position.set(0, -0.034, -0.019);
+    const trigger = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.028, 0.012), steelMat);
+    trigger.position.set(0, -0.032, 0.018);
+    trigger.rotation.x = 0.3;
+
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.18, 12), steelMat);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, 0.036, -0.075);
+
+    const slideGroup = new THREE.Group();
+    slideGroup.position.set(0, 0.036, -0.015);
+    const slideBody = new THREE.Mesh(new THREE.BoxGeometry(0.048, 0.042, 0.268), slideMat);
+    const ejectionPort = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.022, 0.055), steelMat);
+    ejectionPort.position.set(0.021, 0.006, 0.012);
+
+    const rearL = new THREE.Mesh(new THREE.BoxGeometry(0.011, 0.011, 0.01), slideMat);
+    rearL.position.set(-0.014, 0.025, 0.118);
+    const rearR = rearL.clone();
+    rearR.position.x = 0.014;
+    const dotL = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.004, 0.003), tritiumMat);
+    dotL.position.set(-0.014, 0.026, 0.124);
+    const dotR = dotL.clone();
+    dotR.position.x = 0.014;
+    const frontPost = new THREE.Mesh(new THREE.BoxGeometry(0.007, 0.012, 0.01), slideMat);
+    frontPost.position.set(0, 0.026, -0.118);
+    const frontDot = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.004, 0.003), tritiumMat);
+    frontDot.position.set(0, 0.027, -0.112);
+
+    slideGroup.add(slideBody, ejectionPort, rearL, rearR, dotL, dotR, frontPost, frontDot);
+    this.glockSlide = slideGroup;
+    this.glockSlideRestZ = -0.015;
+
+    const flashMat = new THREE.MeshBasicMaterial({
+      color: 0xffc66d,
+      transparent: true,
+      opacity: 0.92,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const flashGroup = new THREE.Group();
+    flashGroup.position.set(0, 0.036, -0.22);
+    const p1 = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.16), flashMat);
+    const p2 = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.16), flashMat);
+    p2.rotation.z = Math.PI / 4;
+    const p3 = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.19, 8), flashMat);
+    p3.rotation.x = -Math.PI / 2;
+    p3.position.z = -0.07;
+    flashGroup.add(p1, p2, p3);
+    flashGroup.visible = false;
+    this.muzzleFlashMesh = flashGroup;
+
+    this.muzzleLight = new THREE.PointLight(0xffb454, 0, 8.5, 2.0);
+    this.muzzleLight.position.set(0, 0.05, -0.26);
+
+    g.add(frame, rail, grip, mag, guardBottom, guardFront, trigger, barrel, slideGroup, flashGroup, this.muzzleLight);
+    this.root.add(g);
+    this.glockGroup = g;
+    this.glockRestPos = g.position.clone();
+    this.glockAdsPos = new THREE.Vector3(0.0, -0.135, -0.34);
+  }
+
+  _buildKnife() {
+    const k = new THREE.Group();
+    k.position.set(0.28, -0.25, -0.42);
+    k.rotation.set(0.22, -0.35, 0.16);
+
+    const bladeMat = new THREE.MeshStandardMaterial({
+      color: 0x3b4048,
+      roughness: 0.22,
+      metalness: 0.92,
+      envMapIntensity: 1.4,
+    });
+    const edgeMat = new THREE.MeshStandardMaterial({
+      color: 0xb6c0cc,
+      roughness: 0.14,
+      metalness: 0.96,
+    });
+    const guardMat = new THREE.MeshStandardMaterial({
+      color: 0x16171a,
+      roughness: 0.56,
+      metalness: 0.65,
+    });
+    const handleMat = new THREE.MeshStandardMaterial({
+      color: 0x141518,
+      roughness: 0.88,
+      metalness: 0.05,
+    });
+
+    const bladeShape = new THREE.Shape();
+    bladeShape.moveTo(0, 0);
+    bladeShape.lineTo(0.036, 0);
+    bladeShape.lineTo(0.034, 0.175);
+    bladeShape.lineTo(0.012, 0.245);
+    bladeShape.lineTo(0, 0.205);
+    bladeShape.closePath();
+
+    const bladeGeo = new THREE.ExtrudeGeometry(bladeShape, {
+      depth: 0.006,
+      bevelEnabled: true,
+      bevelThickness: 0.002,
+      bevelSize: 0.002,
+      bevelSegments: 2,
+    });
+    bladeGeo.translate(-0.018, 0.015, -0.003);
+    const blade = new THREE.Mesh(bladeGeo, bladeMat);
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.005, 0.185, 0.005), edgeMat);
+    edge.position.set(0.019, 0.11, 0);
+    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.072, 0.014, 0.024), guardMat);
+    guard.position.set(0, 0.008, 0);
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.021, 0.135, 10), handleMat);
+    handle.scale.set(1.15, 1, 0.72);
+    handle.position.set(0, -0.065, 0);
+    const pommel = new THREE.Mesh(new THREE.ConeGeometry(0.021, 0.03, 8), guardMat);
+    pommel.rotation.x = Math.PI;
+    pommel.position.set(0, -0.145, 0);
+
+    k.add(blade, edge, guard, handle, pommel);
+    this.root.add(k);
+    this.knifeGroup = k;
+    this.knifeRestPos = k.position.clone();
+    this.knifeRestRot = k.rotation.clone();
+  }
+
+  _buildShotgun() {
+    const g = new THREE.Group();
+    g.position.set(0.24, -0.24, -0.48);
+
+    const gunmetalMat = new THREE.MeshStandardMaterial({
+      color: 0x1f2228,
+      roughness: 0.38,
+      metalness: 0.85,
+    });
+    const walnutMat = new THREE.MeshStandardMaterial({
+      color: 0x4a2e1b,
+      roughness: 0.72,
+      metalness: 0.08,
+    });
+    const steelMat = new THREE.MeshStandardMaterial({
+      color: 0x363a42,
+      roughness: 0.3,
+      metalness: 0.9,
+    });
+    const brassMat = new THREE.MeshStandardMaterial({
+      color: 0xb5893b,
+      roughness: 0.35,
+      metalness: 0.88,
+    });
+
+    const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.076, 0.28), gunmetalMat);
+    receiver.position.set(0, 0, 0);
+
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.017, 0.58, 14), steelMat);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, 0.024, -0.42);
+
+    const magTube = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.52, 12), steelMat);
+    magTube.rotation.x = Math.PI / 2;
+    magTube.position.set(0, -0.012, -0.39);
+
+    const pump = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.17, 14), walnutMat);
+    pump.rotation.x = Math.PI / 2;
+    pump.position.set(0, -0.012, -0.32);
+
+    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.046, 0.11, 0.28), walnutMat);
+    stock.position.set(0, -0.045, 0.26);
+    stock.rotation.x = -0.18;
+
+    const bead = new THREE.Mesh(new THREE.SphereGeometry(0.005, 8, 8), brassMat);
+    bead.position.set(0, 0.044, -0.7);
+
+    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.034, 0.07), steelMat);
+    guard.position.set(0, -0.052, 0.04);
+
+    const flashGeo = new THREE.PlaneGeometry(0.32, 0.32);
+    const flashMat = new THREE.MeshBasicMaterial({
+      color: 0xffe299,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const flashMesh = new THREE.Mesh(flashGeo, flashMat);
+    flashMesh.position.set(0, 0.024, -0.73);
+    flashMesh.visible = false;
+
+    const flashLight = new THREE.PointLight(0xffb74d, 0, 16, 2.2);
+    flashLight.position.set(0, 0.024, -0.75);
+
+    g.add(receiver, barrel, magTube, pump, stock, bead, guard, flashMesh, flashLight);
+    this.root.add(g);
+
+    this.shotgunGroup = g;
+    this.shotgunPumpMesh = pump;
+    this.shotgunMuzzleFlash = flashMesh;
+    this.shotgunMuzzleLight = flashLight;
+    this.shotgunRestPos = g.position.clone();
+    this.shotgunAdsPos = new THREE.Vector3(0.0, -0.185, -0.42);
+    this.shotgunRestRot = g.rotation.clone();
+  }
+
+  _buildSword() {
+    const s = new THREE.Group();
+    s.position.set(0.25, -0.25, -0.46);
+    s.rotation.set(0.15, -0.25, -0.35);
+
+    const steelMat = new THREE.MeshStandardMaterial({
+      color: 0xc8d2de,
+      roughness: 0.18,
+      metalness: 0.94,
+    });
+    const edgeMat = new THREE.MeshStandardMaterial({
+      color: 0xf0f5ff,
+      roughness: 0.1,
+      metalness: 0.98,
+    });
+    const goldMat = new THREE.MeshStandardMaterial({
+      color: 0xd4af37,
+      roughness: 0.32,
+      metalness: 0.85,
+    });
+    const leatherMat = new THREE.MeshStandardMaterial({
+      color: 0x241711,
+      roughness: 0.85,
+      metalness: 0.05,
+    });
+
+    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.026, 0.042), goldMat);
+    guard.position.set(0, 0, 0);
+
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.019, 0.18, 10), leatherMat);
+    grip.position.set(0, -0.1, 0);
+
+    const pommel = new THREE.Mesh(new THREE.SphereGeometry(0.03, 10, 10), goldMat);
+    pommel.position.set(0, -0.21, 0);
+
+    const bladeGeo = new THREE.BoxGeometry(0.048, 0.72, 0.009);
+    const blade = new THREE.Mesh(bladeGeo, steelMat);
+    blade.position.set(0, 0.37, 0);
+
+    const fuller = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.58, 0.011), edgeMat);
+    fuller.position.set(0, 0.32, 0);
+
+    s.add(guard, grip, pommel, blade, fuller);
+    this.root.add(s);
+
+    this.swordGroup = s;
+    this.swordRestPos = s.position.clone();
+    this.swordRestRot = s.rotation.clone();
+  }
+
+  startReload() {
+    if (this.holstered) return false;
+    if (this.reloading || this.quickKnifeActive) return false;
+
+    if (this.activeWeapon === 'glock') {
+      if (this.ammoInMag >= this.magSize || this.reserveAmmo <= 0) return false;
+      this.inspecting = false;
+      this.reloading = true;
+      this.reloadTimer = 0;
+      sfx.playReload();
+      this._playArmsClip('reload', { loop: false, fade: 0.18 });
+      return true;
+    }
+
+    if (this.activeWeapon === 'shotgun') {
+      if (this.shotgunAmmoInMag >= this.shotgunMagSize || this.shotgunReserve <= 0) return false;
+      this.inspecting = false;
+      this.reloading = true;
+      const shellsNeeded = Math.min(this.shotgunMagSize - this.shotgunAmmoInMag, this.shotgunReserve);
+      const wasEmpty = this.shotgunAmmoInMag === 0;
+      if (this.shotgunAnimator) {
+        this.shotgunAnimator.startReload(shellsNeeded, wasEmpty);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  triggerPrimary(enemyManager, worldMeshes) {
+    if (this.grabAnimator.active) return false; // hands are busy — unskippable grab
+    if (this.holstered) {
+      this.holstered = false;
+      this.swapAnim = 0.65;
+      return false;
+    }
+    this.inspecting = false;
+    if (this.activeWeapon === 'knife') {
+      return this.triggerKnifeSlash(false);
+    }
+    if (this.activeWeapon === 'sword') {
+      return this.triggerSwordSlash(enemyManager);
+    }
+    if (this.activeWeapon === 'shotgun') {
+      return this._fireShotgun(enemyManager, worldMeshes);
+    }
+    return this._fireGlock(enemyManager, worldMeshes);
+  }
+
+  triggerSwordSlash() {
+    if (this.swordSlashing || this.shoving) return false;
+    if (this.holstered) this.holstered = false;
+    this.inspecting = false;
+    this.swordSlashing = true;
+    this.swordSlashTimer = 0;
+    this.swordHitChecked = false;
+    sfx.playKnifeSlash();
+    return true;
+  }
+
+  _performSwordHitCheck(enemyManager) {
+    if (!enemyManager) return;
+    this.camera.getWorldDirection(this._camDir);
+    const origin = this.camera.position;
+    const slashResult = enemyManager.handleMeleeSlash(origin, this._camDir, 3.8, 'sword');
+    if (slashResult && slashResult.hit) {
+      if (slashResult.smoteBySword || slashResult.isBoss) {
+        pulseRumble('sword_smite', this.callbacks.controls);
+      } else {
+        pulseRumble('sword_hit', this.callbacks.controls);
+      }
+      this.callbacks.onHitFeedback?.(slashResult.killed ? 'kill' : 'hit');
+      this.callbacks.onShake?.(0.48);
+    }
+  }
+
+  _fireShotgun(enemyManager, worldMeshes) {
+    if (this.shoving || this.fireCooldown > 0) return false;
+    // Reload interrupt: if reloading and we have chambered shells, interrupt reload and fire immediately
+    if (this.reloading) {
+      if (this.shotgunAmmoInMag > 0) {
+        this.reloading = false;
+        if (this.shotgunAnimator) {
+          this.shotgunAnimator.interruptReload();
+        }
+      } else {
+        return false;
+      }
+    }
+
+    if (this.shotgunAmmoInMag <= 0) {
+      sfx.playDryFire();
+      this.fireCooldown = 0.25;
+      if (this.shotgunReserve > 0) this.startReload();
+      else this.callbacks.onOutOfAmmo?.();
+      return false;
+    }
+
+    this.shotgunAmmoInMag -= 1;
+    this.fireCooldown = 0.55;
+    this.recoilKick = 1.6;
+    this.shotgunPump = 1.0;
+    this.muzzleFlashTimer = 0.055;
+    this.shotgunMuzzleFlash.visible = true;
+    this.shotgunMuzzleFlash.rotation.z = Math.random() * Math.PI * 2;
+    this.shotgunMuzzleLight.intensity = 18;
+
+    if (this.shotgunAnimator) {
+      this.shotgunAnimator.playFireAndPump();
+    }
+
+    sfx.playGunshot();
+    pulseRumble('shotgun_blast', this.callbacks.controls);
+    if (this.shellCasings) this.shellCasings.eject('shotgun');
+    this.callbacks.onRecoil?.(0.082);
+    this.callbacks.onShake?.(0.48);
+    this.callbacks.onGunshotNoise?.();
+
+    // 8-pellet shotgun spread raycasts
+    const pelletCount = 8;
+    const spreadRad = 0.045;
+
+    for (let p = 0; p < pelletCount; p++) {
+      const ndcX = (Math.random() - 0.5) * spreadRad;
+      const ndcY = (Math.random() - 0.5) * spreadRad;
+      this._raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
+      this._raycaster.far = 38;
+
+      let maxDist = 38;
+      if (worldMeshes && worldMeshes.length > 0) {
+        const wallHits = this._raycaster.intersectObjects(worldMeshes, true);
+        if (wallHits.length > 0) maxDist = wallHits[0].distance;
+      }
+
+      const enemyHitTargets = enemyManager.getRaycastTargets();
+      const hits = this._raycaster.intersectObjects(enemyHitTargets, false);
+      for (let i = 0; i < hits.length; i++) {
+        const h = hits[i];
+        if (h.distance > maxDist) break;
+        const enemyId = h.object.userData.enemyId;
+        const isHead = Boolean(h.object.userData.isHead);
+        const result = enemyManager.handleWeaponHit(enemyId, 'shotgun', isHead, h.point, this._raycaster.ray.direction);
+        if (result && result.hit) {
+          this.callbacks.onHitFeedback?.(result.killed ? 'kill' : 'hit');
+          break;
+        }
+      }
+    }
+
+    if (this.shotgunAmmoInMag === 0 && this.shotgunReserve === 0) {
+      this.callbacks.onOutOfAmmo?.();
+    }
+
+    return true;
+  }
+
+  triggerKnifeSlash(isQuick = false) {
+    if (this.slashing || this.shoving) return false;
+    if (this.holstered) this.holstered = false;
+    this.inspecting = false;
+    if (isQuick && this.activeWeapon === 'glock') {
+      this.cancelReload();
+      this.quickKnifeActive = true;
+      this._syncVisibility();
+    }
+    this.slashing = true;
+    this.slashTimer = 0;
+    this.slashHitChecked = false;
+    sfx.playKnifeSlash();
+    return true;
+  }
+
+  _fireGlock(enemyManager, worldMeshes) {
+    if (this.reloading || this.quickKnifeActive || this.shoving || this.fireCooldown > 0) return false;
+    if (this.ammoInMag <= 0) {
+      sfx.playDryFire();
+      this.fireCooldown = 0.2;
+      if (this.reserveAmmo > 0) this.startReload();
+      return false;
+    }
+
+    this.ammoInMag -= 1;
+    this.fireCooldown = 0.145;
+    this.recoilKick = 1.0;
+    this.slideBack = 1.0;
+    this.muzzleFlashTimer = 0.048;
+    this.muzzleFlashMesh.visible = true;
+    this.muzzleFlashMesh.rotation.z = Math.random() * Math.PI * 2;
+    this.muzzleLight.intensity = 11.5;
+
+    sfx.playGunshot();
+    if (this.shellCasings) this.shellCasings.eject('glock');
+    this._playArmsClip('shoot', { loop: false, fade: 0.08, timeScale: 1.35 });
+    this.callbacks.onRecoil?.(0.036);
+    this.callbacks.onShake?.(0.24);
+    this.callbacks.onGunshotNoise?.();
+
+    this._raycaster.setFromCamera(this._centerNDC, this.camera);
+    this._raycaster.far = 42;
+
+    let maxDist = 42;
+    if (worldMeshes && worldMeshes.length > 0) {
+      const wallHits = this._raycaster.intersectObjects(worldMeshes, true);
+      if (wallHits.length > 0) {
+        maxDist = wallHits[0].distance;
+      }
+    }
+
+    const enemyHitTargets = enemyManager.getRaycastTargets();
+    const hits = this._raycaster.intersectObjects(enemyHitTargets, false);
+
+    for (let i = 0; i < hits.length; i++) {
+      const h = hits[i];
+      if (h.distance > maxDist) break;
+      const enemyId = h.object.userData.enemyId;
+      const isHead = Boolean(h.object.userData.isHead);
+      const result = enemyManager.handleWeaponHit(enemyId, 'glock', isHead, h.point, this._raycaster.ray.direction);
+      if (!result || !result.hit) continue;
+
+      if (result.phaseRipple) {
+        this.callbacks.onHitFeedback?.('ghost');
+        continue;
+      }
+
+      if (result.damaged) {
+        this.callbacks.onHitFeedback?.(result.killed ? 'kill' : 'zombie');
+        if (result.killed) {
+          this.callbacks.onShake?.(0.32);
+        }
+        break;
+      }
+    }
+
+    return true;
+  }
+
+  _performKnifeHitCheck(enemyManager) {
+    this.camera.getWorldDirection(this._camDir);
+    const origin = this.camera.position;
+    const hit = enemyManager.handleMeleeSlash(origin, this._camDir, 2.95);
+    if (hit) {
+      if (hit.phaseRipple) {
+        this.callbacks.onHitFeedback?.('ghost');
+      } else if (hit.damaged) {
+        this.callbacks.onHitFeedback?.(hit.killed ? 'kill' : 'zombie');
+        this.callbacks.onShake?.(0.42);
+      }
+    }
+  }
+
+  update(dt, controls, enemyManager, playerHp = 100) {
+    if (this.fireCooldown > 0) this.fireCooldown = Math.max(0, this.fireCooldown - dt);
+
+    // Sprint cancels reload immediately (as specified)
+    if (controls.isSprinting && this.reloading) {
+      this.cancelReload();
+    }
+
+    // Advance fps_arms AnimationMixer & gracefully return to Idle after one-shot Shoot/Grip
+    if (this.armsMixer) {
+      this.armsMixer.update(dt);
+      if (
+        !this.reloading &&
+        !this.inspecting &&
+        this.fireCooldown <= 0 &&
+        this.activeArmsAction &&
+        this.activeArmsAction !== this.armsActions.idle
+      ) {
+        this._playArmsClip('idle', { loop: true, fade: 0.22 });
+      }
+    }
+
+    // Muzzle flash fade
+    if (this.muzzleFlashTimer > 0) {
+      this.muzzleFlashTimer -= dt;
+      if (this.muzzleFlashTimer <= 0) {
+        this.muzzleFlashMesh.visible = false;
+        this.muzzleLight.intensity = 0;
+      }
+    }
+
+    // Recoil, slide, swap, and holster damping via procedural helper
+    const recoiled = updateProceduralGlockRecoil({ recoilKick: this.recoilKick, slideBack: this.slideBack }, dt);
+    this.recoilKick = recoiled.recoilKick;
+    this.slideBack = recoiled.slideBack;
+    this.swapAnim = THREE.MathUtils.damp(this.swapAnim, 0, 11, dt);
+    this.holsterBlend = THREE.MathUtils.damp(this.holsterBlend, this.holstered ? 1 : 0, 9, dt);
+    if (this.shellCasings) this.shellCasings.update(dt);
+    this._updateGrab(dt);
+    if (this.shotgunAnimator) this.shotgunAnimator.update(dt);
+
+    // Reload progress
+    let reloadDropY = 0;
+    let reloadTiltZ = 0;
+    let magDropY = 0;
+    if (this.reloading) {
+      this.reloadTimer += dt;
+      const p = Math.min(1, this.reloadTimer / this.reloadDuration);
+      reloadTiltZ = Math.sin(p * Math.PI) * 0.42;
+      reloadDropY = Math.sin(p * Math.PI) * -0.05;
+      if (p > 0.12 && p < 0.72) {
+        const magP = (p - 0.12) / 0.6;
+        magDropY = -Math.sin(magP * Math.PI) * 0.24;
+      }
+      if (p > 0.78 && p < 0.92) {
+        this.slideBack = Math.max(this.slideBack, Math.sin(((p - 0.78) / 0.14) * Math.PI) * 0.9);
+      }
+      if (this.reloadTimer >= this.reloadDuration) {
+        const needed = this.magSize - this.ammoInMag;
+        const load = Math.min(needed, this.reserveAmmo);
+        this.ammoInMag += load;
+        this.reserveAmmo -= load;
+        this.reloading = false;
+        this.reloadTimer = 0;
+        this._playArmsClip('idle', { loop: true, fade: 0.2 });
+      }
+    }
+
+    // Weapon Inspect flourish (D-pad Up / T)
+    let inspectRotY = 0;
+    let inspectRotZ = 0;
+    let inspectPosX = 0;
+    let inspectPosY = 0;
+    if (this.inspecting) {
+      this.inspectTimer += dt;
+      const p = Math.min(1, this.inspectTimer / this.inspectDuration);
+      const env = Math.sin(p * Math.PI);
+      inspectPosX = -0.08 * env;
+      inspectPosY = 0.045 * env;
+      inspectRotY = 0.58 * env;
+      inspectRotZ = -0.45 * Math.sin(p * Math.PI * 2) * env;
+      if (this.inspectTimer >= this.inspectDuration) {
+        this.inspecting = false;
+        this.inspectTimer = 0;
+        this._playArmsClip('idle', { loop: true, fade: 0.22 });
+      }
+    }
+
+    // Shove lunge (RB / G)
+    let shoveZ = 0;
+    let shoveRotX = 0;
+    if (this.shoving) {
+      this.shoveTimer += dt;
+      const p = Math.min(1, this.shoveTimer / this.shoveDuration);
+      const thrust = p < 0.35 ? p / 0.35 : 1 - (p - 0.35) / 0.65;
+      const eased = thrust * thrust * (3 - 2 * thrust);
+      shoveZ = -0.18 * eased;
+      shoveRotX = -0.26 * eased;
+      if (this.shoveTimer >= this.shoveDuration) {
+        this.shoving = false;
+        this.shoveTimer = 0;
+      }
+    }
+
+    // Layered organic non-repeating procedural idle (breathing + noise + 7-14 s weight shift + low HP tremor + post-sprint heave)
+    const aim = this.holstered || this.reloading || this.slashing ? 0 : controls.aimAmount || 0;
+    const idle = stepViewmodelIdle(this.idleState, dt, {
+      hp: playerHp,
+      postSprintTimer: controls.staminaState ? controls.staminaState.postSprintTimer : 0,
+      aimAmount: aim,
+      isSprinting: controls.isSprinting,
+    });
+
+    // Velocity-lagged walk bob + look sway (damped gently in ADS)
+    const speedNorm = Math.min(1.35, (controls.currentSpeed || 0) / controls.walkSpeed);
+    const bobScale = (1 - aim * 0.62) * speedNorm;
+    const bobX = Math.cos(controls.walkBobDist * 1.55) * 0.011 * bobScale;
+    const bobY = Math.abs(Math.sin(controls.walkBobDist * 1.55)) * -0.013 * bobScale;
+    const swayScale = 1 - aim * 0.58;
+    const swayX = -controls.lookDeltaX * 0.25 * swayScale;
+    const swayY = controls.lookDeltaY * 0.21 * swayScale;
+
+    // Interpolate hip-fire <-> ADS rest position
+    const baseX = THREE.MathUtils.lerp(this.glockRestPos.x, this.glockAdsPos.x, aim);
+    const baseY = THREE.MathUtils.lerp(this.glockRestPos.y, this.glockAdsPos.y, aim);
+    const baseZ = THREE.MathUtils.lerp(this.glockRestPos.z, this.glockAdsPos.z, aim);
+    const lowerY = (this.swapAnim * 0.22 + this.holsterBlend * 0.42);
+
+    // Glock + fps_arms transform
+    this.glockGroup.position.set(
+      baseX + bobX + swayX + idle.posX + inspectPosX,
+      baseY + bobY + swayY + idle.posY + reloadDropY + inspectPosY - lowerY + this.recoilKick * 0.013,
+      baseZ + idle.posZ + shoveZ + this.recoilKick * (0.056 * (1 - aim * 0.35))
+    );
+    this.glockGroup.rotation.set(
+      this.recoilKick * (0.21 * (1 - aim * 0.35)) + idle.rotX + shoveRotX - (controls.isSprinting && !this.reloading ? 0.14 : 0) - this.holsterBlend * 0.55,
+      (controls.isSprinting && !this.reloading ? 0.18 : 0) + idle.rotY + inspectRotY,
+      reloadTiltZ + idle.rotZ + inspectRotZ
+    );
+    applyProceduralGlockKickback(this.glockSlide, this.slideBack, this.glockSlideRestZ, 0.052);
+    this.glockMag.position.y = this.glockMagRestY + magDropY;
+
+    // Knife slash animation (windup -> fast diagonal slash -> recovery)
+    let slashPosX = 0;
+    let slashPosY = 0;
+    let slashPosZ = 0;
+    let slashRotX = 0;
+    let slashRotY = 0;
+    let slashRotZ = 0;
+
+    if (this.slashing) {
+      this.slashTimer += dt;
+      const t = Math.min(1, this.slashTimer / this.slashDuration);
+
+      if (t < 0.22) {
+        const w = t / 0.22;
+        slashPosX = w * 0.12;
+        slashPosY = w * 0.08;
+        slashRotZ = -w * 0.65;
+      } else if (t < 0.56) {
+        const a = (t - 0.22) / 0.34;
+        const ease = 1 - Math.pow(1 - a, 3);
+        slashPosX = THREE.MathUtils.lerp(0.12, -0.44, ease);
+        slashPosY = THREE.MathUtils.lerp(0.08, -0.1, ease);
+        slashPosZ = -Math.sin(ease * Math.PI) * 0.22;
+        slashRotX = -ease * 1.15;
+        slashRotY = ease * 1.35;
+        slashRotZ = THREE.MathUtils.lerp(-0.65, 1.35, ease);
+
+        if (!this.slashHitChecked && a >= 0.35) {
+          this.slashHitChecked = true;
+          this._performKnifeHitCheck(enemyManager);
+        }
+      } else {
+        const r = (t - 0.56) / 0.44;
+        const s = 1 - r;
+        slashPosX = -0.44 * s;
+        slashPosY = -0.1 * s;
+        slashRotX = -1.15 * s;
+        slashRotY = 1.35 * s;
+        slashRotZ = 1.35 * s;
+      }
+
+      if (this.slashTimer >= this.slashDuration) {
+        this.slashing = false;
+        this.slashTimer = 0;
+        if (this.quickKnifeActive) {
+          this.quickKnifeActive = false;
+          this.swapAnim = 0.45;
+          this._syncVisibility();
+        }
+      }
+    }
+
+    this.knifeGroup.position.set(
+      this.knifeRestPos.x + bobX + swayX + idle.posX + slashPosX + inspectPosX,
+      this.knifeRestPos.y + bobY + swayY + idle.posY + slashPosY + inspectPosY - lowerY,
+      this.knifeRestPos.z + idle.posZ + slashPosZ + shoveZ
+    );
+    this.knifeGroup.rotation.set(
+      this.knifeRestRot.x + idle.rotX + slashRotX + shoveRotX - this.holsterBlend * 0.5,
+      this.knifeRestRot.y + idle.rotY + slashRotY + inspectRotY,
+      this.knifeRestRot.z + idle.rotZ + slashRotZ + inspectRotZ
+    );
+
+    // Shotgun transform + pump animation
+    if (this.shotgunGroup) {
+      this.shotgunPump = THREE.MathUtils.damp(this.shotgunPump, 0, 14, dt);
+      const shotgunBaseX = THREE.MathUtils.lerp(this.shotgunRestPos.x, this.shotgunAdsPos.x, aim);
+      const shotgunBaseY = THREE.MathUtils.lerp(this.shotgunRestPos.y, this.shotgunAdsPos.y, aim);
+      const shotgunBaseZ = THREE.MathUtils.lerp(this.shotgunRestPos.z, this.shotgunAdsPos.z, aim);
+
+      this.shotgunGroup.position.set(
+        shotgunBaseX + bobX + swayX + idle.posX + inspectPosX,
+        shotgunBaseY + bobY + swayY + idle.posY + reloadDropY + inspectPosY - lowerY + this.recoilKick * 0.02,
+        shotgunBaseZ + idle.posZ + shoveZ + this.recoilKick * 0.08
+      );
+      this.shotgunGroup.rotation.set(
+        this.recoilKick * 0.35 + idle.rotX + shoveRotX - this.holsterBlend * 0.55,
+        idle.rotY + inspectRotY,
+        reloadTiltZ + idle.rotZ + inspectRotZ
+      );
+      if (this.shotgunPumpMesh) {
+        this.shotgunPumpMesh.position.z = -0.32 + this.shotgunPump * 0.08;
+      }
+    }
+
+    // Sword slash animation & transform
+    let swordSlashX = 0;
+    let swordSlashY = 0;
+    let swordSlashZ = 0;
+    let swordRotX = 0;
+    let swordRotY = 0;
+    let swordRotZ = 0;
+
+    if (this.swordSlashing) {
+      this.swordSlashTimer += dt;
+      const t = Math.min(1, this.swordSlashTimer / this.swordSlashDuration);
+      if (t < 0.25) {
+        const w = t / 0.25;
+        swordSlashX = w * 0.15;
+        swordSlashY = w * 0.12;
+        swordRotZ = -w * 0.7;
+      } else if (t < 0.6) {
+        const a = (t - 0.25) / 0.35;
+        const ease = 1 - Math.pow(1 - a, 3);
+        swordSlashX = THREE.MathUtils.lerp(0.15, -0.55, ease);
+        swordSlashY = THREE.MathUtils.lerp(0.12, -0.15, ease);
+        swordSlashZ = -Math.sin(ease * Math.PI) * 0.3;
+        swordRotX = -ease * 1.35;
+        swordRotY = ease * 1.5;
+        swordRotZ = THREE.MathUtils.lerp(-0.7, 1.45, ease);
+        if (!this.swordHitChecked && a >= 0.3) {
+          this.swordHitChecked = true;
+          this._performSwordHitCheck(enemyManager);
+        }
+      } else {
+        const r = (t - 0.6) / 0.4;
+        const s = 1 - r;
+        swordSlashX = -0.55 * s;
+        swordSlashY = -0.15 * s;
+        swordRotX = -1.35 * s;
+        swordRotY = 1.5 * s;
+        swordRotZ = 1.45 * s;
+      }
+      if (this.swordSlashTimer >= this.swordSlashDuration) {
+        this.swordSlashing = false;
+        this.swordSlashTimer = 0;
+      }
+    }
+
+    if (this.swordGroup) {
+      this.swordGroup.position.set(
+        this.swordRestPos.x + bobX + swayX + idle.posX + swordSlashX + inspectPosX,
+        this.swordRestPos.y + bobY + swayY + idle.posY + swordSlashY + inspectPosY - lowerY,
+        this.swordRestPos.z + idle.posZ + swordSlashZ + shoveZ
+      );
+      this.swordGroup.rotation.set(
+        this.swordRestRot.x + idle.rotX + swordRotX + shoveRotX - this.holsterBlend * 0.5,
+        this.swordRestRot.y + idle.rotY + swordRotY + inspectRotY,
+        this.swordRestRot.z + idle.rotZ + swordRotZ + inspectRotZ
+      );
+    }
+  }
+}

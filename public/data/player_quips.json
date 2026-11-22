@@ -1,0 +1,674 @@
+{
+  "meta": {
+    "project": "THE GRAND ARCHIVE",
+    "rule": "Exact script text only — never paraphrase for captions.",
+    "resupply": "Built by Muse Nov 21, 2026 from the game's own killTaunts.js pools (79 lines: 49 voiced with audioFile paths, 30 written/unvoiced with audioFile null) after the original package file was confirmed not on disk anywhere. lion_boss and darko_can_pickup are EMPTY — those pools were offered Nov 20 and never written. lion_boss (8) and darko_can_pickup (6) lines written by Muse Nov 21, 2026 at Lotty's direction (\"fill in whatever's missing\"), unvoiced — voicing joins the Dec 21 ElevenLabs queue. No DARKO effect is stated in any line (canon: effect unstated)."
+  },
+  "categories": {
+    "zombie_combat": [
+      {
+        "id": "kt-01",
+        "trigger": "zombie_combat",
+        "durationSec": 1.4,
+        "text": "Archived.",
+        "audioFile": "/audio/kill-taunts/kt-01.mp3"
+      },
+      {
+        "id": "kt-02",
+        "trigger": "zombie_combat",
+        "durationSec": 2.2,
+        "text": "Stay down this time.",
+        "audioFile": "/audio/kill-taunts/kt-02.mp3"
+      },
+      {
+        "id": "kt-03",
+        "trigger": "zombie_combat",
+        "durationSec": 1.8,
+        "text": "Checked out. Permanently.",
+        "audioFile": "/audio/kill-taunts/kt-03.mp3"
+      },
+      {
+        "id": "kt-04",
+        "trigger": "zombie_combat",
+        "durationSec": 2.6,
+        "text": "Another one for the collection.",
+        "audioFile": "/audio/kill-taunts/kt-04.mp3"
+      },
+      {
+        "id": "kt-05",
+        "trigger": "zombie_combat",
+        "durationSec": 2.2,
+        "text": "Quiet in the library.",
+        "audioFile": "/audio/kill-taunts/kt-05.mp3"
+      },
+      {
+        "id": "kt-06",
+        "trigger": "zombie_combat",
+        "durationSec": 1.4,
+        "text": "Disc returned.",
+        "audioFile": "/audio/kill-taunts/kt-06.mp3"
+      },
+      {
+        "id": "kt-07",
+        "trigger": "zombie_combat",
+        "durationSec": 3.9,
+        "text": "You were already dead. I just filed it.",
+        "audioFile": "/audio/kill-taunts/kt-07.mp3"
+      },
+      {
+        "id": "kt-08",
+        "trigger": "zombie_combat",
+        "durationSec": 1.4,
+        "text": "Catalogued.",
+        "audioFile": "/audio/kill-taunts/kt-08.mp3"
+      },
+      {
+        "id": "kt-09",
+        "trigger": "zombie_combat",
+        "durationSec": 1.8,
+        "text": "Rest in storage.",
+        "audioFile": "/audio/kill-taunts/kt-09.mp3"
+      },
+      {
+        "id": "kt-10",
+        "trigger": "zombie_combat",
+        "durationSec": 1.8,
+        "text": "Wrong hall, friend.",
+        "audioFile": "/audio/kill-taunts/kt-10.mp3"
+      },
+      {
+        "id": "kt-11",
+        "trigger": "zombie_combat",
+        "durationSec": 3,
+        "text": "The archive keeps what it kills.",
+        "audioFile": "/audio/kill-taunts/kt-11.mp3"
+      },
+      {
+        "id": "kt-12",
+        "trigger": "zombie_combat",
+        "durationSec": 1.8,
+        "text": "Filed under finished.",
+        "audioFile": "/audio/kill-taunts/kt-12.mp3"
+      },
+      {
+        "id": "kt-13",
+        "trigger": "zombie_combat",
+        "durationSec": 2.2,
+        "text": "No pulse, no problem.",
+        "audioFile": "/audio/kill-taunts/kt-13.mp3"
+      },
+      {
+        "id": "kt-14",
+        "trigger": "zombie_combat",
+        "durationSec": 1.8,
+        "text": "Consider yourself collected.",
+        "audioFile": "/audio/kill-taunts/kt-14.mp3"
+      },
+      {
+        "id": "kt-15",
+        "trigger": "zombie_combat",
+        "durationSec": 1.8,
+        "text": "Shh. You're shelved.",
+        "audioFile": "/audio/kill-taunts/kt-15.mp3"
+      },
+      {
+        "id": "kt-16",
+        "trigger": "zombie_combat",
+        "durationSec": 1.8,
+        "text": "That was overdue.",
+        "audioFile": "/audio/kill-taunts/kt-16.mp3"
+      },
+      {
+        "id": "kt-17",
+        "trigger": "zombie_combat",
+        "durationSec": 3,
+        "text": "One less shadow in my hall.",
+        "audioFile": "/audio/kill-taunts/kt-17.mp3"
+      },
+      {
+        "id": "kt-18",
+        "trigger": "zombie_combat",
+        "durationSec": 3.4,
+        "text": "You came in dead. Stay that way.",
+        "audioFile": "/audio/kill-taunts/kt-18.mp3"
+      },
+      {
+        "id": "kt-19",
+        "trigger": "zombie_combat",
+        "durationSec": 1.4,
+        "text": "Exhibit closed.",
+        "audioFile": "/audio/kill-taunts/kt-19.mp3"
+      },
+      {
+        "id": "kt-20",
+        "trigger": "zombie_combat",
+        "durationSec": 2.6,
+        "text": "Property of the archive now.",
+        "audioFile": "/audio/kill-taunts/kt-20.mp3"
+      },
+      {
+        "id": "kz-01",
+        "trigger": "zombie_combat",
+        "durationSec": 3,
+        "text": "You're already dead, bro—take a nap.",
+        "audioFile": "/audio/kill-taunts/kz-01.mp3"
+      },
+      {
+        "id": "kz-02",
+        "trigger": "zombie_combat",
+        "durationSec": 5.1,
+        "text": "Imagine climbing out of the grave just to catch a 12-gauge.",
+        "audioFile": "/audio/kill-taunts/kz-02.mp3"
+      },
+      {
+        "id": "kz-03",
+        "trigger": "zombie_combat",
+        "durationSec": 5.5,
+        "text": "All that ancient dark magic just to get folded in a hallway.",
+        "audioFile": "/audio/kill-taunts/kz-03.mp3"
+      },
+      {
+        "id": "kz-04",
+        "trigger": "zombie_combat",
+        "durationSec": 4.3,
+        "text": "Respect the hustle, honestly. Zero pulse, still clocking in.",
+        "audioFile": "/audio/kill-taunts/kz-04.mp3"
+      },
+      {
+        "id": "kz-05",
+        "trigger": "zombie_combat",
+        "durationSec": 4.7,
+        "text": "You've been walking since the 1800s and you still missed.",
+        "audioFile": "/audio/kill-taunts/kz-05.mp3"
+      },
+      {
+        "id": "kz-06",
+        "trigger": "zombie_combat",
+        "durationSec": 3.4,
+        "text": "Bro, you're literally falling apart. Sit down.",
+        "audioFile": "/audio/kill-taunts/kz-06.mp3"
+      },
+      {
+        "id": "kz-07",
+        "trigger": "zombie_combat",
+        "durationSec": 5.5,
+        "text": "I don't know who raised you, but they did a terrible job.",
+        "audioFile": "/audio/kill-taunts/kz-07.mp3"
+      },
+      {
+        "id": "kt-21",
+        "trigger": "zombie_combat",
+        "durationSec": 1.8,
+        "text": "Filed under: gone.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-22",
+        "trigger": "zombie_combat",
+        "durationSec": 3.4,
+        "text": "The archive thanks you for your donation.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-23",
+        "trigger": "zombie_combat",
+        "durationSec": 3.4,
+        "text": "One less thing breathing in my halls.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-24",
+        "trigger": "zombie_combat",
+        "durationSec": 3,
+        "text": "You were never in the collection.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-25",
+        "trigger": "zombie_combat",
+        "durationSec": 3,
+        "text": "Dust to dust, disc to case.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-26",
+        "trigger": "zombie_combat",
+        "durationSec": 2.6,
+        "text": "Should've stayed in your exhibit.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-27",
+        "trigger": "zombie_combat",
+        "durationSec": 2.2,
+        "text": "That's a closed case.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-28",
+        "trigger": "zombie_combat",
+        "durationSec": 3,
+        "text": "Quiet now. The hall likes quiet.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-29",
+        "trigger": "zombie_combat",
+        "durationSec": 1.8,
+        "text": "Another page turned.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-30",
+        "trigger": "zombie_combat",
+        "durationSec": 2.6,
+        "text": "Rest. You've earned the floor.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-31",
+        "trigger": "zombie_combat",
+        "durationSec": 1.4,
+        "text": "Inventory updated.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-32",
+        "trigger": "zombie_combat",
+        "durationSec": 1.8,
+        "text": "Noted. Filed. Forgotten.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-33",
+        "trigger": "zombie_combat",
+        "durationSec": 2.6,
+        "text": "The curator sends his regards.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-34",
+        "trigger": "zombie_combat",
+        "durationSec": 2.6,
+        "text": "You picked the wrong museum.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-35",
+        "trigger": "zombie_combat",
+        "durationSec": 2.2,
+        "text": "And the hall exhales.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-36",
+        "trigger": "zombie_combat",
+        "durationSec": 1.8,
+        "text": "Overdue and over.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-37",
+        "trigger": "zombie_combat",
+        "durationSec": 2.2,
+        "text": "The hall keeps receipts.",
+        "audioFile": null
+      },
+      {
+        "id": "kt-38",
+        "trigger": "zombie_combat",
+        "durationSec": 2.2,
+        "text": "Struck from the record.",
+        "audioFile": null
+      }
+    ],
+    "ghost_combat": [
+      {
+        "id": "kg-01",
+        "trigger": "ghost_combat",
+        "durationSec": 3,
+        "text": "You're literally air with an attitude.",
+        "audioFile": "/audio/kill-taunts/kg-01.mp3"
+      },
+      {
+        "id": "kg-02",
+        "trigger": "ghost_combat",
+        "durationSec": 5.1,
+        "text": "Imagine dying and choosing to haunt a museum. Get a hobby.",
+        "audioFile": "/audio/kill-taunts/kg-02.mp3"
+      },
+      {
+        "id": "kg-03",
+        "trigger": "ghost_combat",
+        "durationSec": 3.4,
+        "text": "You don't even pay rent here—back up.",
+        "audioFile": "/audio/kill-taunts/kg-03.mp3"
+      },
+      {
+        "id": "kg-04",
+        "trigger": "ghost_combat",
+        "durationSec": 3.9,
+        "text": "Unfinished business? Yeah, mine is leaving this room.",
+        "audioFile": "/audio/kill-taunts/kg-04.mp3"
+      },
+      {
+        "id": "kg-05",
+        "trigger": "ghost_combat",
+        "durationSec": 2.6,
+        "text": "Great, a floating trauma response.",
+        "audioFile": "/audio/kill-taunts/kg-05.mp3"
+      },
+      {
+        "id": "kg-06",
+        "trigger": "ghost_combat",
+        "durationSec": 5.1,
+        "text": "You're see-through and I still don't want to look at you.",
+        "audioFile": "/audio/kill-taunts/kg-06.mp3"
+      },
+      {
+        "id": "kg-07",
+        "trigger": "ghost_combat",
+        "durationSec": 4.3,
+        "text": "You were already dead. I just made it official.",
+        "audioFile": null
+      },
+      {
+        "id": "kg-08",
+        "trigger": "ghost_combat",
+        "durationSec": 3.4,
+        "text": "No blood, no mess, no more whispering.",
+        "audioFile": null
+      },
+      {
+        "id": "kg-09",
+        "trigger": "ghost_combat",
+        "durationSec": 4.3,
+        "text": "The ripple takes you. The hall keeps the change.",
+        "audioFile": null
+      },
+      {
+        "id": "kg-10",
+        "trigger": "ghost_combat",
+        "durationSec": 1.8,
+        "text": "Float home, ghost.",
+        "audioFile": null
+      },
+      {
+        "id": "kg-11",
+        "trigger": "ghost_combat",
+        "durationSec": 1.4,
+        "text": "Unwritten.",
+        "audioFile": null
+      },
+      {
+        "id": "kg-12",
+        "trigger": "ghost_combat",
+        "durationSec": 2.6,
+        "text": "Even the echoes leave you.",
+        "audioFile": null
+      }
+    ],
+    "death_and_respawn": [
+      {
+        "id": "kd-01",
+        "trigger": "death_and_respawn",
+        "durationSec": 4.3,
+        "text": "If I die again, I'm leaving a one-star review.",
+        "audioFile": "/audio/kill-taunts/kd-01.mp3"
+      },
+      {
+        "id": "kd-02",
+        "trigger": "death_and_respawn",
+        "durationSec": 5.1,
+        "text": "I've died three times today and I still haven't had breakfast.",
+        "audioFile": "/audio/kill-taunts/kd-02.mp3"
+      },
+      {
+        "id": "kd-03",
+        "trigger": "death_and_respawn",
+        "durationSec": 5.1,
+        "text": "Not even scared anymore, I'm just mad about the walk back.",
+        "audioFile": "/audio/kill-taunts/kd-03.mp3"
+      },
+      {
+        "id": "kd-04",
+        "trigger": "death_and_respawn",
+        "durationSec": 4.7,
+        "text": "Oh cool, I'm bleeding out. Again. Love that for me.",
+        "audioFile": "/audio/kill-taunts/kd-04.mp3"
+      },
+      {
+        "id": "kd-05",
+        "trigger": "death_and_respawn",
+        "durationSec": 4.7,
+        "text": "At this point, death is just a really aggressive nap.",
+        "audioFile": "/audio/kill-taunts/kd-05.mp3"
+      },
+      {
+        "id": "kd-06",
+        "trigger": "death_and_respawn",
+        "durationSec": 3.4,
+        "text": "Honestly, getting mauled might fix my posture.",
+        "audioFile": "/audio/kill-taunts/kd-06.mp3"
+      },
+      {
+        "id": "kd-07",
+        "trigger": "death_and_respawn",
+        "durationSec": 3,
+        "text": "Died. Noted. Didn't care for it.",
+        "audioFile": null
+      },
+      {
+        "id": "kd-08",
+        "trigger": "death_and_respawn",
+        "durationSec": 3,
+        "text": "The archive kept my place warm.",
+        "audioFile": null
+      },
+      {
+        "id": "kd-09",
+        "trigger": "death_and_respawn",
+        "durationSec": 3,
+        "text": "Death's a hallway. I walked back.",
+        "audioFile": null
+      },
+      {
+        "id": "kd-10",
+        "trigger": "death_and_respawn",
+        "durationSec": 3,
+        "text": "You should see the other run.",
+        "audioFile": null
+      },
+      {
+        "id": "kd-11",
+        "trigger": "death_and_respawn",
+        "durationSec": 4.3,
+        "text": "I don't stay down. It's in the collection policy.",
+        "audioFile": null
+      },
+      {
+        "id": "kd-12",
+        "trigger": "death_and_respawn",
+        "durationSec": 2.6,
+        "text": "Again. And this time, quieter.",
+        "audioFile": null
+      }
+    ],
+    "existential": [
+      {
+        "id": "ke-01",
+        "trigger": "existential",
+        "durationSec": 3.9,
+        "text": "Nothing matters, we’re all dust—anyway, eat this shotgun.",
+        "audioFile": "/audio/kill-taunts/ke-01.mp3"
+      },
+      {
+        "id": "ke-02",
+        "trigger": "existential",
+        "durationSec": 5.5,
+        "text": "Fighting the literal concept of mortality for a vinyl record. Totally normal.",
+        "audioFile": "/audio/kill-taunts/ke-02.mp3"
+      },
+      {
+        "id": "ke-03",
+        "trigger": "existential",
+        "durationSec": 6.4,
+        "text": "Is this a metaphor for my twenties? Feels like a metaphor for my twenties.",
+        "audioFile": "/audio/kill-taunts/ke-03.mp3"
+      },
+      {
+        "id": "ke-04",
+        "trigger": "existential",
+        "durationSec": 5.5,
+        "text": "Look, I'm having an existential crisis too—you don't see me biting people.",
+        "audioFile": "/audio/kill-taunts/ke-04.mp3"
+      },
+      {
+        "id": "ke-05",
+        "trigger": "existential",
+        "durationSec": 5.1,
+        "text": "We're all just meat and bad decisions in a dark hallway.",
+        "audioFile": "/audio/kill-taunts/ke-05.mp3"
+      },
+      {
+        "id": "ke-06",
+        "trigger": "existential",
+        "durationSec": 4.7,
+        "text": "The universe is cold, uncaring, and apparently out of ammo.",
+        "audioFile": "/audio/kill-taunts/ke-06.mp3"
+      }
+    ],
+    "kill_and_reload": [
+      {
+        "id": "ks-01",
+        "trigger": "kill_and_reload",
+        "durationSec": 4.3,
+        "text": "Stay down. Seriously, it's better for both of us.",
+        "audioFile": "/audio/kill-taunts/ks-01.mp3"
+      },
+      {
+        "id": "ks-02",
+        "trigger": "kill_and_reload",
+        "durationSec": 4.3,
+        "text": "Back to the dirt. Tell nobody I said hi.",
+        "audioFile": "/audio/kill-taunts/ks-02.mp3"
+      },
+      {
+        "id": "ks-04",
+        "trigger": "kill_and_reload",
+        "durationSec": 3,
+        "text": "One less problem. Still got ninety-nine.",
+        "audioFile": "/audio/kill-taunts/ks-04.mp3"
+      },
+      {
+        "id": "ks-03",
+        "trigger": "kill_and_reload",
+        "durationSec": 3,
+        "text": "Hold on, I'm reloading—respect the process.",
+        "audioFile": "/audio/kill-taunts/ks-03.mp3"
+      }
+    ],
+    "lion_boss": [
+      {
+        "id": "lb-01",
+        "trigger": "lion_boss",
+        "durationSec": 3.4,
+        "text": "Big cat. Bigger hall. Still my hall.",
+        "audioFile": null
+      },
+      {
+        "id": "lb-02",
+        "trigger": "lion_boss",
+        "durationSec": 6.8,
+        "text": "The king of beasts. The archive has a section for kings — it's called storage.",
+        "audioFile": null
+      },
+      {
+        "id": "lb-03",
+        "trigger": "lion_boss",
+        "durationSec": 3.4,
+        "text": "Easy, your majesty. The exhibit bites back.",
+        "audioFile": null
+      },
+      {
+        "id": "lb-04",
+        "trigger": "lion_boss",
+        "durationSec": 3.9,
+        "text": "Roar all you want. The hall doesn't scare.",
+        "audioFile": null
+      },
+      {
+        "id": "lb-05",
+        "trigger": "lion_boss",
+        "durationSec": 5.1,
+        "text": "You're not guarding this room. You're the overdue item in it.",
+        "audioFile": null
+      },
+      {
+        "id": "lb-06",
+        "trigger": "lion_boss",
+        "durationSec": 5.5,
+        "text": "Shells just make you mad. Fine — the blade does the talking.",
+        "audioFile": null
+      },
+      {
+        "id": "lb-07",
+        "trigger": "lion_boss",
+        "durationSec": 5.1,
+        "text": "When the gun runs dry, that's when the real exhibit opens.",
+        "audioFile": null
+      },
+      {
+        "id": "lb-08",
+        "trigger": "lion_boss",
+        "durationSec": 2.6,
+        "text": "Down, kitty. The curator's working.",
+        "audioFile": null
+      }
+    ],
+    "darko_can_pickup": [
+      {
+        "id": "dc-01",
+        "trigger": "darko_can_pickup",
+        "durationSec": 3.9,
+        "text": "A DARKO. Cold, somehow. In a castle. Sure.",
+        "audioFile": null
+      },
+      {
+        "id": "dc-02",
+        "trigger": "darko_can_pickup",
+        "durationSec": 3,
+        "text": "Product placement in the apocalypse. Respect.",
+        "audioFile": null
+      },
+      {
+        "id": "dc-03",
+        "trigger": "darko_can_pickup",
+        "durationSec": 3.4,
+        "text": "If that's a sponsorship, the archive accepts.",
+        "audioFile": null
+      },
+      {
+        "id": "dc-04",
+        "trigger": "darko_can_pickup",
+        "durationSec": 3.4,
+        "text": "Barrel-aged. Literally. It was in a barrel.",
+        "audioFile": null
+      },
+      {
+        "id": "dc-05",
+        "trigger": "darko_can_pickup",
+        "durationSec": 5.5,
+        "text": "One can, rolling out of the dark like it pays rent here.",
+        "audioFile": null
+      },
+      {
+        "id": "dc-06",
+        "trigger": "darko_can_pickup",
+        "durationSec": 3.9,
+        "text": "The castle provides. Weirdly specific, but it provides.",
+        "audioFile": null
+      }
+    ]
+  }
+}
