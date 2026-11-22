@@ -223,11 +223,12 @@ class CathedralAudioBus {
     this.masterGain = ctx.createGain();
     this.masterGain.gain.value = this.muted ? 0.0001 : this.masterVolume;
 
-    // Wet convolver gain (~0.28 wet)
+    // CATHEDRAL ROUTING (§B.10): 100% of non-taunt audio routes through the marble convolver
+    // (direct arrival 0.78 is already baked into sample 0 of the 1.8s impulse response).
+    // No parallel presenceGain dry leak.
     this.convolverGain = ctx.createGain();
-    this.convolverGain.gain.value = 0.28;
+    this.convolverGain.gain.value = 1.0;
 
-    // CATHEDRAL ROUTING: input -> marble convolver -> wet gain (~0.28) -> tone -> limiter -> master -> destination
     this.inputGain
       .connect(this.convolver)
       .connect(this.convolverGain)
@@ -235,12 +236,6 @@ class CathedralAudioBus {
       .connect(this.compressor)
       .connect(this.masterGain)
       .connect(ctx.destination);
-
-    // DIRECT / PRESENCE DRY BALANCE (~0.72 dry): direct arrival at compressor
-    // ensures gunshots, narrator/taunt VO, and vinyl tracks stay crisp while keeping a subtle marble-hall tail.
-    this.presenceGain = ctx.createGain();
-    this.presenceGain.gain.value = 0.72;
-    this.inputGain.connect(this.presenceGain).connect(this.compressor);
 
     // DRY PATH — startup taunts ONLY (Lotty, Nov 20, 2026): skips the
     // convolver and hall shelf entirely, feeds the compressor/master chain

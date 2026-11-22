@@ -4,6 +4,7 @@ import { pulseRumble } from '../game/levelOneBindings.js';
 import { shouldThrottleEnemyMixer } from './clipAnimator.js';
 import { cathedralBus } from '../audio/cathedralBus.js';
 import { sfx } from '../audio/sfx.js';
+import { hasLineOfSight, resolveCircleAABB } from '../world/mazeLogic.js';
 
 export const LION_STATES = Object.freeze({
   IDLE: 'idle',
@@ -20,8 +21,10 @@ export const GHOUL_STATES = Object.freeze({
 });
 
 /**
- * Phantom damage guard: ensures attacks only register when an enemy is alive,
- * not staggered, and physically within its true strike reach.
+ * Phantom damage guard (§B.8): ensures attacks only register when an enemy is
+ * alive, not staggered, within its true strike reach, has unobstructed line of
+ * sight, and is visible within the player's facing arc (unseen hits are only
+ * permitted for ghosts at <= 1.1m — never for zombies, ghouls, or the lion).
  *
  * @param {Object} params
  * @param {Object} params.enemy Enemy instance or data object
@@ -29,7 +32,10 @@ export const GHOUL_STATES = Object.freeze({
  * @param {number} [params.maxReach=2.4] Maximum allowed strike reach
  * @param {boolean} [params.isDead=false]
  * @param {boolean} [params.isStaggered=false]
- * @returns {{ valid: boolean, reason?: string, distance?: number }}
+ * @param {Array|null} [params.colliders=null] Active wall/shelf AABB colliders for LOS check
+ * @param {number|null} [params.playerYaw=null] Player camera yaw for facing check
+ * @param {boolean} [params.allowUnseenPointBlank=false] True ONLY for ghosts at <= 1.1m
+ * @returns {{ valid: boolean, reason?: string, attacker?: string, distance?: number, los?: boolean, facing?: boolean }}
  */
 export function validateEnemyDamage({
   enemy,
@@ -37,15 +43,20 @@ export function validateEnemyDamage({
   maxReach = 2.4,
   isDead = false,
   isStaggered = false,
+  colliders = null,
+  playerYaw = null,
+  allowUnseenPointBlank = false,
 }) {
+  const attacker = enemy ? `${enemy.kind || 'enemy'}:${enemy.id || 'unknown'}` : 'unknown';
+
   if (isDead || !enemy || (typeof enemy.hp === 'number' && enemy.hp <= 0) || enemy.alive === false) {
-    return { valid: false, reason: 'dead' };
+    return { valid: false, reason: 'dead', attacker, los: false, facing: false };
   }
   if (isStaggered || (enemy.stagger && enemy.stagger > 0)) {
-    return { valid: false, reason: 'staggered' };
+    return { valid: false, reason: 'staggered', attacker, los: false, facing: false };
   }
   if (!playerPos || !enemy.group) {
-    return { valid: false, reason: 'no_position' };
+    return { valid: false, reason: 'no_position', attacker, los: false, facing: false };
   }
 
   const dx = enemy.group.position.x - playerPos.x;
@@ -53,10 +64,31 @@ export function validateEnemyDamage({
   const dist = Math.sqrt(dx * dx + dz * dz);
 
   if (dist > maxReach) {
-    return { valid: false, reason: 'out_of_reach', distance: dist };
+    return { valid: false, reason: 'out_of_reach', attacker, distance: dist, los: false, facing: false };
   }
 
-  return { valid: true, distance: dist };
+  const los = colliders
+    ? hasLineOfSight(enemy.group.position.x, enemy.group.position.z, playerPos.x, playerPos.z, colliders)
+    : true;
+  if (!los) {
+    return { valid: false, reason: 'no_line_of_sight', attacker, distance: dist, los: false, facing: false };
+  }
+
+  let facing = true;
+  if (typeof playerYaw === 'number' && Number.isFinite(playerYaw)) {
+    const unseenOk = Boolean(allowUnseenPointBlank) && dist <= 1.1;
+    if (!unseenOk) {
+      const fx = -Math.sin(playerYaw);
+      const fz = -Math.cos(playerYaw);
+      const inv = 1 / Math.max(0.001, dist);
+      facing = fx * dx * inv + fz * dz * inv > -0.2;
+    }
+  }
+  if (!facing) {
+    return { valid: false, reason: 'not_facing', attacker, distance: dist, los, facing: false };
+  }
+
+  return { valid: true, attacker, distance: dist, los, facing };
 }
 
 /**
@@ -466,7 +498,7 @@ export class LionBoss {
     this.callbacks.onDefeated?.();
   }
 
-  update(dt, playerPos, frameCount = 0) {
+  update(dt, playerPos, frameCount = 0, colliders = null, playerYaw = null) {
     if (!this.alive) return;
 
     this._animateGlb(dt);
@@ -548,12 +580,22 @@ export class LionBoss {
               maxReach: 2.8,
               isDead: !this.alive,
               isStaggered: this.stagger > 0,
+              colliders,
+              playerYaw,
+              allowUnseenPointBlank: false,
             });
 
             if (check.valid) {
-              this.callbacks.onPlayerDamaged?.(42);
+              console.debug(
+                `[DAMAGE] source=lion enemy=${this.id} amount=42 dist=${check.distance.toFixed(2)} los=${check.los} facing=${check.facing}`
+              );
+              this.callbacks.onPlayerDamaged?.(42, 'lion', check);
               pulseRumble('shotgun_blast', this.callbacks.controls);
               this.stateTimer = 0.86; // Prevent multi-hit in single lunge
+            } else {
+              console.warn(
+                `[PHANTOM_DAMAGE_BLOCKED] source=lion enemy=${this.id} reason=${check.reason} dist=${(check.distance ?? -1).toFixed(2)} los=${check.los} facing=${check.facing}`
+              );
             }
           }
         }
@@ -601,6 +643,104 @@ export class MazeOneGhoul {
     this.group.position.copy(spawnPos);
     this._buildProceduralModel();
     this.scene.add(this.group);
+
+    // §E Real-model state: public/models/heroes/ghoul.glb swaps in over the
+    // procedural placeholder via attachGlbModel() with procedural animation
+    // (same treatment the lion got).
+    this._proceduralMeshes = this.group.children.filter(
+      (c) => c !== this.hitboxMesh && c !== this.headHitboxMesh
+    );
+    this.hasGlbModel = false;
+    this._glbHolder = null;
+    this.glbBones = null;
+    this.glbRest = {};
+    this._animT = 0;
+    this._tmpEuler = new THREE.Euler(0, 0, 0, 'XYZ');
+    this._tmpQuat = new THREE.Quaternion();
+  }
+
+  /**
+   * Swaps the procedural ghoul placeholder for public/models/heroes/ghoul.glb.
+   * Supports both unrigged meshes (root procedural hunch/stride/lunge motion)
+   * and rigged skeletons (rest-quaternion bone animation).
+   */
+  attachGlbModel(sourceScene) {
+    if (this.hasGlbModel || !sourceScene) return false;
+
+    const cloned = SkeletonUtils.clone(sourceScene);
+    const box = new THREE.Box3().setFromObject(cloned);
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    box.getSize(size);
+    box.getCenter(center);
+
+    const targetH = 1.68;
+    const scale = targetH / Math.max(size.y, 0.01);
+    const holder = new THREE.Group();
+    cloned.scale.setScalar(scale);
+    cloned.position.set(-center.x * scale, -box.min.y * scale, -center.z * scale);
+    holder.add(cloned);
+
+    const bones = {};
+    const rest = {};
+    cloned.traverse((child) => {
+      if (child.isBone) {
+        bones[child.name] = child;
+        rest[child.name] = child.quaternion.clone();
+      }
+      if (child.isMesh) {
+        child.frustumCulled = false;
+        child.castShadow = false;
+        child.receiveShadow = true;
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        const clonedMats = mats.map((m) => {
+          const c = m.clone();
+          if (!c.map) {
+            c.color = new THREE.Color(0x5e686e);
+            c.roughness = 0.88;
+            c.metalness = 0.0;
+          }
+          return c;
+        });
+        child.material = Array.isArray(child.material) ? clonedMats : clonedMats[0];
+      }
+    });
+
+    this.group.add(holder);
+    this._glbHolder = holder;
+    this.glbBones = bones;
+    this.glbRest = rest;
+    for (const m of this._proceduralMeshes) m.visible = false;
+    this.hasGlbModel = true;
+    return true;
+  }
+
+  _animateGlb(dt) {
+    if (!this.hasGlbModel || !this._glbHolder) return;
+    this._animT += dt;
+    const t = this._animT;
+
+    if (this.state === GHOUL_STATES.CHASE) {
+      // Hunched stalking gait + predatory sway
+      this._glbHolder.position.y = Math.abs(Math.sin(t * 7.2)) * 0.07;
+      this._glbHolder.rotation.x = 0.16 + Math.sin(t * 7.2) * 0.05;
+      this._glbHolder.rotation.z = Math.sin(t * 3.6) * 0.08;
+    } else if (this.state === GHOUL_STATES.MELEE) {
+      // Claw-swipe forward lunge pulse
+      const swipe = Math.sin(t * 14.0);
+      this._glbHolder.position.y = 0.03;
+      this._glbHolder.rotation.x = 0.24 + swipe * 0.18;
+      this._glbHolder.rotation.z = swipe * 0.14;
+    } else {
+      // Idle hunched breathing
+      this._glbHolder.position.y = Math.sin(t * 2.1) * 0.025;
+      this._glbHolder.rotation.x = 0.1 + Math.sin(t * 1.4) * 0.03;
+      this._glbHolder.rotation.z = Math.sin(t * 1.1) * 0.04;
+    }
+
+    if (this.stagger > 0) {
+      this._glbHolder.rotation.x = -0.22;
+    }
   }
 
   _buildProceduralModel() {
@@ -690,8 +830,10 @@ export class MazeOneGhoul {
     this.callbacks.onZombieKilled?.();
   }
 
-  update(dt, playerPos, frameCount = 0) {
+  update(dt, playerPos, frameCount = 0, colliders = null, playerYaw = null, worldBounds = null) {
     if (!this.alive) return;
+
+    this._animateGlb(dt);
 
     if (this.stagger > 0) {
       this.stagger -= dt;
@@ -725,12 +867,19 @@ export class MazeOneGhoul {
     }
 
     if (this.state === GHOUL_STATES.CHASE) {
-      const moveX = (dx / dist) * this.speed * effectiveDt;
-      const moveZ = (dz / dist) * this.speed * effectiveDt;
-      this.group.position.x += moveX;
-      this.group.position.z += moveZ;
+      const inv = 1 / Math.max(0.001, dist);
+      const nextX = this.group.position.x + dx * inv * this.speed * effectiveDt;
+      const nextZ = this.group.position.z + dz * inv * this.speed * effectiveDt;
+      if (colliders && colliders.length > 0) {
+        const res = resolveCircleAABB(nextX, nextZ, 0.42, colliders, worldBounds);
+        this.group.position.x = res.x;
+        this.group.position.z = res.z;
+      } else {
+        this.group.position.x = nextX;
+        this.group.position.z = nextZ;
+      }
 
-      // Arm swing
+      // Arm swing (procedural fallback)
       this.stateTimer += effectiveDt;
       if (this.armL && this.armR) {
         this.armL.rotation.x = -0.28 + Math.sin(this.stateTimer * 6.0) * 0.42;
@@ -744,12 +893,22 @@ export class MazeOneGhoul {
           maxReach: this.meleeRange + 0.4,
           isDead: !this.alive,
           isStaggered: this.stagger > 0,
+          colliders,
+          playerYaw,
+          allowUnseenPointBlank: false,
         });
 
         if (check.valid) {
-          this.callbacks.onPlayerDamaged?.(22);
+          console.debug(
+            `[DAMAGE] source=ghoul enemy=${this.id} amount=22 dist=${check.distance.toFixed(2)} los=${check.los} facing=${check.facing}`
+          );
+          this.callbacks.onPlayerDamaged?.(22, 'ghoul', check);
           sfx.playZombieAttack();
           this.meleeCooldown = 1.2;
+        } else {
+          console.warn(
+            `[PHANTOM_DAMAGE_BLOCKED] source=ghoul enemy=${this.id} reason=${check.reason} dist=${(check.distance ?? -1).toFixed(2)} los=${check.los} facing=${check.facing}`
+          );
         }
       }
     }

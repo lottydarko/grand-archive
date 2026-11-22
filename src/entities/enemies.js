@@ -8,6 +8,7 @@ import { tryLoadModel, tryLoadTextureUrl } from '../utils/assetLoader.js';
 import {
   ZOMBIE_STATES,
   MIXAMO_CLIP_FILES,
+  MIXAMO_CLIP_URLS,
   evaluateZombieState,
 } from './zombieStateMachine.js';
 import { sfx } from '../audio/sfx.js';
@@ -17,6 +18,7 @@ import {
   shouldThrottleEnemyMixer,
 } from './clipAnimator.js';
 import { LionBoss, MazeOneGhoul, validateEnemyDamage } from './lionAndGhoulController.js';
+import { getSpiralMazeLayout, LEVEL_ONE_SPAWNS } from '../world/levelOneSpiral.js';
 
 // Zero-404 auto-discovery of Mixamo FBX animation clips dropped into public/animations/
 const DISCOVERED_FBX_MODULES = import.meta.glob('/public/animations/*.fbx', {
@@ -54,12 +56,29 @@ export class EnemyManager {
     this._zombieGltf = null;
     this._ghostGltf = null;
     this._lionGltf = null;
+    this._ghoulGltf = null;
     this.lionBoss = null;
     this.ghouls = [];
-    this._mixamoClips = {}; // { idle, walk, run, attack, death }
+    this.levelOneMode = false;
+    this.damageAuditLog = [];
+    this._mixamoClips = {}; // 7 clips: idle, walk, run, attack, death, crawl, biting
     this._bloodPoolTex = null;
     this._preloadHeroModels();
     this._preloadMixamoAnimations();
+  }
+
+  _recordExternalDamage(amount, source, meta = null) {
+    this.damageAuditLog.push({
+      allowed: true,
+      source,
+      enemyId: meta?.attacker || source,
+      amount,
+      dist: meta?.distance ?? null,
+      los: meta?.los ?? true,
+      facing: meta?.facing ?? true,
+    });
+    if (this.damageAuditLog.length > 64) this.damageAuditLog.shift();
+    this.callbacks.onPlayerDamaged?.(amount, source);
   }
 
   spawnLionBoss(spawnPos = new THREE.Vector3(0, 0, 150), options = {}) {
@@ -67,7 +86,7 @@ export class EnemyManager {
     const lion = new LionBoss(this.scene, spawnPos, {
       controls: this.callbacks.controls,
       levelOneZones: this.callbacks.levelOneZones,
-      onPlayerDamaged: (amt) => this.callbacks.onPlayerDamaged?.(amt),
+      onPlayerDamaged: (amt, src, meta) => this._recordExternalDamage(amt, src || 'lion', meta),
       ...options,
     });
     this.lionBoss = lion;
@@ -90,10 +109,20 @@ export class EnemyManager {
   spawnGhoul(x, z, options = {}) {
     const ghoul = new MazeOneGhoul(this.scene, new THREE.Vector3(x, 0, z), {
       controls: this.callbacks.controls,
-      onPlayerDamaged: (amt) => this.callbacks.onPlayerDamaged?.(amt),
-      onZombieKilled: () => this.callbacks.onZombieKilled?.(),
+      onPlayerDamaged: (amt, src, meta) => this._recordExternalDamage(amt, src || 'ghoul', meta),
+      // Item A: single decrement path — MazeOneGhoul.die() fires onGhoulKilled once; handleWeaponHit does NOT double-call.
+      onZombieKilled: () => {
+        if (this.callbacks.onGhoulKilled) {
+          this.callbacks.onGhoulKilled(ghoul);
+        } else {
+          this.callbacks.onZombieKilled?.(ghoul);
+        }
+      },
       ...options,
     });
+    if (this._ghoulGltf) {
+      ghoul.attachGlbModel(this._ghoulGltf.scene);
+    }
     this.ghouls.push(ghoul);
     const entry = {
       id: ghoul.id,
@@ -110,27 +139,113 @@ export class EnemyManager {
     return ghoul;
   }
 
-  async _preloadMixamoAnimations() {
-    const entries = Object.entries(DISCOVERED_FBX_MODULES);
-    if (entries.length === 0) return;
+  /**
+   * P1: Explicit scripted zombie spawn at deterministic world coordinates.
+   */
+  spawnZombieAt(x, z, options = {}) {
+    const isSprinter = options.variant === 'sprinter';
+    const diff = {
+      zombieSpeed: options.speed ?? (isSprinter ? 3.55 : 2.15),
+      sprinterSpeed: options.sprinterSpeed ?? 3.55,
+    };
+    const zObj = this._spawnZombie(x, z, isSprinter, diff);
+    if (options.idTag) zObj.scriptId = options.idTag;
+    if (options.isTutorialZombie) zObj.isTutorialZombie = true;
+    if (options.alerted !== undefined) zObj.alerted = Boolean(options.alerted);
+    if (typeof options.hp === 'number') {
+      zObj.hp = options.hp;
+      zObj.maxHp = options.hp;
+    }
+    return zObj;
+  }
 
+  /**
+   * P1 / §A.5: Spawns the lone Castle Room 2 tutorial zombie at its exact scripted position.
+   */
+  spawnRoom2TutorialZombie() {
+    const spec = LEVEL_ONE_SPAWNS.castleRoom2.loneZombie;
+    const existing = this.enemies.find((e) => e.scriptId === spec.id && e.alive);
+    if (existing) return existing;
+    return this.spawnZombieAt(spec.x, spec.z, {
+      variant: spec.variant,
+      idTag: spec.id,
+      isTutorialZombie: true,
+      alerted: true,
+      hp: 80,
+    });
+  }
+
+  /**
+   * P1 / §A.6: Spawns Maze One Design A "The Spiral" population (3 Zombies + 2 Ghouls).
+   * Deterministic authored coordinates — zero procedural or seed generation.
+   */
+  spawnMazeOnePopulation() {
+    const spiral = getSpiralMazeLayout();
+    const spawnedZombies = [];
+    const spawnedGhouls = [];
+
+    for (const zSpec of spiral.zombies) {
+      if (this.enemies.some((e) => e.scriptId === zSpec.id && e.alive)) continue;
+      const z = this.spawnZombieAt(zSpec.x, zSpec.z, {
+        variant: zSpec.variant,
+        idTag: zSpec.id,
+        alerted: false,
+      });
+      spawnedZombies.push(z);
+    }
+
+    for (const gSpec of spiral.ghouls) {
+      if (this.enemies.some((e) => e.scriptId === gSpec.id && e.alive)) continue;
+      const g = this.spawnGhoul(gSpec.x, gSpec.z, { id: gSpec.id });
+      const entry = this.enemies.find((e) => e.controller === g);
+      if (entry) entry.scriptId = gSpec.id;
+      spawnedGhouls.push(g);
+    }
+
+    return {
+      zombies: spawnedZombies,
+      ghouls: spawnedGhouls,
+      totalLesser: spawnedZombies.length + spawnedGhouls.length,
+    };
+  }
+
+  async _preloadMixamoAnimations() {
+    const discovered = Object.entries(DISCOVERED_FBX_MODULES);
     const fbxLoader = new FBXLoader();
+
+    // Load all 7 Mixamo clips (idle, walk, run, attack, death, crawl, biting):
+    // prefer Vite-discovered modules when present, otherwise fetch canonical runtime URLs
+    // (/animations/zombie-*.fbx) so packaged Chromebook builds always load all 7 clips.
     for (const [stateKey, aliases] of Object.entries(MIXAMO_CLIP_FILES)) {
       const lowerAliases = aliases.map((a) => a.toLowerCase());
-      const match = entries.find(([path]) => {
+      const match = discovered.find(([path]) => {
         const fname = path.split('/').pop().toLowerCase();
         return lowerAliases.includes(fname) || fname.includes(stateKey);
       });
-      if (!match) continue;
-      try {
-        const rawUrl = await match[1]();
-        const url = String(rawUrl).replace(/^\/public/, '');
-        const fbx = await fbxLoader.loadAsync(url);
-        if (fbx.animations && fbx.animations.length > 0) {
-          this._mixamoClips[stateKey] = fbx.animations[0];
+
+      const candidateUrls = [];
+      if (match) {
+        try {
+          const rawUrl = await match[1]();
+          candidateUrls.push(String(rawUrl).replace(/^\/public/, ''));
+        } catch {
+          // fall through to runtime URL
         }
-      } catch {
-        // Gracefully keep organic mixamorig procedural animation if a clip fails to decode
+      }
+      if (MIXAMO_CLIP_URLS[stateKey] && !candidateUrls.includes(MIXAMO_CLIP_URLS[stateKey])) {
+        candidateUrls.push(MIXAMO_CLIP_URLS[stateKey]);
+      }
+
+      for (const url of candidateUrls) {
+        try {
+          const fbx = await fbxLoader.loadAsync(url);
+          if (fbx.animations && fbx.animations.length > 0) {
+            this._mixamoClips[stateKey] = fbx.animations[0];
+            break;
+          }
+        } catch {
+          // Gracefully keep organic mixamorig procedural animation if a clip is absent/404
+        }
       }
     }
 
@@ -172,6 +287,17 @@ export class EnemyManager {
       this._lionGltf = gltf;
       if (this.lionBoss && !this.lionBoss.hasGlbModel) {
         this.lionBoss.attachGlbModel(gltf.scene);
+      }
+    });
+
+    // §E: Preload ghoul.glb and swap onto MazeOneGhoul instances
+    tryLoadModel('heroes/ghoul', { castShadow: false, receiveShadow: true }).then((gltf) => {
+      if (!gltf) return;
+      this._ghoulGltf = gltf;
+      for (const g of this.ghouls) {
+        if (g && g.alive && !g.hasGlbModel) {
+          g.attachGlbModel(gltf.scene);
+        }
       }
     });
   }
@@ -700,6 +826,7 @@ export class EnemyManager {
     if (this._zombieGltf) {
       this._attachZombieGlb(zObj);
     }
+    return zObj;
   }
 
   _spawnGhost(x, z, diff) {
@@ -853,55 +980,93 @@ export class EnemyManager {
   }
 
   /**
-   * The ONLY door player damage walks through (phantom-damage guard,
-   * Nov 20, 2026). Every hit is re-verified at land time — attacker
-   * alive, not dying, inside strike range, with line of sight — and
-   * tagged with its source. Anything that fails is blocked and logged
-   * as [PHANTOM_DAMAGE_BLOCKED]; landed hits log as [DAMAGE].
+   * The ONLY door player damage walks through (P2 / §B.8 phantom-damage guard).
+   * Every hit is re-verified at land time — attacker alive, not dying, inside
+   * strike range, line-of-sight clear, and facing check.
+   * Item G: The unseen point-blank (<= 1.1 m) exception applies to GHOSTS ONLY.
+   * Every landed hit logs attacker, distance, sight line, and facing.
    */
   _dealPlayerDamage(enemy, amount, source, playerPos, colliders) {
     const dx = enemy.group.position.x - playerPos.x;
     const dz = enemy.group.position.z - playerPos.z;
     const dist = Math.hypot(dx, dz);
     const maxRange = source === 'ghost' ? 1.72 : 1.95;
-    // Facing rule (Nov 20, 2026 — "damage from nobody" fix): a hit the
-    // player cannot see coming only lands at true point-blank range
-    // (1.1 m). Anything behind the player beyond that is blocked.
+
     let facingOk = true;
-    if (this._playerYaw !== null && this._playerYaw !== undefined && dist > 1.1) {
+    const unseenAllowed = source === 'ghost' && dist <= 1.1;
+    if (this._playerYaw !== null && this._playerYaw !== undefined && !unseenAllowed) {
       const fx = -Math.sin(this._playerYaw);
       const fz = -Math.cos(this._playerYaw);
       const inv = 1 / Math.max(0.001, dist);
       facingOk = fx * dx * inv + fz * dz * inv > -0.2;
     }
-    const ok =
-      enemy.alive &&
-      !enemy.dying &&
-      dist <= maxRange &&
-      facingOk &&
-      hasLineOfSight(enemy.group.position.x, enemy.group.position.z, playerPos.x, playerPos.z, colliders);
+
+    const los = hasLineOfSight(
+      enemy.group.position.x,
+      enemy.group.position.z,
+      playerPos.x,
+      playerPos.z,
+      colliders
+    );
+    const ok = Boolean(enemy.alive && !enemy.dying && dist <= maxRange && facingOk && los);
+
+    this.damageAuditLog.push({
+      allowed: ok,
+      source,
+      enemyId: enemy.id,
+      amount,
+      dist: Number(dist.toFixed(2)),
+      los,
+      facing: facingOk,
+    });
+    if (this.damageAuditLog.length > 64) this.damageAuditLog.shift();
+
     if (!ok) {
       console.warn(
-        `[PHANTOM_DAMAGE_BLOCKED] source=${source} enemy=${enemy.id} alive=${enemy.alive} dying=${enemy.dying} dist=${dist.toFixed(2)}`
+        `[PHANTOM_DAMAGE_BLOCKED] source=${source} enemy=${enemy.id} alive=${enemy.alive} dying=${enemy.dying} dist=${dist.toFixed(2)} los=${los} facing=${facingOk}`
       );
       return false;
     }
-    console.debug(`[DAMAGE] source=${source} enemy=${enemy.id} amount=${amount} dist=${dist.toFixed(2)}`);
+    console.debug(
+      `[DAMAGE] source=${source} enemy=${enemy.id} amount=${amount} dist=${dist.toFixed(2)} los=${los} facing=${facingOk}`
+    );
     this.callbacks.onPlayerDamaged?.(amount, source);
     return true;
   }
 
-  handleWeaponHit(enemyId, weaponType, isHeadshot, hitPoint, shotDir) {
+  handleWeaponHit(enemyId, weaponType, isHeadshot, hitPoint, shotDir, playerOutOfAmmo = false) {
     const enemy = this.enemies.find((e) => e.id === enemyId);
     if (!enemy || !enemy.alive || enemy.dying) return null;
+
+    // Item E / §B.5: Route ALL Lion hits directly through LionBoss.takeDamage so the
+    // boss smite rule (gunfire clamps at 1 HP, Sword smites when out of ammo) governs.
+    if (enemy.kind === 'lion' && enemy.controller) {
+      const lionRes = enemy.controller.takeDamage(weaponType, isHeadshot, playerOutOfAmmo);
+      enemy.hp = enemy.controller.hp;
+      if (lionRes.killed) {
+        enemy.alive = false;
+        for (const m of enemy.hitMeshes || []) {
+          const idx = this.hitboxes.indexOf(m);
+          if (idx >= 0) this.hitboxes.splice(idx, 1);
+        }
+        // Item A: NEVER count the Lion's death as a lesser-enemy kill!
+        this.callbacks.onLionKilled?.(enemy);
+      }
+      return {
+        hit: true,
+        damaged: lionRes.damage > 0 || lionRes.killed,
+        killed: lionRes.killed,
+        remainingHp: enemy.hp,
+        smoteBySword: Boolean(lionRes.smoteBySword),
+        isBoss: true,
+      };
+    }
 
     const result = applyWeaponHit(enemy, weaponType, isHeadshot);
     if (!result.hit) return result;
 
     if (result.phaseRipple) {
-      // Ghost hit: NEVER bleeds — phase-ripple distortion + amber motes +
-      // whisper SFX. Since Lotty's Nov 20, 2026 ruling the wraith also
-      // takes real damage and can be killed.
+      // Ghost hit: NEVER bleeds — phase-ripple distortion + amber motes + whisper SFX.
       enemy.hp = result.remainingHp;
       enemy.rippleTimer = 0.45;
       sfx.playGhostPhaseWhisper();
@@ -914,33 +1079,16 @@ export class EnemyManager {
       return result;
     }
 
-    if (enemy.kind === 'lion') {
-      enemy.hp = result.remainingHp;
-      if (result.killed) {
-        enemy.alive = false;
-        enemy.controller?.die();
-        for (const m of enemy.hitMeshes || []) {
-          const idx = this.hitboxes.indexOf(m);
-          if (idx >= 0) this.hitboxes.splice(idx, 1);
-        }
-        this.callbacks.onZombieKilled?.();
-        this._checkLevelCleared(enemy.group.position);
-      } else if (enemy.controller) {
-        enemy.controller.stagger = result.stagger || 0.28;
-      }
-      return result;
-    }
-
     if (enemy.kind === 'ghoul') {
       enemy.hp = result.remainingHp;
       if (result.killed) {
         enemy.alive = false;
+        // Item A: ghoul.die() fires onGhoulKilled ONCE — do NOT double-call onZombieKilled here!
         enemy.controller?.die();
         for (const m of enemy.hitMeshes || []) {
           const idx = this.hitboxes.indexOf(m);
           if (idx >= 0) this.hitboxes.splice(idx, 1);
         }
-        this.callbacks.onZombieKilled?.();
         this._checkLevelCleared(enemy.group.position);
       } else if (enemy.controller) {
         enemy.controller.stagger = result.stagger || 0.22;
@@ -1010,15 +1158,25 @@ export class EnemyManager {
   }
 
   /**
-   * Fires onLevelCleared exactly once per wave, at the moment the last
-   * living enemy falls — the level's disc unlocks and drops there.
+   * Item B: In Level One mode, the level disc NEVER drops from the last lesser enemy —
+   * it rises from the post-boss plinth ONLY after the Lion boss is defeated.
    */
   _checkLevelCleared(dropPos) {
+    if (this.levelOneMode) {
+      if (this.aliveLesserCount() === 0) {
+        this.callbacks.onAllLesserEnemiesCleared?.();
+      }
+      return;
+    }
     if (this._levelClearFired) return;
     if (this.enemies.some((e) => e.alive)) return;
     this._levelClearFired = true;
     this.discUnlocked = true;
     this.callbacks.onLevelCleared?.(this.levelNumber || 1, dropPos);
+  }
+
+  aliveLesserCount() {
+    return this.enemies.reduce((n, e) => n + (e.alive && e.kind !== 'lion' ? 1 : 0), 0);
   }
 
   aliveCount() {
@@ -1201,8 +1359,9 @@ export class EnemyManager {
     setBone('RightForeArm', 0.0, -0.22 - Math.sin(ph) * 0.1, -0.18);
   }
 
-  update(dt, elapsed, playerPos, colliders, enemyTimeScale = 1.0, stealth = null, playerYaw = null) {
+  update(dt, elapsed, playerPos, colliders, enemyTimeScale = 1.0, stealth = null, playerYaw = null, worldBounds = null) {
     this._playerYaw = playerYaw;
+    this._worldBounds = worldBounds;
     // 1. Update pooled blood & dust particles
     let particlesDirty = false;
     for (let i = 0; i < this.maxParticles; i++) {
@@ -1276,14 +1435,14 @@ export class EnemyManager {
 
       if (e.kind === 'lion') {
         if (e.controller && e.alive) {
-          e.controller.update(aiDt, playerPos, this._animFrame);
+          e.controller.update(aiDt, playerPos, this._animFrame, colliders, playerYaw);
         }
         continue;
       }
 
       if (e.kind === 'ghoul') {
         if (e.controller && e.alive) {
-          e.controller.update(aiDt, playerPos, this._animFrame);
+          e.controller.update(aiDt, playerPos, this._animFrame, colliders, playerYaw, worldBounds);
         }
         continue;
       }
@@ -1389,7 +1548,8 @@ export class EnemyManager {
         pos.x + z.knockVx * dt,
         pos.z + z.knockVz * dt,
         0.45,
-        colliders
+        colliders,
+        this._worldBounds
       );
       pos.x = res.x;
       pos.z = res.z;
@@ -1453,13 +1613,19 @@ export class EnemyManager {
     const cadenceSurge = 0.76 + Math.abs(Math.sin(z.gaitPhase)) * 0.44; // weighted step surge
     const runBoost = z.animState === ZOMBIE_STATES.RUN ? 1.15 : 1.0;
     const step = z.speed * runBoost * cadenceSurge * dt;
-    const tryMove = resolveCircleAABB(pos.x + vx * step, pos.z + vz * step, 0.45, colliders);
+    const tryMove = resolveCircleAABB(pos.x + vx * step, pos.z + vz * step, 0.45, colliders, this._worldBounds);
 
     let moved = Math.hypot(tryMove.x - pos.x, tryMove.z - pos.z);
     if (tryMove.collided && moved < step * 0.35) {
       const tx = -vz * z.strafeSign;
       const tz = vx * z.strafeSign;
-      const sidestep = resolveCircleAABB(pos.x + tx * step * 1.1, pos.z + tz * step * 1.1, 0.45, colliders);
+      const sidestep = resolveCircleAABB(
+        pos.x + tx * step * 1.1,
+        pos.z + tz * step * 1.1,
+        0.45,
+        colliders,
+        this._worldBounds
+      );
       moved = Math.hypot(sidestep.x - pos.x, sidestep.z - pos.z);
       pos.x = sidestep.x;
       pos.z = sidestep.z;
@@ -1563,8 +1729,19 @@ export class EnemyManager {
     // Ghosts collide with walls like every other enemy (Nov 20, 2026 —
     // "damage from nobody" fix). Before this they flew straight through
     // geometry and could strike from inside or behind a wall.
-    const gRes = resolveCircleAABB(pos.x + vx * g.speed * dt, pos.z + vz * g.speed * dt, 0.45, colliders);
-    pos.x = THREE.MathUtils.clamp(gRes.x, -17.5, 17.5);
-    pos.z = THREE.MathUtils.clamp(gRes.z, -17.5, 17.5);
+    const gRes = resolveCircleAABB(
+      pos.x + vx * g.speed * dt,
+      pos.z + vz * g.speed * dt,
+      0.45,
+      colliders,
+      this._worldBounds
+    );
+    if (this._worldBounds) {
+      pos.x = gRes.x;
+      pos.z = gRes.z;
+    } else {
+      pos.x = THREE.MathUtils.clamp(gRes.x, -17.5, 17.5);
+      pos.z = THREE.MathUtils.clamp(gRes.z, -17.5, 17.5);
+    }
   }
 }

@@ -3,6 +3,7 @@ import { ITEM_CATALOG } from '../player/inventoryLogic.js';
 import { createSoftRadialTexture } from './textures.js';
 import { applyDiscSpinBob } from '../entities/clipAnimator.js';
 import { createRedShellsBoxPickupMesh } from '../player/levelOneWeapons.js';
+import { tryLoadModel } from '../utils/assetLoader.js';
 
 /**
  * Composite 3D Alice-in-Wonderland Gothic World Pickups:
@@ -159,21 +160,27 @@ export class WorldItemManager {
       const tab = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.004, 0.045), rimMat);
       tab.position.set(0, 0.222, 0.02);
       visual.add(can, topRim, tab);
-    } else if (itemId === 'maze_key') {
-      const ironMat = new THREE.MeshStandardMaterial({
-        color: 0x1b1d22,
-        roughness: 0.45,
-        metalness: 0.85,
-      });
-      const bow = new THREE.Mesh(new THREE.TorusGeometry(0.065, 0.015, 8, 16), ironMat);
-      bow.rotation.x = Math.PI / 2;
-      bow.position.y = 0.05;
-      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.22, 8), ironMat);
-      shaft.rotation.z = Math.PI / 2;
-      shaft.position.set(0.12, 0.05, 0);
-      const bit = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.045, 0.045), ironMat);
-      bit.position.set(0.21, 0.035, 0);
-      visual.add(bow, shaft, bit);
+    } else if (itemId === 'maze_disc') {
+      const disc = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.3, 0.3, 0.018, 28),
+        new THREE.MeshStandardMaterial({ color: 0x0b0b0e, roughness: 0.3, metalness: 0.4 })
+      );
+      disc.position.y = 0.16;
+      const rim = new THREE.Mesh(
+        new THREE.TorusGeometry(0.3, 0.012, 8, 28),
+        new THREE.MeshStandardMaterial({
+          color: 0xcfa04c,
+          emissive: 0x5c3e12,
+          emissiveIntensity: 0.5,
+          roughness: 0.35,
+          metalness: 0.85,
+        })
+      );
+      rim.rotation.x = Math.PI / 2;
+      rim.position.y = 0.16;
+      const label = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.095, 0.02, 18), this.mats.brass);
+      label.position.y = 0.16;
+      visual.add(disc, rim, label);
     } else if (itemId === 'golden_vinyl') {
       const goldMat = new THREE.MeshStandardMaterial({
         color: 0xffd700,
@@ -200,16 +207,27 @@ export class WorldItemManager {
       triadLabel.position.y = 0.16;
       visual.add(disc, triadLabel);
     } else if (itemId === 'shotgun_pickup') {
-      const gunmetalMat = new THREE.MeshStandardMaterial({ color: 0x1f2228, roughness: 0.38, metalness: 0.85 });
-      const walnutMat = new THREE.MeshStandardMaterial({ color: 0x4a2e1b, roughness: 0.72, metalness: 0.08 });
-      const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.07, 0.26), gunmetalMat);
-      receiver.position.y = 0.14;
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.52, 12), gunmetalMat);
-      barrel.rotation.x = Math.PI / 2;
-      barrel.position.set(0, 0.16, -0.32);
-      const stock = new THREE.Mesh(new THREE.BoxGeometry(0.044, 0.1, 0.24), walnutMat);
-      stock.position.set(0, 0.1, 0.22);
-      visual.add(receiver, barrel, stock);
+      // §D: ZERO procedural shotgun model — Balistucia (/models/weapons/balistucia.glb) is the ONLY shotgun.
+      const mount = new THREE.Mesh(
+        new THREE.BoxGeometry(0.28, 0.04, 0.62),
+        new THREE.MeshStandardMaterial({ color: 0x261a12, roughness: 0.88, metalness: 0.05 })
+      );
+      mount.position.y = 0.04;
+      visual.add(mount);
+      tryLoadModel('weapons/balistucia', { castShadow: false, receiveShadow: true }).then((gltf) => {
+        if (!gltf || !gltf.scene) return;
+        const m = gltf.scene.clone(true);
+        const box = new THREE.Box3().setFromObject(m);
+        const size = new THREE.Vector3();
+        const center = new THREE.Vector3();
+        box.getSize(size);
+        box.getCenter(center);
+        const longest = Math.max(size.x, size.y, size.z, 0.01);
+        const scale = 0.88 / longest;
+        m.scale.setScalar(scale);
+        m.position.set(-center.x * scale, 0.16 - box.min.y * scale, -center.z * scale);
+        visual.add(m);
+      });
     } else if (itemId === 'sword_pickup') {
       const steelMat = new THREE.MeshStandardMaterial({ color: 0xc8d2de, roughness: 0.18, metalness: 0.94 });
       const goldMat = new THREE.MeshStandardMaterial({ color: 0xd4af37, roughness: 0.32, metalness: 0.85 });
@@ -288,21 +306,12 @@ export class WorldItemManager {
   }
 
   /**
-   * Populates starter Alice-in-Wonderland curiosities across the Grand Archive,
-   * including tucked beneath low crawl-arches and atop climbable oak ledges!
+   * §A / Item E: Alice-in-Wonderland stashes removed from Level One.
+   * Level One spawns ONLY scripted pickups (First Disc on Hall center triangle case,
+   * Balistucia + Barrel drops in Castle Room 1, 3 Maze Discs + 2 Red Shell boxes in Maze One).
    */
   spawnArchiveStashes() {
     this.clearAll();
-    // Starter brass 9mm tin & "Drink Me" vial along the grand nave so player immediately sees items
-    this.spawn('drink_me', -2.6, 0, 9.2, 1);
-    this.spawn('brass_ammo', 2.6, 0, 9.2, 1);
-    // Tucked inside/behind the west & east crawl-under timber arches
-    this.spawn('eat_me', -10.8, 0, 0.0, 1);
-    this.spawn('drink_me', 10.8, 0, 0.0, 1);
-    // Perched atop the climbable oak reading chests (rewards climbing!)
-    this.spawn('pocket_watch', -4.2, 1.18, -11.4, 1);
-    this.spawn('brass_ammo', 4.2, 1.18, -11.4, 1);
-    this.spawn('drink_me', 9.2, 1.18, 9.8, 1);
   }
 
   update(dt, elapsed) {

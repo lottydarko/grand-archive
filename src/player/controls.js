@@ -43,9 +43,11 @@ export class PlayerControls {
 
     this.enabled = false;
     this.isLocked = false;
+    this.worldBounds = null;
+    this.movementLocked = false;
 
     // Spatial & grounded physics state
-    this.position = new THREE.Vector3(0, 1.72, 13.4);
+    this.position = new THREE.Vector3(0, 1.72, -5.2);
     this.standEyeHeight = 1.72;
     this.crawlEyeHeight = 0.82;
     this.shrinkEyeHeight = 0.62;
@@ -716,10 +718,15 @@ export class PlayerControls {
     if (this.keys.has('KeyD')) inputRight += 1;
     if (this.keys.has('KeyA')) inputRight -= 1;
 
-    const inputLen = Math.hypot(inputRight, inputForward);
+    let inputLen = Math.hypot(inputRight, inputForward);
     if (inputLen > 1) {
       inputRight /= inputLen;
       inputForward /= inputLen;
+    }
+    if (this.movementLocked) {
+      inputRight = 0;
+      inputForward = 0;
+      inputLen = 0;
     }
 
     // Crouch / quiet sneak posture (forced while under a low fallen arch)
@@ -823,7 +830,7 @@ export class PlayerControls {
 
     const nextX = this.position.x + this.velX * dt;
     const nextZ = this.position.z + this.velZ * dt;
-    const resolved = resolveCircleAABB(nextX, nextZ, PLAYER_RADIUS, this._activeColliders);
+    const resolved = resolveCircleAABB(nextX, nextZ, PLAYER_RADIUS, this._activeColliders, this.worldBounds || null);
 
     const actualDist = Math.hypot(resolved.x - this.position.x, resolved.z - this.position.z);
     if (resolved.collided && actualDist < 0.001) {
@@ -868,7 +875,7 @@ export class PlayerControls {
       }
     }
 
-    if (this.actions.jump && this.isGrounded && !underLowBeam) {
+    if (!this.movementLocked && this.actions.jump && this.isGrounded && !underLowBeam) {
       this.isGrounded = false;
       this.verticalVel = this.isCrawling ? 4.0 : 5.3;
       this.crouchToggled = false;

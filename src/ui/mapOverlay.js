@@ -16,7 +16,6 @@ export class MapOverlay {
       <div class="relative w-[min(460px,92vw)] bg-[#0c0a09]/95 border border-[#c9b798]/30 p-6 flex flex-col items-center gap-3">
         <div class="w-full flex items-baseline justify-between">
           <h2 id="map-title" class="horror-text text-5xl text-[#efe5d2] leading-none m-0">archive plan</h2>
-          <span id="map-close-hint" class="horror-text text-2xl text-[#b8aa94]">[m / view] close</span>
         </div>
         <canvas id="archive-map-canvas" width="380" height="380" class="w-full max-w-[380px] aspect-square border border-[#b8a382]/25 bg-[#120f0d]"></canvas>
         <div class="w-full flex items-center justify-between text-[#c8baa3]/80 horror-text text-2xl pt-1">

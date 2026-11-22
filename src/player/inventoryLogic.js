@@ -59,13 +59,13 @@ export const ITEM_CATALOG = {
     maxStack: 2,
     kind: 'pickup',
   },
-  maze_key: {
-    id: 'maze_key',
-    name: 'iron maze key',
-    tag: 'key',
-    description: 'heavy blackened iron key that unseals the maze-end door.',
-    maxStack: 1,
-    kind: 'key',
+  maze_disc: {
+    id: 'maze_disc',
+    name: 'spiral archive disc',
+    tag: 'disc',
+    description: 'carved black vinyl disc from Maze One. collect all three to unseal the north gate.',
+    maxStack: 3,
+    kind: 'disc',
   },
   golden_vinyl: {
     id: 'golden_vinyl',
@@ -82,6 +82,22 @@ export const ITEM_CATALOG = {
     description: 'marked with the radiant triad tribal symbol.',
     maxStack: 1,
     kind: 'disc',
+  },
+  shotgun_pickup: {
+    id: 'shotgun_pickup',
+    name: 'balistucia',
+    tag: 'weapon',
+    description: '12-gauge pump-action shotgun resting in Castle Room 1.',
+    maxStack: 1,
+    kind: 'weapon',
+  },
+  sword_pickup: {
+    id: 'sword_pickup',
+    name: 'archive sword',
+    tag: 'weapon',
+    description: 'forged steel blade rolled from the shattered barrel. smites the Lion.',
+    maxStack: 1,
+    kind: 'weapon',
   },
   red_shells: {
     id: 'red_shells',

@@ -38,7 +38,7 @@ import { MapOverlay } from './ui/mapOverlay.js';
 import { createHorrorOverlay } from './shaders/horrorVignette.js';
 import { LEVEL_ONE_ZONES, LevelOneZoneController } from './world/levelOneZones.js';
 import { triggerLevelOneRumble, pulseRumble } from './game/levelOneBindings.js';
-import { LionBoss, MazeOneGhoul, validateEnemyDamage } from './entities/lionAndGhoulController.js';
+import { LionBoss, MazeOneGhoul, validateEnemyDamage, LION_STATES } from './entities/lionAndGhoulController.js';
 import { SHOTGUN_CONFIG, SWORD_CONFIG } from './player/levelOneWeapons.js';
 import {
   ChromebookProfiler,
@@ -52,12 +52,19 @@ import {
 } from './engine/localAssetBudget.js';
 import { PlayerQuipsController } from './game/playerQuipsController.js';
 import {
+  LEVEL_ONE_STEPS,
   createLevelOneState,
   advanceLevelOne,
   stepVillainCutscene,
+  canUnlockStairs,
   VILLAIN_CUTSCENE_VO,
   VILLAIN_CUTSCENE_PHASE,
 } from './game/levelOneSequence.js';
+import {
+  buildLevelOneCorridor,
+  LEVEL_ONE_SPAWNS,
+  LEVEL_ONE_WORLD_BOUNDS,
+} from './world/levelOneSpiral.js';
 
 /**
  * Software-WebGL detection from the GPU renderer string (never user-agent).
@@ -438,7 +445,7 @@ sfx.attachContext(vinylPlayer.getAudioContext());
 let hallVinyls = null;
 let caseController = null;
 let levelOneZones = null;
-let levelOneState = createLevelOneState({ lesserEnemiesAliveCount: 0, villainCutsceneSeenCount: 0 });
+let levelOneState = createLevelOneState({ villainCutsceneSeenCount: 0 });
 
 function trySkipVillainCutscene() {
   if (!levelOneState || !levelOneState.villainCutsceneActive) return false;
@@ -509,18 +516,90 @@ function flashCaseCrack(slotIndex) {
 async function handleVinylCaseInteract(caseId) {
   const entry = vinylPlayer.cases.find((c) => c.slotId === caseId || c.track.id === caseId);
   if (!entry) return;
-  // A playing case keeps its old behavior: interact silences it, no key turn.
-  if (entry.playing || !caseController) {
-    vinylPlayer.toggleCase(entry.slotId);
+  // Playing cases cannot be toggled off (§B.10 / vinylPlayer rule).
+  if (entry.playing) return;
+  if (controls?.movementLocked || weapons?.isGrabActive?.()) return;
+
+  const caseKey = `case${entry.slotIndex}`;
+  const isLocked = Boolean(levelOneState?.hallCasesLocked?.[caseKey]);
+
+  const isFirstDiscRitual = entry.slotIndex === 0 && !levelOneState.discInCase;
+  const isSecondCaseRitual = entry.slotIndex === 1 && isLocked && Boolean(levelOneState.goldenVinylClaimed);
+
+  if (isFirstDiscRitual) {
+    if (isLocked || !levelOneState.hasFirstDisc) {
+      showWhisper('take the first disc from the center case', 2.4);
+      return;
+    }
+  } else if (isSecondCaseRitual) {
+    // Carrying the post-boss golden vinyl unlocks and seats case 1.
+  } else if (isLocked) {
+    showWhisper('this case is sealed', 2.2);
     return;
   }
-  // The placement is a ritual (Lotty, Nov 21, 2026): the hands present the
-  // disc while the case engages. Fire-and-forget — the case flow owns timing.
-  if (weapons && typeof weapons.startGrab === 'function') {
-    weapons.startGrab({ profile: 'ritual', pose: 'discPinch' });
+
+  if (!caseController) {
+    await vinylPlayer.toggleCase(entry.slotId);
+    return;
   }
+
+  if (isFirstDiscRitual || isSecondCaseRitual) {
+    if (controls) controls.movementLocked = true;
+    if (isFirstDiscRitual) {
+      levelOneState = advanceLevelOne(levelOneState, 'start_place_first_disc').state;
+    }
+
+    const onClose = () => {
+      if (isFirstDiscRitual) {
+        levelOneState = advanceLevelOne(levelOneState, 'finish_place_first_disc').state;
+        showWhisper('the portal opens', 2.8);
+      } else if (isSecondCaseRitual) {
+        if (levelOneState.step !== LEVEL_ONE_STEPS.RETURN_TO_HALL) {
+          levelOneState = advanceLevelOne(levelOneState, 'return_to_hall').state;
+        }
+        levelOneState = advanceLevelOne(levelOneState, 'place_disc_in_second_case').state;
+        if (library?.trapdoor?.group && canUnlockStairs(levelOneState)) {
+          library.trapdoor.group.visible = true;
+        }
+        showWhisper('level one complete — the way forward is open', 3.4);
+      }
+
+      pendingCaseSlotId = entry.slotId;
+      caseController
+        .engageCaseWithDisc({
+          caseId: entry.slotId,
+          levelNumber: entry.manifestIdx + 1,
+          songPriority: entry.manifestIdx + 1,
+          songId: entry.track.id,
+          songTitle: entry.track.title,
+          audioUrl: entry.track.audio,
+        })
+        .then((result) => {
+          if (result && result.mode === 'revisit_song_only' && !entry.playing) {
+            vinylPlayer.toggleCase(entry.slotId);
+          }
+        })
+        .catch(() => {});
+    };
+
+    const onDone = () => {
+      if (controls) controls.movementLocked = false;
+    };
+
+    const started =
+      weapons && typeof weapons.startGrab === 'function'
+        ? weapons.startGrab({ profile: 'ritual', pose: 'discPinch', onClose, onDone })
+        : false;
+    if (!started) {
+      onClose();
+      onDone();
+    }
+    return;
+  }
+
+  // Unlocked revisit case: play song without locking movement for the initial ritual.
   pendingCaseSlotId = entry.slotId;
-  const result = await caseController.engageCaseWithVinylAndKey({
+  const result = await caseController.engageCaseWithDisc({
     caseId: entry.slotId,
     levelNumber: entry.manifestIdx + 1,
     songPriority: entry.manifestIdx + 1,
@@ -528,9 +607,7 @@ async function handleVinylCaseInteract(caseId) {
     songTitle: entry.track.title,
     audioUrl: entry.track.audio,
   });
-  // Revisit of an older song: the controller already fired the title +
-  // collectible; here we only start the song itself — no level, no spawns.
-  if (result && result.mode === 'revisit_song_only') {
+  if (result && result.mode === 'revisit_song_only' && !entry.playing) {
     await vinylPlayer.toggleCase(entry.slotId);
   }
 }
@@ -618,6 +695,7 @@ function openDriveVault(fromPhase) {
 }
 
 let library = null;
+let levelOneCorridor = null;
 let worldItems = null;
 let transformer = null;
 let controls = null;
@@ -833,10 +911,46 @@ function startNewRun(lockPointer = true, cinemaReel = null) {
     transformer.setRoomDarkened(true);
     transformer.resetToExploration();
   }
-  if (enemies) enemies.resetStats();
-  if (worldItems) worldItems.spawnArchiveStashes();
+  levelOneState = createLevelOneState({
+    villainCutsceneSeenCount: levelOneState ? levelOneState.villainCutsceneSeenCount : 0,
+  });
+  if (levelOneZones) {
+    levelOneZones.currentZone = LEVEL_ONE_ZONES.MUSEUM_HALL;
+    levelOneZones.lionBossStarted = false;
+    levelOneZones.lionBossDefeated = false;
+    levelOneZones.caseRiseState = 'hidden';
+    levelOneZones._caseRiseElapsed = 0;
+  }
+  if (levelOneCorridor) {
+    levelOneCorridor.portalGateMesh.visible = true;
+    levelOneCorridor.mazeExitGateMesh.visible = true;
+    levelOneCorridor.risingCaseMesh.visible = false;
+    levelOneCorridor.risingCaseMesh.position.y = -2.2;
+  }
+  if (library?.trapdoor?.group) {
+    library.trapdoor.group.visible = false;
+  }
+  if (enemies) {
+    enemies.levelOneMode = true;
+    enemies.resetStats();
+  }
+  if (worldItems) {
+    worldItems.spawnArchiveStashes();
+    worldItems.spawn(
+      'first_disc',
+      LEVEL_ONE_SPAWNS.firstDisc.x,
+      LEVEL_ONE_SPAWNS.firstDisc.y,
+      LEVEL_ONE_SPAWNS.firstDisc.z,
+      1
+    );
+  }
   if (weapons) weapons.reset();
-  if (controls) controls.resetSpawn();
+  if (controls) {
+    controls.resetSpawn();
+    controls.yaw = Math.PI;
+    controls.movementLocked = false;
+    controls.worldBounds = LEVEL_ONE_WORLD_BOUNDS;
+  }
 
   // Always transition to playing immediately so scene is ready underneath the movie reel
   setPhase('playing');
@@ -876,6 +990,10 @@ function submitTerminalSeed(rawSeed) {
 }
 
 function triggerTrapdoorDescent() {
+  if (enemies?.levelOneMode && !canUnlockStairs(levelOneState)) {
+    showWhisper('the way forward is sealed until the boss falls and the disc is seated', 2.6);
+    return;
+  }
   if (!transformer.advanceFloor()) return;
   refreshArchiveShadows(renderer); // new floor layout — re-bake static shadows once
   if (transformer.floor >= 2) {
@@ -1270,12 +1388,13 @@ async function bootstrap() {
 
   const tracks = await vinylPlayer.loadManifest();
   library = buildGrandLibrary(scene, renderer, tracks, isSoftwareGl);
+  levelOneCorridor = buildLevelOneCorridor(scene);
 
   // Chromebook scene optimization (brief, Nov 20, 2026): freeze static
   // hall transforms + strip mipmap/anisotropy cost from the 2K prop
   // textures. Anything that MOVES is flagged dynamic first (trapdoor
-  // leaves, movable shelves, vinyl cases); enemies and pickups are
-  // created after this runs, so they are never frozen.
+  // leaves, movable shelves, vinyl cases, corridor gates, rising case);
+  // enemies and pickups are created after this runs, so they are never frozen.
   const flagDynamic = (root) => {
     if (root && typeof root.traverse === 'function') {
       root.traverse((o) => {
@@ -1287,6 +1406,10 @@ async function bootstrap() {
   flagDynamic(library.trapdoor && library.trapdoor.group);
   (library.movableShelves || []).forEach((shelf) => flagDynamic(shelf && shelf.group));
   (library.vinylCases || []).forEach((vc) => flagDynamic(vc && (vc.group || vc.mesh || vc)));
+  flagDynamic(levelOneCorridor.portalGateMesh);
+  flagDynamic(levelOneCorridor.mazeExitGateMesh);
+  flagDynamic(levelOneCorridor.risingCaseMesh);
+  flagDynamic(levelOneCorridor.barrelMesh);
   optimizeStaticArchiveScene(scene);
   if (deviceProfile === 'chromebook') {
     enforcePointLightBudget(scene, 3);
@@ -1332,7 +1455,10 @@ async function bootstrap() {
       }
     },
     onEnterLevel: () => {
-      if (pendingCaseSlotId) vinylPlayer.toggleCase(pendingCaseSlotId);
+      if (pendingCaseSlotId) {
+        const slot = vinylPlayer.cases.find((c) => c.slotId === pendingCaseSlotId);
+        if (slot && !slot.playing) vinylPlayer.toggleCase(pendingCaseSlotId);
+      }
     },
   });
 
@@ -1340,10 +1466,14 @@ async function bootstrap() {
   worldItems.spawnArchiveStashes();
 
   worldRayMeshes = library.movableShelves.map((s) => s.group);
+  if (levelOneCorridor?.barrelMesh) {
+    worldRayMeshes.push(levelOneCorridor.barrelMesh);
+  }
 
   controls = new PlayerControls(camera, renderer.domElement, {
     onPointerUnlock: () => {},
   });
+  controls.worldBounds = LEVEL_ONE_WORLD_BOUNDS;
 
   weapons = new WeaponSystem(camera, {
     controls,
@@ -1383,12 +1513,26 @@ async function bootstrap() {
       levelOneState = advanceLevelOne(levelOneState, 'lesser_enemy_killed').state;
       updateHudReadouts();
     },
+    onGhostKilled: () => {
+      levelOneState = advanceLevelOne(levelOneState, 'lesser_enemy_killed').state;
+      updateHudReadouts();
+    },
+    onGhoulKilled: () => {
+      // Single decrement path: MazeOneGhoul.die() fires onGhoulKilled once (enemies.js does NOT double-call onZombieKilled).
+      levelOneState = advanceLevelOne(levelOneState, 'lesser_enemy_killed').state;
+      updateHudReadouts();
+    },
+    onLionKilled: () => {
+      // Boss death NEVER decrements lesser-enemy count; LionBoss.die() already invokes levelOneZones.notifyLionDefeated().
+      levelOneState = advanceLevelOne(levelOneState, 'lion_sword_smite').state;
+      updateHudReadouts();
+    },
     onDropLoot: (x, z, itemId) => {
       worldItems.spawn(itemId, x, 0, z, 1);
     },
     onLevelCleared: (level, pos) => {
-      // One disc per level (Nov 20, 2026): where the final enemy fell,
-      // the disc rises up out of the floor like a hidden relic.
+      // Non-Level-One fallback only (enemies.js suppresses this in levelOneMode).
+      if (enemies?.levelOneMode) return;
       worldItems.spawn('level_disc', pos.x, 0, pos.z, 1);
       showWhisper(`floor ${level} cleared — a disc rises`, 3.2);
     },
@@ -1398,11 +1542,13 @@ async function bootstrap() {
       updateHudReadouts();
     },
   });
+  enemies.levelOneMode = true;
 
   levelOneZones = new LevelOneZoneController({
+    risingCaseMesh: levelOneCorridor.risingCaseMesh,
     zoneBounds: {
-      [LEVEL_ONE_ZONES.MUSEUM_HALL]: { minX: -16, maxX: 16, minZ: -16, maxZ: 16 },
-      [LEVEL_ONE_ZONES.WHITE_AETHER]: { minX: -24, maxX: 24, minZ: 16, maxZ: 40 },
+      [LEVEL_ONE_ZONES.MUSEUM_HALL]: { minX: -12.5, maxX: 12.5, minZ: -7.5, maxZ: 7.5 },
+      [LEVEL_ONE_ZONES.WHITE_AETHER]: { minX: -24, maxX: 24, minZ: 7.5, maxZ: 40 },
       [LEVEL_ONE_ZONES.CASTLE_OF_THE_DEAD]: { minX: -32, maxX: 32, minZ: 40, maxZ: 80 },
       [LEVEL_ONE_ZONES.MAZE_ONE]: { minX: -40, maxX: 40, minZ: 80, maxZ: 130 },
       [LEVEL_ONE_ZONES.LION_ROOM]: { minX: -20, maxX: 20, minZ: 130, maxZ: 165 },
@@ -1412,12 +1558,12 @@ async function bootstrap() {
     },
     onCaseRiseStart: () => {
       triggerLevelOneRumble((k) => pulseRumble(k, controls), 'case_rise');
-      sfx.playMechanicalTrapdoor();
+      sfx.playTrapdoorMechanism();
     },
     onCaseRiseComplete: () => {
       if (worldItems) {
-        worldItems.spawn('level_disc', 0, 0, 150, 1);
-        showWhisper('disc risen — claim it to finish Level One', 3.2);
+        worldItems.spawn('golden_vinyl', 0, 1.35, 150, 1);
+        showWhisper('golden vinyl risen — claim it and return to the hall', 3.4);
       }
     },
     onLionBossStart: () => {
@@ -1602,7 +1748,19 @@ function stepSimulation(dt) {
 
   transformer.update(simDt, elapsed);
 
-  const allColliders = library.staticColliders.concat(transformer.getLiveShelfColliders());
+  const portalOpen = Boolean(levelOneState && levelOneState.discInCase);
+  const mazeExitOpen = Boolean(
+    levelOneState && levelOneState.mazeExitUnlocked && levelOneState.allLesserEnemiesDead
+  );
+  if (levelOneCorridor) {
+    levelOneCorridor.portalGateMesh.visible = !portalOpen;
+    levelOneCorridor.mazeExitGateMesh.visible = !mazeExitOpen;
+  }
+  const allColliders = library.staticColliders.concat(
+    transformer.getLiveShelfColliders(),
+    levelOneCorridor ? levelOneCorridor.staticColliders : [],
+    levelOneCorridor ? levelOneCorridor.getGateColliders({ portalOpen, mazeExitOpen }) : []
+  );
   const prevPosture = document.body.dataset.posture;
   const prevClimbing = controls.isClimbing;
 
@@ -1789,14 +1947,33 @@ function stepSimulation(dt) {
   if (act.interact && interactable && !controls.isClimbing) {
     if (interactable.type === 'pickup') {
       const applyPickupEffect = () => {
-        if (interactable.itemId === 'level_disc') {
-          // The level disc is claimed, not pocketed — it never enters the satchel.
+        if (interactable.itemId === 'first_disc') {
+          worldItems.removeById(interactable.id);
+          sfx.playAmmoPickup();
+          showWhisper('first disc taken — place it in the unlocked case', 2.6);
+          if (levelOneState) {
+            levelOneState = advanceLevelOne(levelOneState, 'pickup_first_disc').state;
+          }
+          hudDirty = true;
+        } else if (interactable.itemId === 'golden_vinyl' || interactable.itemId === 'level_disc') {
+          // Post-boss level disc is claimed, never pocketed — advances claim_golden_vinyl (NOT pickup_first_disc).
           worldItems.removeById(interactable.id);
           gameState.discsClaimed = (gameState.discsClaimed || 0) + 1;
           sfx.playAmmoPickup();
-          showWhisper(`disc claimed — floor ${transformer.floor}`, 2.6);
+          showWhisper('golden vinyl claimed — return to the hall', 3.0);
           if (levelOneState) {
-            levelOneState = advanceLevelOne(levelOneState, 'pickup_first_disc').state;
+            levelOneState = advanceLevelOne(levelOneState, 'claim_golden_vinyl').state;
+          }
+          hudDirty = true;
+        } else if (interactable.itemId === 'maze_disc') {
+          worldItems.removeById(interactable.id);
+          sfx.playAmmoPickup();
+          if (levelOneState) {
+            levelOneState = advanceLevelOne(levelOneState, 'collect_maze_disc').state;
+            showWhisper(
+              `maze disc ${levelOneState.mazeDiscsCollected}/${levelOneState.mazeDiscsRequired}`,
+              2.4
+            );
           }
           hudDirty = true;
         } else if (interactable.itemId === 'shotgun_pickup') {
@@ -1844,7 +2021,10 @@ function stepSimulation(dt) {
       // the effect lands at the take moment (onClose), not at button press.
       // Small curiosities keep the instant take.
       const GRAB_PICKUPS = {
+        first_disc: { profile: 'fast', pose: 'discPinch' },
+        golden_vinyl: { profile: 'fast', pose: 'discPinch' },
         level_disc: { profile: 'fast', pose: 'discPinch' },
+        maze_disc: { profile: 'fast', pose: 'discPinch' },
         shotgun_pickup: { profile: 'fast', pose: 'gripWrap' },
         sword_pickup: { profile: 'fast', pose: 'swordGrip' },
         darko_drink: { profile: 'fast', pose: 'canGrip' },
@@ -1879,7 +2059,16 @@ function stepSimulation(dt) {
   if (wasReloading && !weapons.reloading) hudDirty = true;
 
   const enemyTimeScale = gameState.timeSlowTimer > 0 ? 0.38 : 1.0;
-  enemies.update(simDt, elapsed, controls.position, allColliders, enemyTimeScale, controls.stealth);
+  enemies.update(
+    simDt,
+    elapsed,
+    controls.position,
+    allColliders,
+    enemyTimeScale,
+    controls.stealth,
+    controls.yaw,
+    LEVEL_ONE_WORLD_BOUNDS
+  );
 
   // Feed nearest Archive Ghost distance to horror vignette shader overlay & apply returned shake vector
   const nearestGhostDist = enemies.getNearestGhostDistance(controls.position);

@@ -12,6 +12,8 @@ export const ZOMBIE_STATES = {
   RUN: 'run',
   ATTACK: 'attack',
   DEATH: 'death',
+  CRAWL: 'crawl',
+  BITING: 'biting',
 };
 
 export const ZOMBIE_CROSSFADE_SEC = {
@@ -20,15 +22,34 @@ export const ZOMBIE_CROSSFADE_SEC = {
   run: 0.18,
   attack: 0.16,
   death: 0.16,
+  crawl: 0.22,
+  biting: 0.18,
 };
 
 export const MIXAMO_CLIP_FILES = {
-  idle: ['Zombie Idle.fbx', 'zombie-idle.fbx', 'idle.fbx'],
-  walk: ['Zombie Walk.fbx', 'zombie-walk.fbx', 'walk.fbx'],
-  run: ['Zombie Run.fbx', 'zombie-run.fbx', 'run.fbx'],
-  attack: ['Zombie Attack.fbx', 'zombie-attack.fbx', 'attack.fbx'],
-  death: ['Zombie Death.fbx', 'zombie-death.fbx', 'death.fbx'],
+  idle: ['zombie-idle.fbx', 'Zombie Idle.fbx', 'idle.fbx'],
+  walk: ['zombie-walk.fbx', 'Zombie Walk.fbx', 'walk.fbx'],
+  run: ['zombie-run.fbx', 'Zombie Run.fbx', 'run.fbx'],
+  attack: ['zombie-attack.fbx', 'Zombie Attack.fbx', 'attack.fbx'],
+  death: ['zombie-death.fbx', 'Zombie Death.fbx', 'death.fbx'],
+  crawl: ['zombie-crawl.fbx', 'Zombie Crawl.fbx', 'crawl.fbx'],
+  biting: ['zombie-biting.fbx', 'Zombie Biting.fbx', 'biting.fbx'],
 };
+
+/**
+ * Canonical runtime URLs for all 7 Mixamo FBX clips in public/animations/.
+ * Used directly by FBXLoader at runtime so packaged builds never depend on
+ * build-time import.meta.glob discovery.
+ */
+export const MIXAMO_CLIP_URLS = Object.freeze({
+  idle: '/animations/zombie-idle.fbx',
+  walk: '/animations/zombie-walk.fbx',
+  run: '/animations/zombie-run.fbx',
+  attack: '/animations/zombie-attack.fbx',
+  death: '/animations/zombie-death.fbx',
+  crawl: '/animations/zombie-crawl.fbx',
+  biting: '/animations/zombie-biting.fbx',
+});
 
 /**
  * Computes next animation state and side-effect flags for a zombie.

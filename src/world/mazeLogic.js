@@ -352,26 +352,28 @@ export function generateFloorMaze(seed, floor) {
  * @param {Array<{ minX: number, maxX: number, minZ: number, maxZ: number }>} colliders
  * @returns {{ x: number, z: number, collided: boolean }}
  */
-export function resolveCircleAABB(x, z, radius, colliders) {
+export function resolveCircleAABB(x, z, radius, colliders, worldBounds = null) {
   let px = x;
   let pz = z;
   let collided = false;
 
-  // Hall outer walls
-  const maxX = HALL_HALF_W - radius;
-  const maxZ = HALL_HALF_D - radius;
-  if (px < -maxX) {
-    px = -maxX;
+  // Outer perimeter bounds (defaults to Grand Hall; expands during Level One corridor/Maze One)
+  const minBoundX = (worldBounds ? worldBounds.minX : -HALL_HALF_W) + radius;
+  const maxBoundX = (worldBounds ? worldBounds.maxX : HALL_HALF_W) - radius;
+  const minBoundZ = (worldBounds ? worldBounds.minZ : -HALL_HALF_D) + radius;
+  const maxBoundZ = (worldBounds ? worldBounds.maxZ : HALL_HALF_D) - radius;
+  if (px < minBoundX) {
+    px = minBoundX;
     collided = true;
-  } else if (px > maxX) {
-    px = maxX;
+  } else if (px > maxBoundX) {
+    px = maxBoundX;
     collided = true;
   }
-  if (pz < -maxZ) {
-    pz = -maxZ;
+  if (pz < minBoundZ) {
+    pz = minBoundZ;
     collided = true;
-  } else if (pz > maxZ) {
-    pz = maxZ;
+  } else if (pz > maxBoundZ) {
+    pz = maxBoundZ;
     collided = true;
   }
 
@@ -407,19 +409,19 @@ export function resolveCircleAABB(x, z, radius, colliders) {
       }
     }
 
-    // Re-clamp to outer hall walls after each push-out pass so shifting shelves cannot push player out of bounds
-    if (px < -maxX) {
-      px = -maxX;
+    // Re-clamp to outer bounds after each push-out pass so shifting shelves cannot push player out of bounds
+    if (px < minBoundX) {
+      px = minBoundX;
       collided = true;
-    } else if (px > maxX) {
-      px = maxX;
+    } else if (px > maxBoundX) {
+      px = maxBoundX;
       collided = true;
     }
-    if (pz < -maxZ) {
-      pz = -maxZ;
+    if (pz < minBoundZ) {
+      pz = minBoundZ;
       collided = true;
-    } else if (pz > maxZ) {
-      pz = maxZ;
+    } else if (pz > maxBoundZ) {
+      pz = maxBoundZ;
       collided = true;
     }
   }
@@ -486,7 +488,7 @@ export function applyWeaponHit(target, weaponType, isHeadshot = false) {
   // Gunfire CANNOT kill the lion — player shoots until out of ammo, then sword smites it.
   if (target.kind === 'lion') {
     const isGunfire = weaponType === 'shotgun' || weaponType === 'glock';
-    const isSword = weaponType === 'sword' || weaponType === 'knife';
+    const isSword = weaponType === 'sword';
 
     if (isGunfire) {
       const gDmg = weaponType === 'shotgun' ? (isHeadshot ? 60 : 35) : (isHeadshot ? 35 : 18);
@@ -506,22 +508,32 @@ export function applyWeaponHit(target, weaponType, isHeadshot = false) {
     }
 
     if (isSword) {
-      // Sword smites the lion
+      // Sword smites the lion once out of ammo (or when sword damage drops HP to 0)
       const swordDmg = isHeadshot ? 250 : 180;
       const nextHp = Math.max(0, target.hp - swordDmg);
-      const killed = nextHp <= 0 || target.outOfAmmoSmiteReady;
+      const killed = Boolean(target.outOfAmmoSmiteReady) || nextHp <= 0;
       return {
         hit: true,
         damaged: true,
-        killed: true,
+        killed,
         phaseRipple: false,
         damage: swordDmg,
         isHeadshot,
-        remainingHp: 0,
-        stagger: 0,
-        smoteBySword: true,
+        remainingHp: killed ? 0 : nextHp,
+        stagger: killed ? 0 : 0.3,
+        smoteBySword: killed,
       };
     }
+
+    return {
+      hit: true,
+      damaged: false,
+      killed: false,
+      phaseRipple: false,
+      damage: 0,
+      remainingHp: target.hp,
+      stagger: 0,
+    };
   }
 
   if (target.kind === 'ghost') {

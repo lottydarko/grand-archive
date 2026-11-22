@@ -499,8 +499,7 @@ export class TitleMenu {
       } else if (ev.type === 'confirm_enter') {
         cathedralBus.playUiTick('confirm');
         this._stopTaunt(0.25);
-        // AUDIO LAW: Loop /audio/grand-archive-hall-theme.mp3 through 4.4s marble-hall convolver on ENTER
-        cathedralBus.playLoop('hall-theme', HALL_THEME_URL, { volume: 0.68, fadeInSec: 1.2 });
+        // §A.2 / §B.10: Hall starts silent until the player places the first disc into its case.
         this.hide();
         this.onEnterConfirmed();
       }

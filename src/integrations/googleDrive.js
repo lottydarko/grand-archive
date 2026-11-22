@@ -5,7 +5,6 @@ import {
   GoogleAuthProvider,
   onAuthStateChanged,
 } from 'firebase/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
 import {
   DRIVE_SCOPES,
   ARCHIVE_SAVE_PREFIX,
@@ -19,20 +18,46 @@ import {
  * - Access token is cached strictly in memory (never localStorage or sessionStorage).
  * - Token is cleared automatically via onAuthStateChanged on sign-out.
  * - All 13 user-selected Google Drive scopes are registered on GoogleAuthProvider.
+ *
+ * Optional config lookup: uses import.meta.glob so builds without
+ * `firebase-applet-config.json` (e.g., offline Chromebook builds) compile cleanly
+ * and degrade gracefully to unconfigured offline mode.
  */
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-const auth = getAuth(app);
+const configModules =
+  typeof import.meta !== 'undefined' && typeof import.meta.glob === 'function'
+    ? import.meta.glob('../../firebase-applet-config.json', { eager: true })
+    : {};
+const firebaseConfigEntry = Object.values(configModules)[0];
+const firebaseConfig = firebaseConfigEntry?.default || firebaseConfigEntry || null;
 
-const provider = new GoogleAuthProvider();
-for (const scope of DRIVE_SCOPES) {
-  provider.addScope(scope);
+const app =
+  firebaseConfig && firebaseConfig.apiKey
+    ? getApps().length > 0
+      ? getApp()
+      : initializeApp(firebaseConfig)
+    : null;
+const auth = app ? getAuth(app) : null;
+
+const provider = auth ? new GoogleAuthProvider() : null;
+if (provider) {
+  for (const scope of DRIVE_SCOPES) {
+    provider.addScope(scope);
+  }
 }
 
 let isSigningIn = false;
 let cachedAccessToken = null;
 let currentUser = null;
 
+export function isDriveConfigured() {
+  return Boolean(auth);
+}
+
 export function initDriveAuth(onAuthSuccess, onAuthFailure) {
+  if (!auth) {
+    onAuthFailure?.();
+    return () => {};
+  }
   return onAuthStateChanged(auth, (user) => {
     currentUser = user;
     if (user) {
@@ -50,6 +75,9 @@ export function initDriveAuth(onAuthSuccess, onAuthFailure) {
 }
 
 export async function signInWithGoogleDrive() {
+  if (!auth || !provider) {
+    throw new Error('DRIVE_NOT_CONFIGURED');
+  }
   try {
     isSigningIn = true;
     const result = await signInWithPopup(auth, provider);
@@ -76,7 +104,9 @@ export function getDriveUser() {
 export async function signOutGoogleDrive() {
   cachedAccessToken = null;
   currentUser = null;
-  await auth.signOut();
+  if (auth) {
+    await auth.signOut();
+  }
 }
 
 function requireToken() {

@@ -32,12 +32,9 @@ const STUDIO_CLIPS = {
     '/audio/voice/character/panting-01.mp3',
     '/audio/voice/character/breathing-heavy-01.mp3',
   ],
+  // §E Taunt Law: ZERO attack/sighting voiced yells — telegraph uses non-verbal growl SFX only.
   zombieTelegraph: [
     '/audio/sfx/sfx-growl.mp3',
-    '/audio/sfx/sfx-chuckle-sinister.mp3',
-    '/audio/voice/yells/yell-get-out.mp3',
-    '/audio/voice/yells/yell-wrong-address.mp3',
-    '/audio/voice/yells/yell-sort-you.mp3',
   ],
   ghostWhisper: [
     '/audio/voice/character/mutter-sender.mp3',
@@ -607,6 +604,46 @@ class SoundEffects {
     src.connect(bp).connect(g).connect(this._getBusInput());
     src.start(now);
     src.stop(now + 0.32);
+  }
+
+  /** Non-verbal enemy alert growl (no voiced attack/sighting taunts per §E). */
+  playZombieAlert() {
+    this.playZombieTelegraph();
+  }
+
+  /** Non-verbal melee claw/swipe impact for zombies and ghouls. */
+  playZombieAttack() {
+    if (this.muted) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    if (this._playStudioClip('bloodHit', { volume: 0.65, rate: 0.85 })) return;
+    this.playZombieTelegraph();
+  }
+
+  /** Deep resonant lion roar routed through cathedralBus. */
+  playLionRoar() {
+    if (this.muted) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    if (this._playStudioClip('zombieTelegraph', { volume: 0.92, rate: 0.56 })) return;
+    if (!this.noiseBuffer) return;
+
+    const now = ctx.currentTime;
+    const sub = ctx.createOscillator();
+    sub.type = 'sawtooth';
+    sub.frequency.setValueAtTime(115, now);
+    sub.frequency.exponentialRampToValueAtTime(48, now + 1.15);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(520, now);
+    lp.frequency.exponentialRampToValueAtTime(190, now + 1.2);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.001, now);
+    g.gain.linearRampToValueAtTime(0.52, now + 0.12);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 1.25);
+    sub.connect(lp).connect(g).connect(this._getBusInput());
+    sub.start(now);
+    sub.stop(now + 1.3);
   }
 
   /** Human vocal exertion grunt for climbing ledges/rungs (studio voice clip + procedural fallback). */

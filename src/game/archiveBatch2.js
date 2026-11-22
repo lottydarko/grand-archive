@@ -176,7 +176,7 @@ export class PhysicalCaseLockController {
     this.currentLevel = 0;
     this.highestSongPriority = 0;
     this.unlockedCases = new Set();
-    this.isTurningKey = false;
+    this.isPlacingDisc = false;
   }
 
   syncFromSave({ currentLevel = 0, highestSongPriority = 0, unlockedCases = [] } = {}) {
@@ -185,12 +185,12 @@ export class PhysicalCaseLockController {
     this.unlockedCases = new Set(unlockedCases);
   }
 
-  async engageCaseWithVinylAndKey({ caseId, levelNumber, songPriority, songId, songTitle, audioUrl }) {
-    if (this.isTurningKey) return;
-    this.isTurningKey = true;
+  async engageCaseWithDisc({ caseId, levelNumber, songPriority, songId, songTitle, audioUrl }) {
+    if (this.isPlacingDisc) return;
+    this.isPlacingDisc = true;
 
     try {
-      this._playKeyTurnAndRumble();
+      this._playDiscPlacementRumble();
       this.onCrackCase(caseId);
       this.onGroundRumble(0.65, 1300);
       await new Promise((r) => setTimeout(r, 1100));
@@ -220,11 +220,18 @@ export class PhysicalCaseLockController {
       this.onEnterLevel(this.currentLevel, { id: songId, title: songTitle, audioUrl });
       return { mode: 'level_engaged', level: this.currentLevel };
     } finally {
-      this.isTurningKey = false;
+      this.isPlacingDisc = false;
     }
   }
 
-  _playKeyTurnAndRumble() {
+  /**
+   * Backward-compatible alias — physical key-turn removed (§B.2: discs are the keys).
+   */
+  async engageCaseWithVinylAndKey(params) {
+    return this.engageCaseWithDisc(params);
+  }
+
+  _playDiscPlacementRumble() {
     if (!this.audioBus || !this.audioBus.ctx) return;
     const ctx = this.audioBus.ctx;
     const now = ctx.currentTime;
@@ -245,8 +252,12 @@ export class PhysicalCaseLockController {
 
     osc.connect(filter);
     filter.connect(gain);
-    gain.connect(this.audioBus.dryNode);
-    gain.connect(this.audioBus.convolver);
+    // §B.10: Route 100% through cathedral bus (zero dryNode leak).
+    const dest =
+      typeof this.audioBus.getInputNode === 'function'
+        ? this.audioBus.getInputNode()
+        : this.audioBus.convolver;
+    if (dest) gain.connect(dest);
 
     osc.start(now);
     osc.stop(now + 1.32);

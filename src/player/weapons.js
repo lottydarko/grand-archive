@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { sfx } from '../audio/sfx.js';
-import { tryLoadModel } from '../utils/assetLoader.js';
+import { tryLoadModel, tryLoadTexture } from '../utils/assetLoader.js';
 import { createViewmodelIdleState, stepViewmodelIdle } from './viewmodelIdleLogic.js';
 import {
   applyProceduralGlockKickback,
@@ -31,16 +31,23 @@ export class WeaponSystem {
     this.camera = camera;
     this.callbacks = callbacks;
 
-    this.activeWeapon = 'glock'; // 'glock' | 'knife' | 'shotgun' | 'sword'
-    this.loadout = 'standard'; // 'standard' (glock/knife) | 'level1' (shotgun/sword)
+    // §A / §D: Level One starts UNARMED. Arsenal unlocks in Castle Room 1: Balistucia + Sword.
+    this.activeWeapon = 'unarmed'; // 'unarmed' | 'shotgun' | 'sword' | 'glock' | 'knife'
+    this.loadout = 'level1'; // 'level1' (Balistucia + Sword ONLY) | 'standard'
+    this.weaponsUnlocked = {
+      shotgun: false,
+      sword: false,
+      glock: false,
+      knife: false,
+    };
     this.magSize = 15;
     this._ammoInMag = 15;
     this._reserveAmmo = 60;
 
-    // Level One Arsenal (Shotgun + Sword)
+    // Level One Arsenal (Balistucia Shotgun + Sword)
     this.shotgunMagSize = 6;
     this.shotgunAmmoInMag = 6;
-    this.shotgunReserve = 18;
+    this.shotgunReserve = 12;
     this.shotgunPump = 0;
     this.swordSlashing = false;
     this.swordSlashTimer = 0;
@@ -114,7 +121,7 @@ export class WeaponSystem {
 
     this._buildGlock();
     this._buildKnife();
-    this._buildShotgun();
+    this._initShotgunMount();
     this._buildSword();
     this._loadHeroWeaponModels();
     this._syncVisibility();
@@ -138,12 +145,32 @@ export class WeaponSystem {
     else this._reserveAmmo = val;
   }
 
-  setLoadout(loadout) {
+  setLoadout(loadout, { unarmed = false } = {}) {
     this.loadout = loadout;
     if (loadout === 'level1') {
-      this.equip('shotgun');
+      if (unarmed || (!this.weaponsUnlocked.shotgun && !this.weaponsUnlocked.sword)) {
+        this.activeWeapon = 'unarmed';
+        this.holstered = true;
+        this.holsterBlend = 1;
+        this._syncVisibility();
+      } else if (this.weaponsUnlocked.shotgun) {
+        this.equip('shotgun');
+      } else if (this.weaponsUnlocked.sword) {
+        this.equip('sword');
+      }
     } else {
+      this.weaponsUnlocked.glock = true;
+      this.weaponsUnlocked.knife = true;
       this.equip('glock');
+    }
+  }
+
+  unlockWeapon(weapon, { autoEquip = true } = {}) {
+    if (weapon !== 'shotgun' && weapon !== 'sword' && weapon !== 'glock' && weapon !== 'knife') return;
+    if (this.loadout === 'level1' && (weapon === 'glock' || weapon === 'knife')) return;
+    this.weaponsUnlocked[weapon] = true;
+    if (autoEquip) {
+      this.equip(weapon);
     }
   }
 
@@ -154,15 +181,12 @@ export class WeaponSystem {
   }
 
   /**
-   * Starts an unskippable first-person grab. Returns false if the arms are
-   * not loaded or a grab is already running. `onClose` fires at the take
-   * moment (hands closed on the object) — callers apply pickup effects
-   * there, never at button press.
+   * Starts an unskippable first-person grab / disc-placement ritual.
+   * Item D: NEVER silently skips when fps_arms.glb hasn't loaded yet —
+   * the GrabAnimator timing & onClose/onDone callbacks ALWAYS run in full.
    */
   startGrab({ profile = 'fast', pose = 'gripWrap', onClose = null, onDone = null } = {}) {
-    if (!this.armsLoaded || !this._grabBones) return false;
-    const target = GRAB_POSES[pose];
-    if (!target) return false;
+    const target = GRAB_POSES[pose] || GRAB_POSES.gripWrap;
     this._grabFromPose = clonePose(this._grabPoseCurrent);
     this._grabTargetPose = target;
     const ok = this.grabAnimator.start({ profile, poseName: pose, onClose, onDone });
@@ -239,35 +263,36 @@ export class WeaponSystem {
   }
 
   _updateGrab(dt) {
-    if (!this._grabBones || !this.armsRoot || !this._armsPivotBasePos) return;
+    // Always advance GrabAnimator so ritual placement (2.8s) completes & fires callbacks
+    // even when fps_arms.glb is unavailable in headless/asset-light environments.
     const snap = this.grabAnimator.update(dt);
+    const hasRig = Boolean(this._grabBones && this.armsRoot && this._armsPivotBasePos);
     if (snap.active || snap.phase === 'done') {
       const target = this._grabTargetPose || GRAB_POSES.open;
       const pose = lerpPose(this._grabFromPose, target, snap.curlAmt);
       this._grabPoseCurrent = pose;
-      this._applyGrabPose(pose);
-      // Reach: the arms pivot pushes forward/down from its base position.
-      const ritual = snap.profileName === 'ritual';
-      const depth = (ritual ? 0.2 : 0.13) * snap.reachAmt;
-      const drop = (ritual ? 0.06 : 0.03) * snap.reachAmt;
-      const center = (ritual ? 0.03 : 0) * snap.reachAmt;
-      this.armsRoot.position.set(
-        this._armsPivotBasePos.x + center,
-        this._armsPivotBasePos.y - drop,
-        this._armsPivotBasePos.z - depth
-      );
+      if (hasRig) {
+        this._applyGrabPose(pose);
+        const ritual = snap.profileName === 'ritual';
+        const depth = (ritual ? 0.2 : 0.13) * snap.reachAmt;
+        const drop = (ritual ? 0.06 : 0.03) * snap.reachAmt;
+        const center = (ritual ? 0.03 : 0) * snap.reachAmt;
+        this.armsRoot.position.set(
+          this._armsPivotBasePos.x + center,
+          this._armsPivotBasePos.y - drop,
+          this._armsPivotBasePos.z - depth
+        );
+      }
       if (snap.phase === 'done') this._grabRelease = 0.0001; // begin fade-out
       return;
     }
     if (this._grabRelease > 0) {
-      // Fade the additive pose back to the underlying clip (~0.35 s) and
-      // rest the pivot exactly at base when the fade completes.
       this._grabRelease = Math.min(1, this._grabRelease + dt / 0.35);
       const pose = lerpPose(GRAB_POSES.open, this._grabPoseCurrent, 1 - this._grabRelease);
-      this._applyGrabPose(pose);
+      if (hasRig) this._applyGrabPose(pose);
       if (this._grabRelease >= 1) {
         this._grabPoseCurrent = clonePose(GRAB_POSES.open);
-        this.armsRoot.position.copy(this._armsPivotBasePos);
+        if (hasRig) this.armsRoot.position.copy(this._armsPivotBasePos);
         this._grabRelease = 0;
       }
     }
@@ -393,7 +418,8 @@ export class WeaponSystem {
       if (!gltf || !this.glockGroup) return;
       const armsScene = gltf.scene;
 
-      // De-plasticize untextured arm/glove materials so they read realistic under flashlight & HDRI
+      // §E: Load realistic arm skin albedo & bump maps onto fps_arms.glb skin materials
+      const skinMats = [];
       armsScene.traverse((child) => {
         if (child.isMesh) {
           child.frustumCulled = false;
@@ -405,6 +431,7 @@ export class WeaponSystem {
               m.metalness = 0.02;
               m.roughness = 0.74;
               if (m.color) m.color.multiplyScalar(0.78);
+              skinMats.push(m);
             } else if (n.includes('shirt')) {
               m.metalness = 0.04;
               m.roughness = 0.9;
@@ -420,6 +447,21 @@ export class WeaponSystem {
           }
         }
       });
+      if (skinMats.length > 0) {
+        Promise.all([
+          tryLoadTexture('arms-skin-albedo.png', { srgb: true }),
+          tryLoadTexture('arms-skin-bump.png', { srgb: false }),
+        ]).then(([albedo, bump]) => {
+          for (const m of skinMats) {
+            if (albedo) m.map = albedo;
+            if (bump) {
+              m.bumpMap = bump;
+              m.bumpScale = 0.008;
+            }
+            if (albedo || bump) m.needsUpdate = true;
+          }
+        });
+      }
 
       const armsPivot = new THREE.Group();
       armsPivot.name = 'FPSArmsRig';
@@ -643,10 +685,19 @@ export class WeaponSystem {
     });
   }
 
-  reset() {
-    this.activeWeapon = 'glock';
-    this.ammoInMag = this.magSize;
-    this.reserveAmmo = 60;
+  reset({ levelOne = true } = {}) {
+    this.loadout = levelOne ? 'level1' : 'standard';
+    this.weaponsUnlocked = {
+      shotgun: false,
+      sword: false,
+      glock: !levelOne,
+      knife: !levelOne,
+    };
+    this.activeWeapon = levelOne ? 'unarmed' : 'glock';
+    this._ammoInMag = this.magSize;
+    this._reserveAmmo = 60;
+    this.shotgunAmmoInMag = this.shotgunMagSize;
+    this.shotgunReserve = 12;
     this.fireCooldown = 0;
     this.recoilKick = 0;
     this.slideBack = 0;
@@ -655,9 +706,11 @@ export class WeaponSystem {
     this.reloadTimer = 0;
     this.slashing = false;
     this.slashTimer = 0;
+    this.swordSlashing = false;
+    this.swordSlashTimer = 0;
     this.quickKnifeActive = false;
     this.swapAnim = 0;
-    this.holstered = true; // Holstered by default at every (re)start (Lotty, Nov 20, 2026)
+    this.holstered = true; // Unarmed / holstered at every (re)start
     this.holsterBlend = 1;
     this.inspecting = false;
     this.inspectTimer = 0;
@@ -665,6 +718,8 @@ export class WeaponSystem {
     this.shoveTimer = 0;
     this.muzzleLight.intensity = 0;
     this.muzzleFlashMesh.visible = false;
+    if (this.shotgunMuzzleLight) this.shotgunMuzzleLight.intensity = 0;
+    if (this.shotgunMuzzleFlash) this.shotgunMuzzleFlash.visible = false;
     if (this.shellCasings) this.shellCasings.reset();
     this._playArmsClip('idle', { loop: true, fade: 0.18 });
     this._syncVisibility();
@@ -711,31 +766,58 @@ export class WeaponSystem {
   }
 
   equip(weapon) {
-    if (this.grabAnimator.active) return; // never yank the viewmodel mid-grab
-    if (weapon !== 'glock' && weapon !== 'knife' && weapon !== 'shotgun' && weapon !== 'sword') return;
+    if (this.grabAnimator.active) return false; // never yank the viewmodel mid-grab
+    if (weapon === 'unarmed') {
+      this.activeWeapon = 'unarmed';
+      this.holstered = true;
+      this._syncVisibility();
+      return true;
+    }
+    if (weapon !== 'glock' && weapon !== 'knife' && weapon !== 'shotgun' && weapon !== 'sword') return false;
+    // §D: Glock and Knife are out of script for Level One — strictly blocked.
+    if (this.loadout === 'level1') {
+      if (weapon === 'glock' || weapon === 'knife') return false;
+      if (!this.weaponsUnlocked[weapon]) return false;
+    }
     if (this.holstered) this.holstered = false;
-    if (this.activeWeapon === weapon && !this.quickKnifeActive) return;
+    if (this.activeWeapon === weapon && !this.quickKnifeActive) return true;
     this.cancelReload();
     this.inspecting = false;
     this.quickKnifeActive = false;
     this.activeWeapon = weapon;
     this.swapAnim = 0.85;
     this._syncVisibility();
+    return true;
   }
 
   swap() {
     if (this.loadout === 'level1') {
-      this.equip(this.activeWeapon === 'shotgun' ? 'sword' : 'shotgun');
-    } else {
-      this.equip(this.activeWeapon === 'glock' ? 'knife' : 'glock');
+      if (this.activeWeapon === 'shotgun' && this.weaponsUnlocked.sword) {
+        return this.equip('sword');
+      }
+      if (this.activeWeapon === 'sword' && this.weaponsUnlocked.shotgun) {
+        return this.equip('shotgun');
+      }
+      if (this.activeWeapon === 'unarmed') {
+        if (this.weaponsUnlocked.shotgun) return this.equip('shotgun');
+        if (this.weaponsUnlocked.sword) return this.equip('sword');
+      }
+      return false;
     }
+    return this.equip(this.activeWeapon === 'glock' ? 'knife' : 'glock');
   }
 
   _syncVisibility() {
-    const isShotgun = this.activeWeapon === 'shotgun' && !this.quickKnifeActive;
-    const isSword = this.activeWeapon === 'sword' && !this.quickKnifeActive;
-    const showKnife = (this.activeWeapon === 'knife' || this.quickKnifeActive) && !isSword;
-    const showGlock = this.activeWeapon === 'glock' && !showKnife;
+    const isUnarmed = this.activeWeapon === 'unarmed';
+    const isShotgun = !isUnarmed && this.activeWeapon === 'shotgun' && !this.quickKnifeActive;
+    const isSword = !isUnarmed && this.activeWeapon === 'sword' && !this.quickKnifeActive;
+    const showKnife =
+      !isUnarmed &&
+      this.loadout !== 'level1' &&
+      (this.activeWeapon === 'knife' || this.quickKnifeActive) &&
+      !isSword;
+    const showGlock =
+      !isUnarmed && this.loadout !== 'level1' && this.activeWeapon === 'glock' && !showKnife;
 
     if (this.glockGroup) this.glockGroup.visible = showGlock;
     if (this.knifeGroup) this.knifeGroup.visible = showKnife;
@@ -910,55 +992,14 @@ export class WeaponSystem {
     this.knifeRestRot = k.rotation.clone();
   }
 
-  _buildShotgun() {
+  /**
+   * §D: Default/procedural shotgun model REMOVED entirely.
+   * Only creates the viewmodel pivot + muzzle flash/light for BALISTUCIA (balistucia.glb).
+   */
+  _initShotgunMount() {
     const g = new THREE.Group();
+    g.name = 'BalistuciaMount';
     g.position.set(0.24, -0.24, -0.48);
-
-    const gunmetalMat = new THREE.MeshStandardMaterial({
-      color: 0x1f2228,
-      roughness: 0.38,
-      metalness: 0.85,
-    });
-    const walnutMat = new THREE.MeshStandardMaterial({
-      color: 0x4a2e1b,
-      roughness: 0.72,
-      metalness: 0.08,
-    });
-    const steelMat = new THREE.MeshStandardMaterial({
-      color: 0x363a42,
-      roughness: 0.3,
-      metalness: 0.9,
-    });
-    const brassMat = new THREE.MeshStandardMaterial({
-      color: 0xb5893b,
-      roughness: 0.35,
-      metalness: 0.88,
-    });
-
-    const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.076, 0.28), gunmetalMat);
-    receiver.position.set(0, 0, 0);
-
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.017, 0.58, 14), steelMat);
-    barrel.rotation.x = Math.PI / 2;
-    barrel.position.set(0, 0.024, -0.42);
-
-    const magTube = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.52, 12), steelMat);
-    magTube.rotation.x = Math.PI / 2;
-    magTube.position.set(0, -0.012, -0.39);
-
-    const pump = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.17, 14), walnutMat);
-    pump.rotation.x = Math.PI / 2;
-    pump.position.set(0, -0.012, -0.32);
-
-    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.046, 0.11, 0.28), walnutMat);
-    stock.position.set(0, -0.045, 0.26);
-    stock.rotation.x = -0.18;
-
-    const bead = new THREE.Mesh(new THREE.SphereGeometry(0.005, 8, 8), brassMat);
-    bead.position.set(0, 0.044, -0.7);
-
-    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.034, 0.07), steelMat);
-    guard.position.set(0, -0.052, 0.04);
 
     const flashGeo = new THREE.PlaneGeometry(0.32, 0.32);
     const flashMat = new THREE.MeshBasicMaterial({
@@ -970,17 +1011,16 @@ export class WeaponSystem {
       depthWrite: false,
     });
     const flashMesh = new THREE.Mesh(flashGeo, flashMat);
-    flashMesh.position.set(0, 0.024, -0.73);
+    flashMesh.position.set(0, 0.024, -0.52);
     flashMesh.visible = false;
 
     const flashLight = new THREE.PointLight(0xffb74d, 0, 16, 2.2);
-    flashLight.position.set(0, 0.024, -0.75);
+    flashLight.position.set(0, 0.024, -0.54);
 
-    g.add(receiver, barrel, magTube, pump, stock, bead, guard, flashMesh, flashLight);
+    g.add(flashMesh, flashLight);
     this.root.add(g);
 
     this.shotgunGroup = g;
-    this.shotgunPumpMesh = pump;
     this.shotgunMuzzleFlash = flashMesh;
     this.shotgunMuzzleLight = flashLight;
     this.shotgunRestPos = g.position.clone();
@@ -1039,16 +1079,18 @@ export class WeaponSystem {
   }
 
   startReload() {
-    if (this.holstered) return false;
+    if (this.holstered || this.activeWeapon === 'unarmed') return false;
     if (this.reloading || this.quickKnifeActive) return false;
 
     if (this.activeWeapon === 'glock') {
+      if (this.loadout === 'level1') return false;
       if (this.ammoInMag >= this.magSize || this.reserveAmmo <= 0) return false;
       this.inspecting = false;
       this.reloading = true;
       this.reloadTimer = 0;
       sfx.playReload();
       this._playArmsClip('reload', { loop: false, fade: 0.18 });
+      this.callbacks.onReloadStarted?.();
       return true;
     }
 
@@ -1061,6 +1103,7 @@ export class WeaponSystem {
       if (this.shotgunAnimator) {
         this.shotgunAnimator.startReload(shellsNeeded, wasEmpty);
       }
+      this.callbacks.onReloadStarted?.();
       return true;
     }
 
@@ -1069,6 +1112,7 @@ export class WeaponSystem {
 
   triggerPrimary(enemyManager, worldMeshes) {
     if (this.grabAnimator.active) return false; // hands are busy — unskippable grab
+    if (this.activeWeapon === 'unarmed') return false;
     if (this.holstered) {
       this.holstered = false;
       this.swapAnim = 0.65;
@@ -1076,6 +1120,7 @@ export class WeaponSystem {
     }
     this.inspecting = false;
     if (this.activeWeapon === 'knife') {
+      if (this.loadout === 'level1') return false;
       return this.triggerKnifeSlash(false);
     }
     if (this.activeWeapon === 'sword') {
@@ -1084,6 +1129,7 @@ export class WeaponSystem {
     if (this.activeWeapon === 'shotgun') {
       return this._fireShotgun(enemyManager, worldMeshes);
     }
+    if (this.loadout === 'level1') return false;
     return this._fireGlock(enemyManager, worldMeshes);
   }
 
@@ -1159,6 +1205,8 @@ export class WeaponSystem {
     // 8-pellet shotgun spread raycasts
     const pelletCount = 8;
     const spreadRad = 0.045;
+    const isNowOutOfAmmo = this.shotgunAmmoInMag === 0 && this.shotgunReserve === 0;
+    let barrelHitFired = false;
 
     for (let p = 0; p < pelletCount; p++) {
       const ndcX = (Math.random() - 0.5) * spreadRad;
@@ -1169,7 +1217,13 @@ export class WeaponSystem {
       let maxDist = 38;
       if (worldMeshes && worldMeshes.length > 0) {
         const wallHits = this._raycaster.intersectObjects(worldMeshes, true);
-        if (wallHits.length > 0) maxDist = wallHits[0].distance;
+        if (wallHits.length > 0) {
+          maxDist = wallHits[0].distance;
+          if (!barrelHitFired && wallHits[0].object?.userData?.isTutorialBarrel) {
+            barrelHitFired = true;
+            this.callbacks.onBarrelShot?.(wallHits[0].object);
+          }
+        }
       }
 
       const enemyHitTargets = enemyManager.getRaycastTargets();
@@ -1179,7 +1233,14 @@ export class WeaponSystem {
         if (h.distance > maxDist) break;
         const enemyId = h.object.userData.enemyId;
         const isHead = Boolean(h.object.userData.isHead);
-        const result = enemyManager.handleWeaponHit(enemyId, 'shotgun', isHead, h.point, this._raycaster.ray.direction);
+        const result = enemyManager.handleWeaponHit(
+          enemyId,
+          'shotgun',
+          isHead,
+          h.point,
+          this._raycaster.ray.direction,
+          isNowOutOfAmmo
+        );
         if (result && result.hit) {
           this.callbacks.onHitFeedback?.(result.killed ? 'kill' : 'hit');
           break;
@@ -1187,7 +1248,7 @@ export class WeaponSystem {
       }
     }
 
-    if (this.shotgunAmmoInMag === 0 && this.shotgunReserve === 0) {
+    if (isNowOutOfAmmo) {
       this.callbacks.onOutOfAmmo?.();
     }
 
@@ -1195,6 +1256,13 @@ export class WeaponSystem {
   }
 
   triggerKnifeSlash(isQuick = false) {
+    // §D: Knife is disabled in Level One (script arsenal is Balistucia + Sword).
+    if (this.loadout === 'level1') {
+      if (this.weaponsUnlocked.sword && this.activeWeapon === 'sword') {
+        return this.triggerSwordSlash();
+      }
+      return false;
+    }
     if (this.slashing || this.shoving) return false;
     if (this.holstered) this.holstered = false;
     this.inspecting = false;
@@ -1310,12 +1378,14 @@ export class WeaponSystem {
       }
     }
 
-    // Muzzle flash fade
+    // Muzzle flash fade (both Glock & Balistucia shotgun)
     if (this.muzzleFlashTimer > 0) {
       this.muzzleFlashTimer -= dt;
       if (this.muzzleFlashTimer <= 0) {
         this.muzzleFlashMesh.visible = false;
         this.muzzleLight.intensity = 0;
+        if (this.shotgunMuzzleFlash) this.shotgunMuzzleFlash.visible = false;
+        if (this.shotgunMuzzleLight) this.shotgunMuzzleLight.intensity = 0;
       }
     }
 
@@ -1329,11 +1399,11 @@ export class WeaponSystem {
     this._updateGrab(dt);
     if (this.shotgunAnimator) this.shotgunAnimator.update(dt);
 
-    // Reload progress
+    // Reload progress (Glock only — Balistucia reload is driven by ShotgunAnimator)
     let reloadDropY = 0;
     let reloadTiltZ = 0;
     let magDropY = 0;
-    if (this.reloading) {
+    if (this.reloading && this.activeWeapon === 'glock') {
       this.reloadTimer += dt;
       const p = Math.min(1, this.reloadTimer / this.reloadDuration);
       reloadTiltZ = Math.sin(p * Math.PI) * 0.42;
@@ -1493,7 +1563,7 @@ export class WeaponSystem {
       this.knifeRestRot.z + idle.rotZ + slashRotZ + inspectRotZ
     );
 
-    // Shotgun transform + pump animation
+    // Balistucia Shotgun transform (pump animation driven by ShotgunAnimator — 0.09 m travel)
     if (this.shotgunGroup) {
       this.shotgunPump = THREE.MathUtils.damp(this.shotgunPump, 0, 14, dt);
       const shotgunBaseX = THREE.MathUtils.lerp(this.shotgunRestPos.x, this.shotgunAdsPos.x, aim);
@@ -1510,9 +1580,6 @@ export class WeaponSystem {
         idle.rotY + inspectRotY,
         reloadTiltZ + idle.rotZ + inspectRotZ
       );
-      if (this.shotgunPumpMesh) {
-        this.shotgunPumpMesh.position.z = -0.32 + this.shotgunPump * 0.08;
-      }
     }
 
     // Sword slash animation & transform

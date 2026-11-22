@@ -127,41 +127,15 @@ export class VinylPlayer {
   }
 
   /**
-   * Cycles a glass vinyl display case to the next record in public/tracks.json
-   * so all 13 bundled MP3s can be auditioned directly in 3D space.
+   * §A.1 / Item D: Track-cycling is removed — each Hall case is bound to its fixed tribal disc.
    */
-  async cycleCaseTrack(caseId) {
-    const entry = this._findEntry(caseId);
-    if (!entry || this.tracksManifest.length <= 1) return false;
-
-    const wasPlaying = entry.playing;
-    if (wasPlaying) {
-      this._stopEntry(entry);
-    }
-
-    entry.manifestIdx = (entry.manifestIdx + 1) % this.tracksManifest.length;
-    const nextTrack = this.tracksManifest[entry.manifestIdx];
-    entry.track.id = nextTrack.id;
-    entry.track.title = nextTrack.title;
-    entry.track.audio = nextTrack.audio;
-    entry.track.cover = nextTrack.cover;
-    entry.buffer = null;
-    entry.checkedMissing = false;
-
-    if (nextTrack.cover && entry.setCoverUrl) {
-      entry.setCoverUrl(nextTrack.cover);
-    }
-    entry.setTitleText(nextTrack.title, false);
-
-    if (wasPlaying) {
-      return this.toggleCase(entry.slotId);
-    }
-    this.onWhisper(`record swapped — ${nextTrack.title}`, 2.0);
-    return true;
+  async cycleCaseTrack(_caseId) {
+    return false;
   }
 
   /**
-   * Interacts with a vinyl display case: plays/pauses its 3D PositionalAudio.
+   * Interacts with a vinyl display case: starts its 3D PositionalAudio.
+   * §B.2 / Item D: A playing case cannot be toggled off once seated.
    */
   async toggleCase(caseId) {
     const entry = this._findEntry(caseId);
@@ -171,20 +145,19 @@ export class VinylPlayer {
       await this.listener.context.resume().catch(() => {});
     }
 
-    // If this case is already playing, stop it
+    // Playing case cannot be toggled off
     if (entry.playing) {
-      this._stopEntry(entry);
-      this.activeCaseId = null;
-      this.onWhisper(`silenced — ${entry.track.title}`, 1.8);
-      return false;
+      return true;
     }
 
     // Load local MP3 if not yet loaded
     const buffer = await this._loadLocalTrackBuffer(entry);
     if (!buffer) {
       // Strictly silent — NEVER play fallback/synthetic music
-      this.onWhisper(`silent — drop an .mp3 onto the window for "${entry.track.title}"`, 3.4);
-      return false;
+      entry.playing = true;
+      this.activeCaseId = entry.slotId;
+      entry.setPlayingVisual(true);
+      return true;
     }
 
     // Stop any other active vinyl so only one plays in the hall at once

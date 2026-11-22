@@ -24,7 +24,7 @@ export const LEVEL_ONE_STEPS = {
   BRAIN_SPLATTED: 'brain_splatted',
   BRAIN_WIPE: 'brain_wipe',
   MAZE_ONE: 'maze_one',
-  MAZE_ONE_KEY_ACQUIRED: 'maze_one_key_acquired',
+  MAZE_ONE_DISCS_ACQUIRED: 'maze_one_discs_acquired',
   AETHER_LION_ENCOUNTER: 'aether_lion_encounter',
   LION_SMOTE: 'lion_smote',
   GOLDEN_VINYL_CLAIMED: 'golden_vinyl_claimed',
@@ -54,6 +54,8 @@ export const TRIBAL_SYMBOLS = [
   { id: 'ouroboros_chains', index: 3, glyph: '◎', label: 'OUROBOROS BOND', unlockLevel: 4 },
   { id: 'chevron_raindrops', index: 4, glyph: '◇', label: 'CHEVRON DELUGE', unlockLevel: 5 },
   { id: 'astral_legacy', index: 5, glyph: '✣', label: 'ASTRAL CODEX', unlockLevel: 6 },
+  { id: 'serpent_spiral', index: 6, glyph: '☤', label: 'SERPENT SPIRAL', unlockLevel: 7 },
+  { id: 'eclipse_crown', index: 7, glyph: '✦', label: 'ECLIPSE CROWN', unlockLevel: 8 },
 ];
 
 export const ADS_TUTORIAL_PHASE = {
@@ -132,7 +134,11 @@ export const VILLAIN_CUTSCENE_VO = Object.freeze({
 });
 
 export function createLevelOneState(initialParams = {}) {
-  const lesserCount = initialParams.lesserEnemiesAliveCount ?? 0;
+  // §B.4 / Item B: Boss gate must NEVER initialize as allLesserEnemiesDead before enemies spawn.
+  // Only when an explicit lesserEnemiesAliveCount is provided (e.g. unit test fixture) do we
+  // treat lesser enemies as already accounted for; in live play, spawn counts drive this flag.
+  const hasExplicitCount = initialParams.lesserEnemiesAliveCount !== undefined;
+  const lesserCount = hasExplicitCount ? Math.max(0, initialParams.lesserEnemiesAliveCount) : 0;
   return {
     step: LEVEL_ONE_STEPS.HALL_START,
     hallCasesLocked: {
@@ -142,11 +148,13 @@ export function createLevelOneState(initialParams = {}) {
       case3: true,
       case4: true,
       case5: true,
+      case6: true,
+      case7: true,
     },
     hasFirstDisc: false,
     discInCase: false,
     discPlacementAnim: 0, // 0 to 1 progress of unskippable placement animation
-    loadout: 'level1', // 'level1' (shotgun/sword) or 'standard' (glock/knife)
+    loadout: 'level1', // 'level1' (unarmed -> Balistucia + Sword)
     weaponsUnlocked: {
       shotgun: false,
       sword: false,
@@ -160,7 +168,8 @@ export function createLevelOneState(initialParams = {}) {
     adsPaused: false,
     brainSplatterOpacity: 0.0,
     brainWipeProgress: 0.0, // 0 to 1
-    mazeKeyPickedUp: false,
+    mazeDiscsCollected: 0,
+    mazeDiscsRequired: 3,
     mazeExitUnlocked: false,
     lionAlive: true,
     lionHp: 200,
@@ -174,8 +183,9 @@ export function createLevelOneState(initialParams = {}) {
     playedVo: new Set(),
 
     // Item 3 — Villain Cutscene state flags & counters
+    lesserEnemiesSpawned: hasExplicitCount,
     lesserEnemiesAliveCount: lesserCount,
-    allLesserEnemiesDead: lesserCount === 0,
+    allLesserEnemiesDead: hasExplicitCount ? lesserCount === 0 : false,
     villainCutsceneTriggered: false,
     villainCutsceneActive: false,
     villainCutsceneBeat: 0,
@@ -356,17 +366,32 @@ export function advanceLevelOne(state, event, payload = {}) {
       break;
     }
 
-    case 'pickup_maze_key': {
-      if (next.step === LEVEL_ONE_STEPS.MAZE_ONE) {
-        next.mazeKeyPickedUp = true;
-        next.step = LEVEL_ONE_STEPS.MAZE_ONE_KEY_ACQUIRED;
-        events.push({ type: 'maze_key_acquired' });
+    case 'collect_maze_disc': {
+      if (
+        next.step === LEVEL_ONE_STEPS.MAZE_ONE ||
+        next.step === LEVEL_ONE_STEPS.MAZE_ONE_DISCS_ACQUIRED
+      ) {
+        const amount = Math.max(1, payload.count || 1);
+        next.mazeDiscsCollected = Math.min(next.mazeDiscsRequired, next.mazeDiscsCollected + amount);
+        events.push({
+          type: 'maze_disc_collected',
+          collected: next.mazeDiscsCollected,
+          required: next.mazeDiscsRequired,
+        });
+        if (next.mazeDiscsCollected >= next.mazeDiscsRequired) {
+          next.step = LEVEL_ONE_STEPS.MAZE_ONE_DISCS_ACQUIRED;
+          if (!next.mazeExitUnlocked) {
+            next.mazeExitUnlocked = true;
+            queueVo('line11'); // maze-end door
+            events.push({ type: 'maze_exit_unlocked' });
+          }
+        }
       }
       break;
     }
 
     case 'unlock_maze_exit': {
-      if (next.step === LEVEL_ONE_STEPS.MAZE_ONE_KEY_ACQUIRED && next.mazeKeyPickedUp) {
+      if (next.mazeDiscsCollected >= next.mazeDiscsRequired && !next.mazeExitUnlocked) {
         next.mazeExitUnlocked = true;
         queueVo('line11'); // maze-end door
         events.push({ type: 'maze_exit_unlocked' });
@@ -376,8 +401,9 @@ export function advanceLevelOne(state, event, payload = {}) {
 
     case 'set_lesser_enemies_count': {
       const count = Math.max(0, payload.count ?? payload.aliveCount ?? 0);
+      next.lesserEnemiesSpawned = true;
       next.lesserEnemiesAliveCount = count;
-      next.allLesserEnemiesDead = (count === 0);
+      next.allLesserEnemiesDead = count === 0;
       events.push({ type: 'lesser_enemies_count_changed', count, allDead: next.allLesserEnemiesDead });
       break;
     }
@@ -385,8 +411,9 @@ export function advanceLevelOne(state, event, payload = {}) {
     case 'enemy_killed':
     case 'lesser_enemy_killed': {
       if (next.lesserEnemiesAliveCount > 0) {
+        next.lesserEnemiesSpawned = true;
         next.lesserEnemiesAliveCount = Math.max(0, next.lesserEnemiesAliveCount - (payload.count || 1));
-        next.allLesserEnemiesDead = (next.lesserEnemiesAliveCount === 0);
+        next.allLesserEnemiesDead = next.lesserEnemiesAliveCount === 0;
         events.push({
           type: 'lesser_enemy_killed',
           remaining: next.lesserEnemiesAliveCount,
@@ -639,3 +666,16 @@ export function stepVillainCutscene(state, dt) {
   return { state: current, events: allEvents };
 }
 
+/**
+ * §B.6 / P3: The way forward / stairs unlock ONLY when all lesser enemies are dead,
+ * the Lion boss is dead, AND the post-boss disc has been seated in the second Hall case.
+ */
+export function canUnlockStairs(state) {
+  return Boolean(
+    state &&
+      state.allLesserEnemiesDead &&
+      !state.lionAlive &&
+      state.goldenVinylClaimed &&
+      state.levelCompleted
+  );
+}
