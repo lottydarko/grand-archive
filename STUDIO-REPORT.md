@@ -490,4 +490,62 @@ Every listed asset is 100% verified free for commercial use (CC0 Public Domain o
 5. **Cast-Iron Medieval Wall Torch / Sconce Model (`medieval_torch_sconce.glb`)**  
    *Essential for Castle Theming:* Replacing industrial modern caged fixtures with authentic flickering open-flame medieval torches.
 
+---
+
+# STANDING ORDERS — DESKS
+
+**Date:** November 22, 2026  
+**Acknowledged by:** Antigravity ("The Hands")  
+**Authority:** Lotty (Creator & Final Call) & Muse (Producer)  
+**Status:** Standing Studio Operating Law — Effective Immediately and on Every Subsequent Run.
+
+---
+
+## 1. Studio Desk Responsibilities
+
+1. **MUSE (Producer):**
+   - Authors all engineering and architectural orders.
+   - Audits and grades Antigravity's implementations strictly against the actual codebase.
+   - Serves as the release gatekeeper: decides what ships.
+
+2. **THE GEMINI CHAT (Research & Graphics Desk):**
+   - Independent application dedicated to visual research, font/typography surveys, 3D asset hunting, mockup generation, image manipulation, and open-ended creative exploration.
+   - Receives scoped briefs from Antigravity via Lotty; returns vetted assets, URLs, and aesthetic decisions to Muse and Lotty.
+
+3. **ANTIGRAVITY ("The Hands"):**
+   - Operates directly inside the repository and development environment.
+   - Solely responsible for: modifying code and markup files, running builds and test suites, maintaining `STUDIO-REPORT.md`, committing and pushing to GitHub, and executing runtime verification hooks.
+
+4. **LOTTY (Creator & Director):**
+   - Carries directives, briefs, and deliverables between desks.
+   - Retains sovereign decision-making power over every final creative, architectural, and gameplay call.
+
+---
+
+## 2. Antigravity Execution & Run-Conservation Rules
+
+1. **Immediate Offloading of Exploratory / Visual Work:**
+   - If an order (or any sub-task within an order) demands asset hunting, font research, image generation, visual mockup creation, or open-ended ideation: **STOP immediately**.
+   - Do not exhaust run turns or compute on open-ended research.
+   - Author a clear, self-contained, copy-pasteable brief in `STUDIO-REPORT.md` under the heading `## FOR THE GEMINI CHAT`.
+   - Conclude the turn and yield control so Lotty can route the brief to the Gemini Chat desk.
+   - Wait for the verified findings to return through Lotty and Muse before touching code.
+
+2. **Strict Operational Scoping:**
+   - Restrict all Antigravity run time strictly to tasks requiring terminal, filesystem, and runtime access: file edits, compilation, test executions, quantitative headless verification, and version control.
+
+3. **Early & Continuous Checkpointing:**
+   - Update `STUDIO-REPORT.md` at the very beginning of every phase and after every major step.
+   - Ensure an unexpected session disconnect or timeout never results in lost audit or verification records.
+   - Favor tight, scoped, incremental runs over fragile monolithic executions.
+
+4. **Deliver and Stop:**
+   - When the assigned engineering task is completed and verified against the criteria: log exact metrics, commit, push, report, and **STOP**.
+   - Do not invent extra scope, do not embark on speculative refactoring, and do not trigger subsequent phases without explicit orders from Muse and Lotty.
+
+---
+
+**STATUS:** STANDING ORDERS FORMALLY RECORDED AND ADOPTED. Standing by for next operational order.
+
+
 
