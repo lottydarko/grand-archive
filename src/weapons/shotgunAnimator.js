@@ -21,6 +21,10 @@ class ShotgunAnimator {
     this.tmpVec = new THREE.Vector3();
     this.refs = refs;
     this.callbacks = callbacks;
+    this.muzzleFlash = refs.muzzleFlash || null;
+    this.muzzleLight = refs.shotgunMuzzleLight || refs.muzzleLight || null;
+    this.holoReticle = refs.holoReticle || null;
+    this.muzzleFlashDuration = 0.055;
     this.baseRootPos.copy(refs.root.position);
     this.baseRootRot.copy(refs.root.rotation);
     if (refs.pumpForend) {
@@ -75,6 +79,26 @@ class ShotgunAnimator {
           Number(this.refs.breechBolt.position.z.toFixed(4))
         ]
       } : null,
+      muzzleFlash: this.muzzleFlash ? {
+        visible: Boolean(this.muzzleFlash.visible)
+      } : null,
+      muzzleLight: this.muzzleLight ? {
+        intensity: Number(this.muzzleLight.intensity.toFixed(1))
+      } : null,
+      shotgunMuzzleLight: this.muzzleLight ? {
+        intensity: Number(this.muzzleLight.intensity.toFixed(1))
+      } : null,
+      holoReticle: this.holoReticle ? {
+        isEmissive: Boolean(
+          this.holoReticle.material &&
+          this.holoReticle.material.emissive &&
+          (this.holoReticle.material.emissive.r > 0 ||
+           this.holoReticle.material.emissive.g > 0 ||
+           this.holoReticle.material.emissive.b > 0)
+        ),
+        emissiveHex: this.holoReticle.material?.emissive ? '#' + this.holoReticle.material.emissive.getHexString() : null,
+        emissiveIntensity: this.holoReticle.material?.emissiveIntensity ?? 0
+      } : null,
       shellsToInsert: this.shellsToInsert,
       ejectedShellsActive: this.shellPool.filter((s) => s.active).length
     };
@@ -86,6 +110,13 @@ class ShotgunAnimator {
     this.insertShellMesh.visible = false;
     this.shellsToInsert = 0;
     this.ejectedThisCycle = false;
+    if (this.muzzleFlash) {
+      this.muzzleFlash.visible = true;
+      this.muzzleFlash.rotation.z = Math.random() * Math.PI * 2;
+    }
+    if (this.muzzleLight) {
+      this.muzzleLight.intensity = 18;
+    }
     this.enterState("fire_recoil");
   }
   startReload(shellsNeeded, wasEmpty) {
@@ -150,6 +181,18 @@ class ShotgunAnimator {
     this.stateTime += dt;
     this.idleClock += dt;
     this.updatePooledShells(dt);
+
+    // Muzzle flash & light lifecycle: active on shot, extinguishes after muzzleFlashDuration
+    if (this.state === "fire_recoil") {
+      if (this.stateTime >= this.muzzleFlashDuration) {
+        if (this.muzzleFlash) this.muzzleFlash.visible = false;
+        if (this.muzzleLight) this.muzzleLight.intensity = 0;
+      }
+    } else {
+      if (this.muzzleFlash) this.muzzleFlash.visible = false;
+      if (this.muzzleLight) this.muzzleLight.intensity = 0;
+    }
+
     const root = this.refs.root;
     const pos = root.position;
     const rot = root.rotation;

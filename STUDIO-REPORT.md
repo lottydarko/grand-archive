@@ -547,5 +547,68 @@ Every listed asset is 100% verified free for commercial use (CC0 Public Domain o
 
 **STATUS:** STANDING ORDERS FORMALLY RECORDED AND ADOPTED. Standing by for next operational order.
 
+---
+
+# FIX ROUND 2 — ITEM 4: THE LIGHTS MUST READ TOO (MOVING PARTS & LIGHTS AUDIT)
+
+**Date:** November 22, 2026  
+**Executed by:** Antigravity ("The Hands")  
+**Authority:** Lotty (Creator) & Muse (Producer)  
+**Status:** COMPLETE & FULLY VERIFIED (52/52 tests passing)
+
+---
+
+## 1. Summary of Changes & Fixes
+
+### A. Root Cause Analysis: Why Flash Mesh Existed But Never Showed
+1. **Vertical Offset (Position Error):**
+   - In `balistucia.glb`, the barrel bore center is authored at $Y \approx +0.082$ and forward muzzle tip $X \approx +0.502$.
+   - Previously, `weapons.js` hardcoded the flash mesh and light at $Y = 0.024$ (carried over from legacy box geometry). This placed the flash $5.8\text{ cm}$ below the barrel bore, causing it to render behind and inside the lower forend body geometry.
+   - *Fix:* Re-aligned flash mesh position to $Y = 0.082$ in initial mount and $(X = 0.525, Y = 0.082, Z = 0)$ on the weapon root.
+
+2. **Decoupled Recoil (Parenting Error):**
+   - `shotgunMuzzleFlash` and `shotgunMuzzleLight` were originally parented to `shotgunGroup`, while `shotgunRoot` was animated independently by `ShotgunAnimator`.
+   - During the fire cycle (`fire_recoil`), `shotgunRoot` kicks backward $+0.075\text{ m}$ and pitches up $+0.24\text{ rad}$. Because the flash remained statically parented to `shotgunGroup`, it did not move with the barrel, floating disconnected and desynchronized.
+   - *Fix:* Reparented `shotgunMuzzleFlash` and `shotgunMuzzleLight` directly to `shotgunRoot` at $(X = 0.525, Y = 0.082, Z = 0)$ with rotation $(0, \pi/2, 0)$. Flash and light are now permanently locked in 1:1 motion with the muzzle opening across all recoil and pump transforms.
+
+3. **Reticle Emissive Stripping (Material Overwrite Error):**
+   - In `balistucia.glb`, the holo reticle (`holo_sight_2` / `holo_reticle_red`) is built with `emissiveFactor: [1.0, 0.1, 0.1]` (`0xff5959`), `alphaMode: "BLEND"`, and `doubleSided: true`.
+   - In `weapons.js`, the GLTF traversal previously replaced `obj.material` with a plain `THREE.MeshBasicMaterial`. Because `MeshBasicMaterial` has no `emissive` property in Three.js, this stripped the authored red glow entirely.
+   - *Fix:* Preserved the authored `MeshStandardMaterial` from glTF as built, maintaining `emissive` color and `emissiveIntensity = 1.0` while setting `depthWrite = false` for clean holographic projection.
+
+### B. ShotgunAnimator & Test Suite Integration
+- Integrated `refs.muzzleFlash`, `refs.shotgunMuzzleLight`, and `refs.holoReticle` into `ShotgunAnimator`:
+  - `playFireAndPump()`: Instantly activates `muzzleFlash.visible = true` and spikes `shotgunMuzzleLight.intensity = 18` ($\ge 15$).
+  - `update(dt)`: Extinguishes flash and light when `muzzleFlashDuration` ($0.055\text{ s}$) expires or when leaving `fire_recoil`.
+  - `getAnimState()`: Reports `muzzleFlash.visible`, `shotgunMuzzleLight.intensity`, and `holoReticle.isEmissive`.
+- Updated test 5 (`sampled motion proof`) in `src/weapons/shotgunAnimator.test.mjs` to sample lights alongside mechanical transforms across the entire fire cycle:
+  - `sIdle`: `muzzleFlash.visible === false`, `shotgunMuzzleLight.intensity === 0`.
+  - `sShot` (on the shot): `muzzleFlash.visible === true`, `shotgunMuzzleLight.intensity === 18` ($\ge 15$).
+  - `sPumpBack`: `muzzleFlash.visible === false`, `shotgunMuzzleLight.intensity === 0`.
+  - Holo reticle: `isEmissive === true`, `emissive.r > 0.5`, `emissiveIntensity >= 1.0`.
+- Added test 6 to `src/weapons/shotgunAnimator.test.mjs` directly validating the on-disk binary asset `balistucia.glb`:
+  - Verifies `holo_reticle_red` contains `emissiveFactor >= 0.8` red component and `alphaMode === "BLEND"`.
+  - Verifies `shotgun_body` muzzle forward coordinate exceeds $0.50\text{ m}$ and muzzle flash is placed at $Y = 0.082$.
+
+---
+
+## 2. Test Verification Results
+
+- **Command:** `node --test $(find src -type f \( -name '*.test.js' -o -name '*.test.mjs' \) | sort)`
+- **Results:** **52 PASS / 0 FAIL (52 total)**
+  - `tests 52` | `pass 52` | `fail 0` | `cancelled 0` | `skipped 0` | `todo 0` | `duration_ms 5095.84`
+- **Shotgun Animator Suite:**
+  - `shotgunAnimator: starts idle with zero pump travel`: **PASS**
+  - `shotgunAnimator: fire recoil -> pump back eject -> pump forward lock -> idle sequence`: **PASS**
+  - `shotgunAnimator: reload tilt -> shell insert -> pump chamber -> idle`: **PASS**
+  - `shotgunAnimator: interruptReload cancels insertion and returns to idle`: **PASS**
+  - `shotgunAnimator: sampled motion proof — exact pump_forend and breech_bolt transforms across states`: **PASS**
+  - `shotgunAnimator & Balistucia assets: confirm balistucia.glb authored reticle is emissive as built and muzzle aligns`: **PASS**
+
+---
+
+**STATUS:** ITEM 4 VERIFIED & COMPLETE. Muzzle flash visibility, light spike ($\ge 15$), and holo reticle emissive confirmed.
+
+
 
 

@@ -308,6 +308,9 @@ export class WeaponSystem {
       root: dummyRoot,
       shellTemplate: dummyShell,
       worldShellParent: dummyWorld,
+      muzzleFlash: this.shotgunMuzzleFlash,
+      shotgunMuzzleLight: this.shotgunMuzzleLight,
+      muzzleLight: this.shotgunMuzzleLight,
     });
   }
 
@@ -611,12 +614,17 @@ export class WeaponSystem {
 
         if (obj.isMesh) {
           if (obj.name === 'holo_sight_2' || (obj.material && obj.material.name === 'holo_reticle_red')) {
-            obj.material = new THREE.MeshBasicMaterial({
-              color: 0xff2a2a,
-              transparent: true,
-              depthWrite: false,
-              side: THREE.DoubleSide,
-            });
+            holoReticleMesh = obj;
+            // Confirm emissive as built: preserve authored MeshStandardMaterial with emissive intact; disable depthWrite for clean holo projection
+            if (obj.material) {
+              obj.material.depthWrite = false;
+              obj.material.transparent = true;
+              obj.material.side = THREE.DoubleSide;
+              if (!obj.material.emissive || (obj.material.emissive.r === 0 && obj.material.emissive.g === 0 && obj.material.emissive.b === 0)) {
+                obj.material.emissive = new THREE.Color(0xff2a2a);
+                obj.material.emissiveIntensity = 1.0;
+              }
+            }
           } else if (obj.name === 'forend_vents' || (obj.material && obj.material.name === 'forend_vents_cyan')) {
             if (obj.material) {
               obj.material.emissive = new THREE.Color(0x22d3ee);
@@ -639,8 +647,17 @@ export class WeaponSystem {
       }
       this.shotgunGroup.add(shotgunRoot);
 
-      if (this.shotgunMuzzleFlash) this.shotgunMuzzleFlash.position.set(0, 0.024, -0.52);
-      if (this.shotgunMuzzleLight) this.shotgunMuzzleLight.position.set(0, 0.024, -0.54);
+      // Reparent muzzle flash and light directly to shotgunRoot at true bore coordinates (Y=0.082, X=0.525)
+      // so flash & light stay locked to the barrel during recoil kickback and pitch rotation
+      if (this.shotgunMuzzleFlash) {
+        shotgunRoot.add(this.shotgunMuzzleFlash);
+        this.shotgunMuzzleFlash.position.set(0.525, 0.082, 0);
+        this.shotgunMuzzleFlash.rotation.set(0, Math.PI * 0.5, 0);
+      }
+      if (this.shotgunMuzzleLight) {
+        shotgunRoot.add(this.shotgunMuzzleLight);
+        this.shotgunMuzzleLight.position.set(0.54, 0.082, 0);
+      }
 
       let shellTemplate = shellGltf ? shellGltf.scene : null;
       if (!shellTemplate) {
@@ -658,6 +675,10 @@ export class WeaponSystem {
           loadingPortSocket: loadingPort,
           shellTemplate,
           worldShellParent: this.root,
+          muzzleFlash: this.shotgunMuzzleFlash,
+          shotgunMuzzleLight: this.shotgunMuzzleLight,
+          muzzleLight: this.shotgunMuzzleLight,
+          holoReticle: holoReticleMesh,
         },
         {
           onPumpBack: () => {
@@ -1011,11 +1032,12 @@ export class WeaponSystem {
       depthWrite: false,
     });
     const flashMesh = new THREE.Mesh(flashGeo, flashMat);
-    flashMesh.position.set(0, 0.024, -0.52);
+    // Align with canonical Balistucia barrel bore (center Y=0.082, tip Z=-0.502)
+    flashMesh.position.set(0, 0.082, -0.525);
     flashMesh.visible = false;
 
     const flashLight = new THREE.PointLight(0xffb74d, 0, 16, 2.2);
-    flashLight.position.set(0, 0.024, -0.54);
+    flashLight.position.set(0, 0.082, -0.54);
 
     g.add(flashMesh, flashLight);
     this.root.add(g);
@@ -1023,6 +1045,10 @@ export class WeaponSystem {
     this.shotgunGroup = g;
     this.shotgunMuzzleFlash = flashMesh;
     this.shotgunMuzzleLight = flashLight;
+    if (this.shotgunAnimator) {
+      this.shotgunAnimator.muzzleFlash = flashMesh;
+      this.shotgunAnimator.muzzleLight = flashLight;
+    }
     this.shotgunRestPos = g.position.clone();
     this.shotgunAdsPos = new THREE.Vector3(0.0, -0.185, -0.42);
     this.shotgunRestRot = g.rotation.clone();
