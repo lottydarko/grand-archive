@@ -162,3 +162,193 @@ This accounting covers every change made to `src/entities/lionAndGhoulController
 ### REMAINING After Run 4
 - **Code / Wiring / Automated Tests**: None — all Run 1–4 code items are wired and passing (`vite build`, `tsc --noEmit`, 51/51 `node --test`, 14/14 `levelOneSequence.test.mjs`). No out-of-scope file edits were required.
 - **Playtest Verification Only**: Live Chromebook / packaged-build playtest with the full external `/public/` model, prompt-icon, and audio bundle to confirm runtime GLB/FBX loading, gamepad feel during Room 2 LT→RT freeze + brain wipe, and Maze One Spiral navigation in-headset/on-device.
+
+---
+
+# FIX ROUND 2 — PART 1: ACKNOWLEDGMENT & ROOT-CAUSE AUDIT
+
+**Date:** November 22, 2026  
+**Auditor:** Antigravity  
+**Recipient:** Lotty (Creator), via Muse (Studio Manager)  
+**Scope:** Strict Audit & Acknowledgment Only — Zero Code Edits in this Run.
+
+---
+
+## 1. Acknowledgment of Design Philosophy & Playtest Notes
+
+### 1.1 The Philosophy (Standing Law)
+* **Compartmental Architecture:** Every space in the game is an intentional, self-contained compartment built around exactly ONE objective.
+* **Proportional Geometry:** Room scale must strictly reflect objective scale. A singular, focused objective (such as acquiring a weapon and shooting a barrel) demands a small, dedicated room, and this single purpose is the architectural reason for its existence as a separate room.
+* **Sealed & Structured Integrity:** Every structure is sealed, architecturally grounded, and bounded. No sprawling, undefined liminal spaces masquerading as rooms.
+* **Castle World Setting:** The world is a CASTLE WORLD — an expansive, ancient fortress. The castle section officially begins at the barrel room; the barrel room is firmly *inside* the castle.
+* **Preserved Seam:** The game's opening Hall and the first vinyl/disc placement sequence remain unchanged.
+
+### 1.2 Playtest Notes (1 through 11)
+1. **Enemy Render Restoration & Block Elimination:** Canonical 3D models (`zombie.glb`, `ghoul.glb`) must render in the world. Procedural box/block placeholder enemies are strictly unacceptable and must be removed.
+2. **The "Shadow-Only" Figure Canonization:** The eerie bodiless shadow encountered during the playtest is recognized as a compelling phenomenon and is canonized as a future bespoke enemy type (hunting the shadow via dry, un-reverbed, ASMR-close left-to-right whispers). Note recorded; voice implementation remains gated to the Dec 21 ElevenLabs recording milestone.
+3. **Player Survivability & Combat Balance:** Player TTK (time-to-kill) is far too punishing. A comprehensive balance pass is required (incorporating damage invulnerability frames/i-frames, tuned enemy attack cadence, and calibrated damage values so encounters do not instantly melt the player).
+4. **First-Person Hands & Viewmodel Interaction:** Gloved player hands and animated pickup sequences must be prominently visible on screen. Hand interaction must be expanded, never diminished.
+5. **Shooting Quips Under the Taunt Law:** Firing at and hitting enemies must audibly trigger voiced quips under the canon Taunt Law: strictly one voice line at a time, shared cooldown of $\ge 20$ seconds across all triggers, zero overlapping playback.
+6. **Stamina & Panting Audio Moderation:** Panting loops must never loop incessantly. Panting audio must be played quietly, in pure moderation, and exclusively following sustained, continuous sprinting.
+7. **Disc Progression HUD & Spatial Woodwinds:** Picking up discs must provide clear diegetic feedback:
+   - Three on-screen disc icons (initially colorless/wireframe, filling in sequentially as discs are collected).
+   - Low-frequency physical gamepad rumble upon seating/collecting the 3rd disc.
+   - Spatialized 3D audio hum on each disc (a low, heavenly, multitrack woodwind drone that swells in amplitude as the player nears).
+8. **Portal Silence & Trap Door Concealment:** The North portal must remain completely silent until all three discs are in hand. The portal entrance must be hidden behind a seamless trap door integrated flush into the castle architecture, opening unexpectedly.
+9. **Wall Sealing, Ledge Preservation & Void Fall Sequence:**
+   - Interior wall colliders must be fully sealed to eliminate sliding or clipping through boundaries.
+   - Walkable perimeter ledges discovered by Lotty are officially approved as intentional gameplay geometry and will be refined.
+   - Stepping beyond boundary ledges must trigger a dramatic first-person plummet followed by an abrupt, visceral impact/splat against the pure black void floor (replacing the current bug where the player floats on an invisible Y=0 plane).
+10. **Castle Room 1 Resizing & Theming:** The barrel-and-gun room is currently oversized and nondescript. It must be reshaped into a compact, claustrophobic, authentically dressed castle chamber.
+11. **Minimal, Gritty Health Bar:** Replace the current SVG scratch tally marks and large numeric readout with a basic, gritty, minimal horizontal health bar.
+
+---
+
+## 2. Root-Cause Audit of the Render Family
+
+### (a) Zombie and Ghoul Models Not Rendering (Shadows Only)
+* **Affected Files & Locations:**
+  - `src/entities/clipAnimator.js` (lines 7–29: `normalizeMixamoClipForRig`)
+  - `src/entities/enemies.js` (lines 265–273: `tryLoadModel('heroes/zombie')`, lines 386–388 & 407: `_attachZombieGlb`, lines 465–471 & 727–730: `cShadow`)
+* **Mechanism:**
+  1. **Mixamo FBX Unit Scale Mismatch (93-meter launch):** `zombie.glb` is modeled in metric units with its rest hip bone (`mixamorigHips`) at $y \approx 0.541\text{ m}$. However, the Mixamo FBX animations (`zombie-idle.fbx`, `zombie-walk.fbx`, etc.) encode root translation keys in centimeters, containing track values of $y \approx 93.028$.
+  2. In `clipAnimator.js:7–29`, `normalizeMixamoClipForRig` renames bone tracks to match the GLB rig but **fails to scale or sanitize translation tracks**. When `AnimationMixer` evaluates frame 0 of `idle`, it assigns $y = 93.028$ to `mixamorigHips.position`.
+  3. This immediately teleports the entire skinned zombie mesh **93 meters up into the sky/ceiling**, completely outside the camera's view frustum.
+  4. At the same time, `enemies.js:386–388` in `_attachZombieGlb` executes:
+     ```javascript
+     for (const child of enemy.bodyRig.children) {
+       child.visible = false;
+     }
+     ```
+     This explicitly hides the procedural fallback body parts (`leftLeg`, `rightLeg`, `torso`, `headMesh`, `arms`).
+  5. The radial shadow blob `cShadow` is attached to `enemy.group` (the root transform) at $y = 0.015$ (`enemies.js:730`), not to `bodyRig`.
+  6. **Result:** With the procedural meshes hidden and the real GLB mesh launched 93 meters above the room, only the grounded floor shadow (`cShadow`) remains visible, smoothly tracking the player through the level as a bodiless "shadow figure."
+
+---
+
+### (b) Block Enemies Spawning
+* **Affected Files & Locations:**
+  - `dist/models/heroes/` (and whole repo / disk filesystem)
+  - `src/entities/lionAndGhoulController.js` (lines 644, 746–814: `MazeOneGhoul._buildProceduralModel`)
+  - `src/entities/enemies.js` (lines 197–203: `spawnMazeOnePopulation`, lines 294–302: `tryLoadModel('heroes/ghoul')`, lines 735–774: `_spawnZombie`)
+* **Mechanism:**
+  1. **Missing Asset in Build:** The production build `dist/` contains `zombie.glb`, `ghost.glb`, and `fps_arms.glb`, but **`ghoul.glb` does NOT exist anywhere in `dist/`, `public/`, or the repository filesystem**.
+  2. In `enemies.js:294`, `tryLoadModel('heroes/ghoul')` queries `/models/heroes/ghoul.glb`, which returns an HTTP 404 (`null`).
+  3. Consequently, `this._ghoulGltf` remains `null`, and `ghoul.attachGlbModel(gltf.scene)` is never invoked.
+  4. `MazeOneGhoul` defaults to `_buildProceduralModel()` (`lionAndGhoulController.js:746–814`), which constructs an entity entirely out of untextured raw `THREE.BoxGeometry` (torso $0.38 \times 0.72 \times 0.26$, limbs $0.12 \times 0.54 \times 0.12$, box head $0.24 \times 0.28 \times 0.26$, box jaw).
+  5. In Maze One, `spawnMazeOnePopulation()` spawns two ghouls (`ghoul-1` and `ghoul-2`). Because the GLB asset is absent, both entities spawn and remain as primitive block enemies.
+
+---
+
+### (c) Hands and First-Person Viewmodel Invisible
+* **Affected Files & Locations:**
+  - `src/player/weapons.js` (line 497: `this.glockGroup.add(armsPivot)`, lines 819–822: `_updateWeaponVisibilities`)
+* **Mechanism:**
+  1. In `weapons.js:417–500`, `fps_arms.glb` loads successfully and initializes `armsPivot` (`FPSArmsRig`), setting `this.armsLoaded = true`.
+  2. However, line 497 attaches `armsPivot` directly as a child of `this.glockGroup`:
+     ```javascript
+     this.glockGroup.add(armsPivot);
+     this.armsRoot = armsPivot;
+     ```
+  3. In `weapons.js:819–822` (`_updateWeaponVisibilities`):
+     ```javascript
+     const showGlock =
+       !isUnarmed && this.loadout !== 'level1' && this.activeWeapon === 'glock' && !showKnife;
+     if (this.glockGroup) this.glockGroup.visible = showGlock;
+     ```
+  4. In Level One, the player loadout is explicitly locked to `'level1'`. The player begins unarmed, acquires the `shotgun` (`balistucia`), or draws the `sword`.
+  5. Because `this.loadout === 'level1'` and `activeWeapon !== 'glock'`, `showGlock` evaluates to `false` at all times during Level One.
+  6. Setting `this.glockGroup.visible = false` turns off visibility for the entire Three.js sub-tree, including `armsPivot`.
+  7. **Result:** The player's rigged arms and hands are completely invisible throughout Level One.
+
+---
+
+### (d) Pickup Animation Invisible
+* **Affected Files & Locations:**
+  - `src/player/weapons.js` (lines 188–295: `startGrab`, line 497: parenting to `glockGroup`)
+* **Mechanism:**
+  1. When interacting with discs, the Balistucia shotgun, or items, the engine triggers `weapons.startGrab({ profile: 'fast', pose: 'gripWrap' })`.
+  2. `startGrab()` animates the finger bones (`Thumb`, `Index`, `Middle`, `Ring`, `Pinky`) and drops the wrist position of `this.armsRoot` (`armsPivot`).
+  3. Because `armsPivot` resides inside `this.glockGroup`, and `this.glockGroup.visible` is `false`, the entire skeletal finger curling and reach motion executes on an invisible object hierarchy.
+  4. **Result:** Pickups register logically in state, but the visual hand interaction is 100% invisible to the player.
+
+---
+
+## 3. Systematic Verification & Refutation of Muse's Leads
+
+| Lead from Muse | Status | File & Line Verification | Factual Findings |
+| :--- | :--- | :--- | :--- |
+| **Lead 1:** *"The dist build CONTAINS zombie.glb, ghoul/lion/ghost GLBs, fps_arms.glb, and all 7 zombie FBX clips. Missing files is not the explanation."* | **REFUTED IN PART / VERIFIED IN PART** | `dist/models/heroes/`<br>`grand-archive-dist-v2.zip` | `zombie.glb`, `ghost.glb`, `fps_arms.glb`, and all 7 FBX clips exist in `dist/`. However, **`ghoul.glb` and `lion.glb` DO NOT EXIST on the disk anywhere**. Missing files IS the direct explanation for procedural block ghouls. |
+| **Lead 2:** *"src/entities/enemies.js loads models async (tryLoadModel). The ghoul path sweeps already-spawned ghouls when its load resolves (~line 294–299). Does the zombie path do the same? The attach guard is ~line 343."* | **VERIFIED (SWEEP EXISTS), BUT UNCOVERS ROOT CAUSE** | `src/entities/enemies.js`<br>Lines 265–273, 343, 386–388 | The zombie path DOES sweep `this.enemies` on resolve. The attach guard at line 343 works. However, attaching hides the procedural body (line 386) while unscaled Mixamo root translation launches the GLB body 93m into the ceiling, leaving only the shadow. |
+| **Lead 3:** *"Every enemy carries a soft radial shadow blob (enemies.js ~465–471, ~727). A bodiless enemy shows exactly what I saw: a shadow."* | **VERIFIED 100%** | `src/entities/enemies.js`<br>Lines 465–471, 727–730 | `cShadow` is added to root `enemy.group` at $y = 0.015$, independent of `bodyRig`. When `bodyRig` meshes are hidden/displaced, `cShadow` remains on the floor tracking player movement. |
+| **Lead 4:** *"Boxy procedural groups exist in enemies.js (~917–924) — find every spawn path that can still produce a block enemy."* | **AUDITED & CLARIFIED** | `src/entities/lionAndGhoulController.js`<br>Lines 644, 746–814<br>`src/entities/enemies.js`<br>Lines 735–774 | Lines 917–924 in `enemies.js` are ammo boxes (`_spawnAmmoPickup`). The real block enemy spawns are: (1) `MazeOneGhoul._buildProceduralModel` (all `BoxGeometry`), which fires for both Maze One ghouls because `ghoul.glb` is missing; (2) `EnemyManager._spawnZombie` procedural fallback body if GLB is unattached. |
+| **Lead 5:** *"src/main.js ~2052 hides the weapon viewmodel for climbing. Trace whether any shipped flow hides the viewmodel/arms and never restores them, or whether armsLoaded never becomes true."* | **REFUTED FOR CLIMBING / armsLoaded; REAL CAUSE IN weapons.js** | `src/main.js`<br>Line 2053<br>`src/player/weapons.js`<br>Lines 497, 819–822 | `main.js:2053` sets `weapons.root.visible = true` in normal play (`isClimbing` is false). `armsLoaded` is true. The real culprit is `weapons.js:497`, which parented `armsPivot` inside `this.glockGroup`, which `weapons.js:822` disables in Level One. |
+
+---
+
+## 4. Full Audit of Conflicts Between Notes/Philosophy and Current Code
+
+1. **Compartments & Castle Geometry:**
+   - *Design Law:* Room size matches objective size. Castle world begins at the barrel room; spaces are sealed and architecturally structured.
+   - *Current Code:* `LEVEL_ONE_SPAWNS.castleRoom1` (`src/world/levelOneSpiral.js:169`) defines an unpartitioned $24\text{ m} \times 20\text{ m}$ hall ($x \in [-12, 12]$, $z \in [40, 60]$) with bare flat walls from $z=40$ to $80$. There are no architectural castle details, dividing archways, or sealed room bounds.
+2. **Enemy Rendering vs Blocks:**
+   - *Design Law:* Real enemy models must render; procedural blocks must be eliminated.
+   - *Current Code:* Ghouls spawn as box models due to missing `ghoul.glb`. Zombies have their skinned meshes thrown 93m into the sky due to unscaled Mixamo root translation in `clipAnimator.js:7–29`.
+3. **Player Survivability & Balance:**
+   - *Design Law:* Player dies way too fast.
+   - *Current Code:* In `src/main.js:1622–1630`, `onPlayerDamaged` applies full immediate health subtractions with zero invulnerability grace periods (i-frames). Ghouls deal 22 damage, Zombies deal 14–18 damage, and Lion deals 42 damage with rapid 0.78s attack recovery, allowing multiple enemies to kill the player in $\le 2$ seconds.
+4. **Hands & Interaction:**
+   - *Design Law:* Player must see hands and pickup animations; want more hand interaction.
+   - *Current Code:* First-person arms are parented to `this.glockGroup` (`weapons.js:497`), which is forced to `visible = false` in Level One (`weapons.js:822`). All hands and pickup grabs are invisible.
+5. **Shooting Quips & Taunt Law:**
+   - *Design Law:* Quips must fire audibly when shooting enemies, obeying the $\ge 20\text{ s}$ taunt cooldown with zero overlap.
+   - *Current Code:* Taunts are only wired to `onZombieKilled`, `onGhostKilled`, `onGhoulKilled`, `onLionKilled`, player death, and reload (`main.js:1584, 1633, 1638–1655`). Shooting/hitting an enemy has NO trigger. `killTaunts.js:22–26` explicitly rejects attack/shot triggers.
+6. **Panting Loop:**
+   - *Design Law:* Panting must play quietly, in pure moderation, ONLY after continuous sprinting.
+   - *Current Code:* `staminaLogic.js:90` flags `pantingActive` after even a tap of sprint (`postSprintTimer > 0.35`). `controls.js:771` calls `sfx.playPanting()`, which retriggers loud `panting-01.mp3` playback every 1.65 seconds continuously (`sfx.js:869–876`).
+7. **Disc Progression HUD, Woodwinds Hum & Rumble:**
+   - *Design Law:* 3 on-screen disc icons filling in sequentially; controller rumble on 3rd disc; spatial heavenly woodwinds hum on each disc.
+   - *Current Code:* No disc icon widgets exist in the HUD (`index.html`, `main.js`). Discs lack proximity 3D audio hum loops. No gamepad rumble executes when the 3rd disc is collected.
+8. **Portal Silence & Trap Door:**
+   - *Design Law:* Portal must be completely silent until all 3 discs are held; concealed behind an unobtrusive trap door.
+   - *Current Code:* Portal is currently an open corridor gateway (`levelOneSpiral.js:166`) with no concealing trap door or silence gating.
+9. **Wall Collision & Void Fall Physics:**
+   - *Design Law:* Seal sliding interior walls. Walkable outside ledges kept and refined. Stepping off edges must trigger dramatic falling + first-person splat on pitch black, not floating.
+   - *Current Code:* `controls.js:864, 888–902` hardcodes `let supportY = 0;`. Floor level can NEVER drop below 0. When stepping off edges or into voids, the player floats indefinitely at $y = 0$. Certain thin wall colliders permit sliding through boundaries.
+10. **Barrel Room Scale:**
+    - *Design Law:* Barrel room gets smaller, defined, and castle-dressed.
+    - *Current Code:* Room 1 spans $24\text{ m} \times 20\text{ m}$ without interior castle dressings.
+11. **Health Display:**
+    - *Design Law:* Minimal, gritty, basic health bar.
+    - *Current Code:* Renders 5 SVG tally scratches (`hp-scratches`) plus large numeric text (`hp-num` "100") via `main.js:236–238, 366–378`.
+
+---
+
+## 5. Proposed Run Order for Fixes (Part 2 Execution Plan)
+
+* **Phase 1: Viewmodel Root Decoupling & Enemy GLB Render Correction**
+  - Reparent `armsPivot` from `glockGroup` directly to `weapons.root` (or a dedicated viewmodel container) so hands remain visible in unarmed, shotgun, and sword states.
+  - Scale/filter root translation tracks (`mixamorigHips.position`) in `src/entities/clipAnimator.js` so Mixamo animations do not displace `zombie.glb` into the ceiling.
+  - Correct the ghoul model asset pipeline so `MazeOneGhoul` renders a canonical rigged GLB rather than box geometry.
+* **Phase 2: Player Controller, Ledge Falling & Void Death Physics**
+  - Refactor `controls.js` support surface calculation to remove hardcoded `supportY = 0` clamping outside walkable geometry.
+  - Implement the dramatic first-person fall sequence with camera shake, wind rush, and an unrecoverable first-person splat against the pure black floor upon hitting void bottom.
+  - Seal interior wall collider AABBs against edge slipping while preserving intentional outer ledges.
+* **Phase 3: Castle Compartmental Architecture & Room 1 Resizing**
+  - Resize Castle Room 1 into a tight, authentic castle compartment (e.g., $10\text{ m} \times 12\text{ m}$) dressed with stone arches, masonry pillars, and sealed entrance/exit doorways.
+  - Reposition Balistucia shotgun pickup and shootable barrel within the intimate room layout.
+* **Phase 4: Audio Overhaul & Taunt Expansion**
+  - Tame the panting audio system: require continuous sprint accumulation ($\ge 3.5\text{ s}$) before triggering, reduce volume, and enforce wide re-trigger intervals.
+  - Wire gun hit / enemy damage callbacks to `killTaunts` under the strict 20s cooldown law.
+  - Implement spatial 3D low woodwinds proximity hum for disc pickups; silence portal audio until 3 discs are secured.
+* **Phase 5: HUD Polish, Trap Door Portal, Gamepad Rumble & Health Bar**
+  - Replace tally scratches with a gritty, minimal horizontal health bar.
+  - Add 3 colorless disc HUD icons that fill in as discs are gathered.
+  - Wire gamepad rumble to the 3rd disc acquisition.
+  - Conceal the portal behind a flush castle trap door mechanism.
+  - Implement a balanced player damage intake system with invulnerability frames (i-frames).
+
+---
+
+**STATUS:** PART 1 AUDIT COMPLETE. No game code has been altered in this run. Standing by for Lotty's Part 2 instructions.
+
