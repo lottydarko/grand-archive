@@ -46,3 +46,12 @@ test('hero-GLB guard: fails when a path in ASSET-PATHS.txt is missing from publi
 test('hero-GLB guard: passes when assets are present', () => {
   assert.equal(checkHeroGlbInputs(['public/data/player_quips.json'], 'public'), true);
 });
+
+test('hero-GLB guard: wired into the build as a prebuild gate', () => {
+  // The guard only protects the build if `npm run build` runs it first.
+  const pkg = JSON.parse(
+    fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')
+  );
+  assert.ok(pkg.scripts?.prebuild, 'package.json must define a prebuild script');
+  assert.match(pkg.scripts.prebuild, /heroGlbGuard\.check/);
+});
