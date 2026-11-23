@@ -263,7 +263,10 @@ export class EnemyManager {
     });
 
     tryLoadModel('heroes/zombie', { castShadow: false, receiveShadow: true }).then((gltf) => {
-      if (!gltf) return;
+      if (!gltf) {
+        console.warn('[FALLBACK] heroes/zombie failed to load; procedural body & shadow retained');
+        return;
+      }
       this._zombieGltf = gltf;
       for (const e of this.enemies) {
         if (e.kind === 'zombie' && e.alive && !e.hasGlbModel) {
@@ -273,7 +276,10 @@ export class EnemyManager {
     });
 
     tryLoadModel('heroes/ghost', { castShadow: false, receiveShadow: false }).then((gltf) => {
-      if (!gltf) return;
+      if (!gltf) {
+        console.warn('[FALLBACK] heroes/ghost failed to load; procedural body & shadow retained');
+        return;
+      }
       this._ghostGltf = gltf;
       for (const e of this.enemies) {
         if (e.kind === 'ghost' && e.alive && !e.hasGlbModel) {
@@ -283,7 +289,10 @@ export class EnemyManager {
     });
 
     tryLoadModel('heroes/lion', { castShadow: true, receiveShadow: true }).then((gltf) => {
-      if (!gltf) return;
+      if (!gltf) {
+        console.warn('[FALLBACK] heroes/lion failed to load; procedural body & shadow retained');
+        return;
+      }
       this._lionGltf = gltf;
       if (this.lionBoss && !this.lionBoss.hasGlbModel) {
         this.lionBoss.attachGlbModel(gltf.scene);
@@ -292,7 +301,10 @@ export class EnemyManager {
 
     // §E: Preload ghoul.glb and swap onto MazeOneGhoul instances
     tryLoadModel('heroes/ghoul', { castShadow: false, receiveShadow: true }).then((gltf) => {
-      if (!gltf) return;
+      if (!gltf) {
+        console.warn('[FALLBACK] heroes/ghoul failed to load; procedural body & shadow retained');
+        return;
+      }
       this._ghoulGltf = gltf;
       for (const g of this.ghouls) {
         if (g && g.alive && !g.hasGlbModel) {

@@ -13,6 +13,15 @@ export function normalizeMixamoClipForRig(clip, boneNameSet) {
     if (dotIdx <= 0) continue;
     const rawBone = track.name.slice(0, dotIdx);
     const prop = track.name.slice(dotIdx);
+
+    // Scale root hips translation track values by 0.01 (cm -> meters)
+    // so root translation lands in meters and prevents launching zombies ~93m
+    if (prop === '.position' && /hips/i.test(rawBone)) {
+      for (let v = 0; v < track.values.length; v++) {
+        track.values[v] *= 0.01;
+      }
+    }
+
     if (boneNameSet.has(rawBone)) continue;
 
     // Handle mixamorigHips <-> mixamorig:Hips or prefixed Mixamo exports

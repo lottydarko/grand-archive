@@ -114,6 +114,33 @@ export class WeaponSystem {
     this.camera.add(this.root);
     this.shellCasings = new ShellCasingSystem(this.root);
 
+    // Flashlight SpotLight setup (Lotty's Law: mounted under barrel on shotgun, in hand anchor when unequipped)
+    this.flashlight =
+      callbacks.flashlight ||
+      this.camera.children.find((c) => c.isSpotLight) ||
+      null;
+    if (!this.flashlight) {
+      this.flashlight = new THREE.SpotLight(0xeef3fa, 28, 27, Math.PI / 6.0, 0.64, 1.48);
+      this.flashlight.name = 'PlayerFlashlight';
+    }
+    this.flashlightTarget =
+      callbacks.flashlightTarget ||
+      (this.flashlight.target ? this.flashlight.target : new THREE.Object3D());
+    this.flashlightTarget.name = 'FlashlightTarget';
+    this.flashlight.target = this.flashlightTarget;
+    this.flashlightOn = true;
+    this._flashlightIntensity = 28.0;
+
+    // Hand Flashlight Anchor (viewmodel/arms side, left-hand position held like a carried torch)
+    this.handFlashlightAnchor = new THREE.Group();
+    this.handFlashlightAnchor.name = 'HandFlashlightAnchor';
+    this.handFlashlightAnchor.position.set(-0.20, -0.16, -0.38);
+    this.handFlashlightTarget = new THREE.Object3D();
+    this.handFlashlightTarget.name = 'HandFlashlightTarget';
+    this.handFlashlightTarget.position.set(-0.05, -0.08, -10.0);
+    this.handFlashlightAnchor.add(this.handFlashlightTarget);
+    this.root.add(this.handFlashlightAnchor);
+
     this._raycaster = new THREE.Raycaster();
     this._centerNDC = new THREE.Vector2(0, 0);
     this._camDir = new THREE.Vector3();
@@ -125,6 +152,7 @@ export class WeaponSystem {
     this._buildSword();
     this._loadHeroWeaponModels();
     this._syncVisibility();
+    this._updateFlashlightMount();
   }
 
   get ammoInMag() {
@@ -153,6 +181,7 @@ export class WeaponSystem {
         this.holstered = true;
         this.holsterBlend = 1;
         this._syncVisibility();
+        this._updateFlashlightMount();
       } else if (this.weaponsUnlocked.shotgun) {
         this.equip('shotgun');
       } else if (this.weaponsUnlocked.sword) {
@@ -311,11 +340,103 @@ export class WeaponSystem {
       muzzleFlash: this.shotgunMuzzleFlash,
       shotgunMuzzleLight: this.shotgunMuzzleLight,
       muzzleLight: this.shotgunMuzzleLight,
+      triggerBlade: this.shotgunTriggerBlade,
     });
   }
 
   getShotgunAnimState() {
     return this.shotgunAnimator ? this.shotgunAnimator.getAnimState() : null;
+  }
+
+  // ---- Flashlight Mount (Lotty's Law: Part 2C) ----
+
+  _mountFlashlightToShotgun() {
+    if (!this.flashlight) return;
+    const targetParent = this.shotgunRoot || this.shotgunGroup;
+    if (!targetParent) return;
+
+    targetParent.add(this.flashlight);
+    // Mounted under the barrel near the pump (root-space [0.26, -0.06, 0])
+    this.flashlight.position.set(0.26, -0.06, 0);
+
+    if (!this.shotgunFlashlightTarget) {
+      this.shotgunFlashlightTarget = new THREE.Object3D();
+      this.shotgunFlashlightTarget.name = 'ShotgunFlashlightTarget';
+    }
+    targetParent.add(this.shotgunFlashlightTarget);
+    // Aimed along the barrel (+X in shotgunRoot space) so target sits ahead of the muzzle
+    this.shotgunFlashlightTarget.position.set(10.0, -0.06, 0);
+    this.flashlight.target = this.shotgunFlashlightTarget;
+  }
+
+  _mountFlashlightToHand() {
+    if (!this.flashlight || !this.handFlashlightAnchor) return;
+    this.handFlashlightAnchor.add(this.flashlight);
+    this.flashlight.position.set(0, 0, 0);
+    this.flashlight.target = this.handFlashlightTarget;
+  }
+
+  _updateFlashlightMount() {
+    if (this.activeWeapon === 'shotgun') {
+      this._mountFlashlightToShotgun();
+    } else {
+      this._mountFlashlightToHand();
+    }
+  }
+
+  toggleFlashlight() {
+    this.flashlightOn = !this.flashlightOn;
+    this._syncFlashlightIntensity();
+    return this.flashlightOn;
+  }
+
+  setFlashlightOn(on) {
+    this.flashlightOn = Boolean(on);
+    this._syncFlashlightIntensity();
+  }
+
+  _syncFlashlightIntensity() {
+    if (!this.flashlight) return;
+    this.flashlight.intensity = this.flashlightOn ? this._flashlightIntensity : 0;
+  }
+
+  getFlashlightMountInfo() {
+    if (!this.flashlight) return null;
+    this.root.updateMatrixWorld(true);
+    const lightWorldPos = new THREE.Vector3();
+    const targetWorldPos = new THREE.Vector3();
+    this.flashlight.getWorldPosition(lightWorldPos);
+    const target = this.flashlight.target || this.flashlightTarget;
+    target.getWorldPosition(targetWorldPos);
+    const lightDir = targetWorldPos.clone().sub(lightWorldPos).normalize();
+
+    let gunForward = null;
+    let angleDeltaDeg = null;
+    if (this.shotgunRoot) {
+      gunForward = new THREE.Vector3(1, 0, 0)
+        .applyQuaternion(this.shotgunRoot.getWorldQuaternion(new THREE.Quaternion()))
+        .normalize();
+      const dot = Math.min(Math.max(lightDir.dot(gunForward), -1), 1);
+      angleDeltaDeg = Number((Math.acos(dot) * (180 / Math.PI)).toFixed(2));
+    }
+
+    return {
+      parentName: this.flashlight.parent ? this.flashlight.parent.name : null,
+      parentType: this.flashlight.parent ? this.flashlight.parent.type : null,
+      intensity: Number(this.flashlight.intensity.toFixed(2)),
+      isOn: this.flashlightOn,
+      lightWorldDir: [
+        Number(lightDir.x.toFixed(4)),
+        Number(lightDir.y.toFixed(4)),
+        Number(lightDir.z.toFixed(4)),
+      ],
+      gunForward: gunForward ? [
+        Number(gunForward.x.toFixed(4)),
+        Number(gunForward.y.toFixed(4)),
+        Number(gunForward.z.toFixed(4)),
+      ] : null,
+      angleDeltaDeg,
+    };
   }
 
   _playArmsClip(clipKey, { loop = true, fade = 0.19, timeScale = 1.0 } = {}) {
@@ -412,13 +533,18 @@ export class WeaponSystem {
     mount.add(glockAligned);
 
     handBone.add(mount);
+    this._heroGlockHandMount = mount;
     this._mountedGlockOnArms = true;
+    this._syncVisibility();
   }
 
   _loadHeroWeaponModels() {
     // 1. Load rigged fps_arms.glb (clips: Armature|Grip, Armature|Idle, Armature|Reload, Armature|Shoot)
     tryLoadModel('heroes/fps_arms', { castShadow: false, receiveShadow: false }).then((gltf) => {
-      if (!gltf || !this.glockGroup) return;
+      if (!gltf) {
+        console.warn('[FALLBACK] heroes/fps_arms failed to load; procedural fallback viewmodel retained');
+        return;
+      }
       const armsScene = gltf.scene;
 
       // §E: Load realistic arm skin albedo & bump maps onto fps_arms.glb skin materials
@@ -484,7 +610,7 @@ export class WeaponSystem {
 
       // fps_arms extends from shoulders (-X) to hands (+X): rotate +90° Y so arms aim straight downrange (-Z)
       armsPivot.rotation.y = Math.PI * 0.5;
-      armsPivot.position.set(-0.07, -0.05, 0.05);
+      armsPivot.position.set(0.15, -0.26, -0.38);
       armsPivot.add(armsScene);
 
       // Hide procedural fallback Glock meshes while keeping muzzle flash & muzzle light active
@@ -497,9 +623,12 @@ export class WeaponSystem {
         this._standaloneGlockPivot.visible = false;
       }
 
-      this.glockGroup.add(armsPivot);
+      // Reparent arms OUT of glockGroup directly to the viewmodel root (weapons.root)
+      // so hands remain visible with every loadout (unarmed, shotgun, sword, glock, knife)
+      this.root.add(armsPivot);
       this.armsRoot = armsPivot;
       this.armsLoaded = true;
+      this._armsPivotBasePos = armsPivot.position.clone();
 
       // Setup AnimationMixer with 150-250 ms crossfade actions
       if (gltf.animations && gltf.animations.length > 0) {
@@ -524,7 +653,11 @@ export class WeaponSystem {
 
     // 2. Load high-detail hero Glock (glock.glb) — mounted onto Hand.R.001 once fps_arms loads
     tryLoadModel('heroes/glock', { castShadow: false, receiveShadow: false }).then((gltf) => {
-      if (!gltf || !this.glockGroup) return;
+      if (!gltf) {
+        console.warn('[FALLBACK] heroes/glock failed to load; procedural fallback Glock retained');
+        return;
+      }
+      if (!this.glockGroup) return;
       this._heroGlockScene = gltf.scene;
 
       if (this.armsLoaded) {
@@ -561,7 +694,11 @@ export class WeaponSystem {
 
     // 3. Load hero Combat Knife (knife.glb)
     tryLoadModel('heroes/knife', { castShadow: false, receiveShadow: false }).then((gltf) => {
-      if (!gltf || !this.knifeGroup) return;
+      if (!gltf) {
+        console.warn('[FALLBACK] heroes/knife failed to load; procedural fallback knife retained');
+        return;
+      }
+      if (!this.knifeGroup) return;
       const model = gltf.scene;
       const box = new THREE.Box3().setFromObject(model);
       const size = new THREE.Vector3();
@@ -594,7 +731,11 @@ export class WeaponSystem {
       tryLoadModel('weapons/balistucia', { castShadow: false, receiveShadow: false }),
       tryLoadModel('weapons/shotgun_shell', { castShadow: false, receiveShadow: false }),
     ]).then(([shotgunGltf, shellGltf]) => {
-      if (!shotgunGltf || !this.shotgunGroup) return;
+      if (!shotgunGltf) {
+        console.warn('[FALLBACK] weapons/balistucia failed to load; procedural fallback shotgun retained');
+        return;
+      }
+      if (!this.shotgunGroup) return;
       const shotgunScene = shotgunGltf.scene;
 
       // Find hierarchy nodes per spec:
@@ -641,11 +782,23 @@ export class WeaponSystem {
 
       // Hide procedural fallback shotgun meshes while keeping muzzle flash & muzzle light active
       for (const child of this.shotgunGroup.children) {
-        if (child !== this.shotgunMuzzleFlash && child !== this.shotgunMuzzleLight) {
+        if (child !== this.shotgunMuzzleFlash && child !== this.shotgunMuzzleLight && child !== this.flashlight && child !== this.shotgunFlashlightTarget) {
           child.visible = false;
         }
       }
       this.shotgunGroup.add(shotgunRoot);
+
+      this.shotgunRoot = shotgunRoot;
+      if (!this.shotgunFlashlightTarget) {
+        this.shotgunFlashlightTarget = new THREE.Object3D();
+        this.shotgunFlashlightTarget.name = 'ShotgunFlashlightTarget';
+      }
+      shotgunRoot.add(this.shotgunFlashlightTarget);
+      this.shotgunFlashlightTarget.position.set(10.0, -0.06, 0);
+
+      if (this.activeWeapon === 'shotgun') {
+        this._mountFlashlightToShotgun();
+      }
 
       // Reparent muzzle flash and light directly to shotgunRoot at true bore coordinates (Y=0.082, X=0.525)
       // so flash & light stay locked to the barrel during recoil kickback and pitch rotation
@@ -657,6 +810,10 @@ export class WeaponSystem {
       if (this.shotgunMuzzleLight) {
         shotgunRoot.add(this.shotgunMuzzleLight);
         this.shotgunMuzzleLight.position.set(0.54, 0.082, 0);
+      }
+      if (this.shotgunTriggerBlade) {
+        shotgunRoot.add(this.shotgunTriggerBlade);
+        this.shotgunTriggerBlade.position.set(-0.283, -0.030, 0);
       }
 
       let shellTemplate = shellGltf ? shellGltf.scene : null;
@@ -679,6 +836,7 @@ export class WeaponSystem {
           shotgunMuzzleLight: this.shotgunMuzzleLight,
           muzzleLight: this.shotgunMuzzleLight,
           holoReticle: holoReticleMesh,
+          triggerBlade: this.shotgunTriggerBlade,
         },
         {
           onPumpBack: () => {
@@ -744,6 +902,7 @@ export class WeaponSystem {
     if (this.shellCasings) this.shellCasings.reset();
     this._playArmsClip('idle', { loop: true, fade: 0.18 });
     this._syncVisibility();
+    this._updateFlashlightMount();
   }
 
   addAmmo(amount) {
@@ -792,6 +951,7 @@ export class WeaponSystem {
       this.activeWeapon = 'unarmed';
       this.holstered = true;
       this._syncVisibility();
+      this._updateFlashlightMount();
       return true;
     }
     if (weapon !== 'glock' && weapon !== 'knife' && weapon !== 'shotgun' && weapon !== 'sword') return false;
@@ -801,13 +961,17 @@ export class WeaponSystem {
       if (!this.weaponsUnlocked[weapon]) return false;
     }
     if (this.holstered) this.holstered = false;
-    if (this.activeWeapon === weapon && !this.quickKnifeActive) return true;
+    if (this.activeWeapon === weapon && !this.quickKnifeActive) {
+      this._updateFlashlightMount();
+      return true;
+    }
     this.cancelReload();
     this.inspecting = false;
     this.quickKnifeActive = false;
     this.activeWeapon = weapon;
     this.swapAnim = 0.85;
     this._syncVisibility();
+    this._updateFlashlightMount();
     return true;
   }
 
@@ -844,6 +1008,8 @@ export class WeaponSystem {
     if (this.knifeGroup) this.knifeGroup.visible = showKnife;
     if (this.shotgunGroup) this.shotgunGroup.visible = isShotgun;
     if (this.swordGroup) this.swordGroup.visible = isSword;
+    if (this._heroGlockHandMount) this._heroGlockHandMount.visible = showGlock;
+    if (this.armsRoot) this.armsRoot.visible = true;
   }
 
   _buildGlock() {
@@ -1021,6 +1187,32 @@ export class WeaponSystem {
     const g = new THREE.Group();
     g.name = 'BalistuciaMount';
     g.position.set(0.24, -0.24, -0.48);
+
+    // Fallback/canonical shotgun_root so mounts are rigid from constructor time
+    const mountRoot = new THREE.Object3D();
+    mountRoot.name = 'shotgun_root';
+    mountRoot.rotation.y = Math.PI * 0.5;
+    g.add(mountRoot);
+    this.shotgunRoot = mountRoot;
+
+    // Shotgun weapon light target ahead of the muzzle along barrel (+X in shotgunRoot)
+    this.shotgunFlashlightTarget = new THREE.Object3D();
+    this.shotgunFlashlightTarget.name = 'ShotgunFlashlightTarget';
+    this.shotgunFlashlightTarget.position.set(10.0, -0.06, 0);
+    mountRoot.add(this.shotgunFlashlightTarget);
+
+    // Procedural trigger blade (pivot at (-0.283, -0.030, 0) in shotgunRoot space)
+    const triggerBlade = new THREE.Group();
+    triggerBlade.name = 'triggerBlade';
+    triggerBlade.position.set(-0.283, -0.030, 0);
+    const bladeGeo = new THREE.BoxGeometry(0.008, 0.024, 0.008);
+    bladeGeo.translate(0, -0.012, 0);
+    const bladeMat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.85, roughness: 0.25 });
+    const bladeMesh = new THREE.Mesh(bladeGeo, bladeMat);
+    bladeMesh.name = 'triggerBlade_mesh';
+    triggerBlade.add(bladeMesh);
+    mountRoot.add(triggerBlade);
+    this.shotgunTriggerBlade = triggerBlade;
 
     const flashGeo = new THREE.PlaneGeometry(0.32, 0.32);
     const flashMat = new THREE.MeshBasicMaterial({
@@ -1385,6 +1577,11 @@ export class WeaponSystem {
   update(dt, controls, enemyManager, playerHp = 100) {
     if (this.fireCooldown > 0) this.fireCooldown = Math.max(0, this.fireCooldown - dt);
 
+    // Toggle flashlight if LB / KeyF requested via controls
+    if (controls?.actions?.flashlight) {
+      this.toggleFlashlight();
+    }
+
     // Sprint cancels reload immediately (as specified)
     if (controls.isSprinting && this.reloading) {
       this.cancelReload();
@@ -1526,6 +1723,20 @@ export class WeaponSystem {
     applyProceduralGlockKickback(this.glockSlide, this.slideBack, this.glockSlideRestZ, 0.052);
     this.glockMag.position.y = this.glockMagRestY + magDropY;
 
+    // fps_arms viewmodel transform (follows breathing idle, walk bob, sway across all loadouts)
+    if (this.armsRoot && !this.grabAnimator.active && this._grabRelease === 0 && this._armsPivotBasePos) {
+      this.armsRoot.position.set(
+        this._armsPivotBasePos.x + bobX * 0.7 + swayX * 0.5 + idle.posX,
+        this._armsPivotBasePos.y + bobY * 0.7 + swayY * 0.5 + idle.posY - lowerY * 0.4,
+        this._armsPivotBasePos.z + idle.posZ
+      );
+      this.armsRoot.rotation.set(
+        idle.rotX + (this.activeWeapon === 'glock' ? this.recoilKick * (0.21 * (1 - aim * 0.35)) : 0) - this.holsterBlend * 0.25,
+        idle.rotY,
+        idle.rotZ
+      );
+    }
+
     // Knife slash animation (windup -> fast diagonal slash -> recovery)
     let slashPosX = 0;
     let slashPosY = 0;
@@ -1662,6 +1873,20 @@ export class WeaponSystem {
         this.swordRestRot.x + idle.rotX + swordRotX + shoveRotX - this.holsterBlend * 0.5,
         this.swordRestRot.y + idle.rotY + swordRotY + inspectRotY,
         this.swordRestRot.z + idle.rotZ + swordRotZ + inspectRotZ
+      );
+    }
+
+    // Hand Flashlight Anchor motion (subtle torch idle & walk bob when held in hand unequipped)
+    if (this.handFlashlightAnchor && this.activeWeapon !== 'shotgun') {
+      this.handFlashlightAnchor.position.set(
+        -0.20 + bobX * 0.5 + swayX * 0.4 + idle.posX * 0.5,
+        -0.16 + bobY * 0.5 + swayY * 0.4 + idle.posY * 0.5,
+        -0.38 + idle.posZ * 0.5
+      );
+      this.handFlashlightAnchor.rotation.set(
+        idle.rotX * 0.4,
+        idle.rotY * 0.4,
+        idle.rotZ * 0.4
       );
     }
   }

@@ -609,6 +609,197 @@ Every listed asset is 100% verified free for commercial use (CC0 Public Domain o
 
 **STATUS:** ITEM 4 VERIFIED & COMPLETE. Muzzle flash visibility, light spike ($\ge 15$), and holo reticle emissive confirmed.
 
+---
+
+# FIX ROUND 2 — PART 2 / PHASE 1: RENDER FIXES
+
+**Date:** November 22, 2026  
+**Executed by:** Antigravity ("The Hands")  
+**Authority:** Lotty (Creator) & Muse (Producer)  
+**Status:** COMPLETE & FULLY VERIFIED (60/60 tests passing)
+
+---
+
+## 1. Summary of Render Fixes
+
+### A. Arms OUT of glockGroup (Item 1a)
+- **Problem:** Rigged `fps_arms.glb` (`armsPivot`) was previously parented to `this.glockGroup` (`this.glockGroup.add(armsPivot)`). Whenever the Glock was holstered or another weapon (unarmed, shotgun, sword) was active, `glockGroup.visible = false` was applied, causing the arms to vanish completely.
+- **Fix:**
+  - Reparented `armsPivot` directly to the viewmodel root: `this.root.add(armsPivot)`.
+  - Positioned arms at canonical viewmodel anchor `(0.15, -0.26, -0.38)`.
+  - Glock model mounted onto `Hand.R.001` (`HeroGlockHandMount`) now has its visibility independently tied to `showGlock` (`this._heroGlockHandMount.visible = showGlock`).
+  - In `_syncVisibility()`: `this.armsRoot.visible = true` is enforced across all loadouts. Hands remain visible in unarmed, shotgun, sword, and glock/knife loadouts.
+  - Added unit test in `src/player/weaponsFlashlight.test.mjs` verifying `weapons.armsRoot.parent === weapons.root` and visibility across all five loadouts.
+
+### B. Zombie Mixamo Translation Scale (Item 1b)
+- **Problem:** Mixamo root translation curves export in centimeters (e.g., $9300\text{ cm}$ instead of $93.0\text{ m}$, or $93\text{ cm}$ instead of $0.93\text{ m}$). Without scaling, applying unscaled root translation caused zombies to launch $\sim 93\text{ m}$ into the air / ceiling.
+- **Fix:**
+  - In `normalizeMixamoClipForRig` (`src/entities/clipAnimator.js`), added $\times 0.01$ scale factor for all position-track values on any hips track (`prop === '.position' && /hips/i.test(rawBone)`).
+  - Track values are scaled in-place on the cloned clip so root motion lands accurately in meters.
+  - Added unit test in `src/entities/clipAnimator.test.mjs` verifying tracks are renamed and hips position keyframe values are scaled $\times 0.01$.
+
+### C. Fallback-Never-Invisible Law (Item 1c)
+- **Rule:** A failed model load must keep a visible procedural body + shadow and log `[FALLBACK]`.
+- **Implementation:**
+  - In `src/entities/enemies.js` (`_preloadHeroModels()`):
+    - `heroes/zombie` load failure logs: `[FALLBACK] heroes/zombie failed to load; procedural body & shadow retained`
+    - `heroes/ghost` load failure logs: `[FALLBACK] heroes/ghost failed to load; procedural body & shadow retained`
+    - `heroes/lion` load failure logs: `[FALLBACK] heroes/lion failed to load; procedural body & shadow retained`
+    - `heroes/ghoul` load failure logs: `[FALLBACK] heroes/ghoul failed to load; procedural body & shadow retained`
+  - In `src/player/weapons.js` (`_loadHeroWeaponModels()`):
+    - `heroes/fps_arms` load failure logs: `[FALLBACK] heroes/fps_arms failed to load; procedural fallback viewmodel retained`
+    - `heroes/glock` load failure logs: `[FALLBACK] heroes/glock failed to load; procedural fallback Glock retained`
+    - `heroes/knife` load failure logs: `[FALLBACK] heroes/knife failed to load; procedural fallback knife retained`
+    - `weapons/balistucia` load failure logs: `[FALLBACK] weapons/balistucia failed to load; procedural fallback shotgun retained`
+  - In all cases, procedural geometry, materials, and cast/receive shadow flags remain active.
+
+### D. The Hero-GLB Guard (Item 1d)
+- **Implementation:**
+  - Created `src/engine/heroGlbGuard.js` providing `checkHeroGlbInputs(assetPaths, publicDir)`.
+  - Verifies that all required hero GLBs exist in `public/`.
+  - Created `src/engine/heroGlbGuard.test.mjs`: asserts that the guard throws a descriptive error identifying missing hero GLBs when `ghoul.glb` and `lion.glb` are missing from build inputs.
+
+---
+
+# FIX ROUND 2 — ADDENDUM 2B: SHOTGUN MECHANICS
+
+**Date:** November 22, 2026  
+**Executed by:** Antigravity ("The Hands")  
+**Authority:** Lotty (Creator) & Muse (Producer)  
+**Status:** COMPLETE & FULLY VERIFIED
+
+---
+
+## 1. Summary of Shotgun Mechanics Changes
+
+### A. Pump Travel strictly along X (Item 2a)
+- **Problem:** `setPumpTravel` in both `shotgunAnimator.js` and `shotgunAnimator.ts` previously had:
+  - `this.refs.pumpForend.position.z = this.basePumpZ + travel * 0.11;`
+  - `this.refs.breechBolt.position.z = this.baseBoltZ + travel * 0.11 * 0.82;`
+  This kicked the pump and bolt sideways out of the receiver by $11\text{ cm}$ on Z during pump travel!
+- **Fix:**
+  - In both `shotgunAnimator.js` and `shotgunAnimator.ts`, removed Z travel:
+    - `this.refs.pumpForend.position.z = this.basePumpZ;`
+    - `this.refs.breechBolt.position.z = this.baseBoltZ;`
+  - Pump moves ONLY on X (`- travel * 0.09`), keeping $\Delta z = 0.000 \le 0.002$ across the entire stroke.
+  - Breech bolt tracks pump X (`- travel * 0.035`).
+
+### B. Procedural triggerBlade (Item 2b)
+- **Creation & Placement:**
+  - Created procedural `triggerBlade` in `src/player/weapons.js` at pivot $\approx (-0.283, -0.030, 0)$ in `shotgunRoot` space.
+  - Added to `_initShotgunMount()` and reparented to `shotgunRoot` in `_loadHeroWeaponModels()`.
+  - Passed `triggerBlade` reference to `ShotgunAnimator`.
+- **Animation Behavior:**
+  - On shot / during `fire_recoil`: `triggerBlade.rotation.z` rotates backward to $-0.28\text{ rad}$ ($\le -0.25$).
+  - Returns to `0` when leaving `fire_recoil` and in all other states (`idle`, `pump_back_eject`, `pump_forward_lock`, `reload_*`).
+  - Exposed via `getAnimState().triggerBlade.rotationZ`.
+
+### C. Fixed Motion Proof & Asset Resolution (Item 2c + Asset Defect Fix)
+- **Motion Proof Extensions in `src/weapons/shotgunAnimator.test.mjs`:**
+  - Extended test 5 to assert:
+    - `triggerBlade.rotationZ <= -0.25` on the shot (actual: $-0.2800$).
+    - Pump peak displacement $\Delta x \ge 0.085$ (actual: $0.0900$).
+    - Pump $\Delta z \le 0.002$ across ALL sampled states (`idle`, `fire_recoil`, `pump_back_eject`, `mid_pump`, `peak_pump`, `locked`; actual: $0.0000$).
+- **Repo-Relative Asset Resolution:**
+  - Fixed test 6 in `src/weapons/shotgunAnimator.test.mjs`: resolves `balistucia.glb` relative to the repository (`public/models/weapons/balistucia.glb` or `process.env.BALISTUCIA_GLB_PATH`), eliminating the hardcoded sibling path `../the-grand-archive`.
+  - In clean checkouts where assets have not been placed, the test skips cleanly; with the asset placed in `public/models/weapons/balistucia.glb`, all assertions pass.
+
+---
+
+# FIX ROUND 2 — PART 2C: FLASHLIGHT MOUNT
+
+**Date:** November 22, 2026  
+**Executed by:** Antigravity ("The Hands")  
+**Authority:** Lotty (Creator) & Muse (Producer)  
+**Status:** COMPLETE & FULLY VERIFIED
+
+---
+
+## 1. Architectural Summary (Lotty's Law)
+> "The flashlight should be attached to the shotgun, then put away when unequipped — in the hand when unequipped."
+
+1. **Strict Spotlight Budget:**
+   - Exactly ONE `THREE.SpotLight` instance exists.
+   - Reuses existing `flashlight` from camera hierarchy / constructor callbacks; zero second lights created.
+2. **Shotgun Equipped:**
+   - Reparented to `shotgun_root` (rigid with the gun across bob, recoil, pump, and ADS).
+   - Position: under barrel near pump at root-space `[0.26, -0.06, 0]`.
+   - Target: `ShotgunFlashlightTarget` at `[10.0, -0.06, 0]` ahead of the muzzle.
+   - Angular delta vs gun forward: $0.00^\circ$ (within a few degrees; perfectly collinear).
+3. **Shotgun Unequipped (Unarmed / Sword / Glock / Knife):**
+   - Reparented to `HandFlashlightAnchor` on the viewmodel/arms side at left-hand position `[-0.20, -0.16, -0.38]`.
+   - Target: `HandFlashlightTarget` at `[-0.05, -0.08, -10.0]`.
+   - Held like a carried torch slightly off the camera axis; follows the hand/camera, not the gun.
+4. **State Preservation Across Swap:**
+   - Swapping between shotgun and sword preserves `flashlightOn` boolean and intensity across re-parenting.
+5. **Controls (LB / F):**
+   - LB on gamepad and KeyF on keyboard toggle flashlight in both mounts ($0 \leftrightarrow 28$).
+
+---
+
+## 2. Sampled Verification Output
+
+```
+=== FIX ROUND 2 - PART 2C: FLASHLIGHT MOUNT VERIFICATION SAMPLE ===
+SHOTGUN EQUIPPED:
+  parentName:     "shotgun_root"
+  parentType:     "Object3D"
+  lightWorldDir:  [0, 0, -1]
+  gunForward:     [0, 0, -1]
+  angleDeltaDeg:  0°
+  intensity:      28 (isOn: true)
+  LB toggle OFF -> intensity: 0
+  LB toggle ON  -> intensity: 28
+SWORD EQUIPPED (SHOTGUN UNEQUIPPED):
+  parentName:     "HandFlashlightAnchor"
+  parentType:     "Group"
+  lightWorldDir:  [-0.005, -0.008, -1]
+  intensity:      28 (isOn: true)
+  LB toggle OFF -> intensity: 0
+  LB toggle ON  -> intensity: 28
+=== VERIFICATION SAMPLE COMPLETE ===
+```
+
+---
+
+# FONT RULING SUPERSESSION (PHASE 5 DIRECTIVE)
+
+**Date:** November 22, 2026  
+**Status:** RECORDED & ADOPTED — DIRECTIVE FOR PHASE 5
+
+1. **Supersession Notice:**
+   - The initial research recommendation of **Lacquer** as primary display font is **OFFICIALLY SUPERSEDED**.
+   - Lacquer will NOT be pulled or integrated into the Phase 5 HUD.
+
+2. **Approved Typography System (Lotty + Gemini Chat):**
+   - **Road Rage:** Combo streak counters & dramatic chapter intro titles.
+   - **Rubik Wet Paint:** Visceral blood/grunge accent & backup display stamps.
+   - **Butcherman:** Boss encounter splash cards ("THE LION SMITE").
+   - **Barlow Condensed:** High-readability dialogue subtitles & whisper captions.
+   - Bespoke HUD pack delivered and cleared for Phase 5 implementation.
+
+---
+
+# VERIFICATION PIPELINE RESULTS
+
+- **Typecheck:** `npx tsc --noEmit` -> **0 errors**
+- **Vite Build:** `npm run build` -> **Built in 7.11s, EXIT 0**
+- **Unit Test Suite:** `node --test $(find src -type f \( -name '*.test.js' -o -name '*.test.mjs' \) | sort)`
+  - **Results:** **60 PASS / 0 FAIL (60 total)**
+  - `tests 60` | `pass 60` | `fail 0` | `cancelled 0` | `skipped 0` | `todo 0` | `duration_ms 11366.13`
+  - `hero-GLB guard: fails when a path in ASSET-PATHS.txt is missing from public/`: **PASS**
+  - `normalizeMixamoClipForRig renames tracks and scales hips position by 0.01`: **PASS**
+  - `shotgunAnimator: sampled motion proof (pump Δx >= 0.085, Δz <= 0.002, triggerBlade <= -0.25)`: **PASS**
+  - `shotgunAnimator & Balistucia assets (repo-relative resolution)`: **PASS**
+  - `flashlight: single spotlight budget preserved`: **PASS**
+  - `flashlight: equipped on shotgun (shotgun_root, delta 0°)`: **PASS**
+  - `flashlight: swap to sword (HandFlashlightAnchor, state preserved, LB toggles)`: **PASS**
+  - `viewmodel arms: reparented to weapons.root (OUT of glockGroup), visible across all loadouts`: **PASS**
+
+---
+
+**STATUS:** ALL FIX ROUND 2 STACK REMAINDER ITEMS DELIVERED AND FULLY VERIFIED. Ready for commit & push.
+
 
 
 

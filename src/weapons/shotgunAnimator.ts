@@ -23,6 +23,7 @@ export interface ShotgunRigRefs {
   loadingPortSocket?: THREE.Object3D | null;
   shellTemplate: THREE.Object3D;
   worldShellParent: THREE.Object3D;
+  triggerBlade?: THREE.Object3D | null;
 }
 
 export interface ShotgunAnimCallbacks {
@@ -142,6 +143,11 @@ export class ShotgunAnimator {
             ] as [number, number, number],
           }
         : null,
+      triggerBlade: this.refs.triggerBlade
+        ? {
+            rotationZ: Number(this.refs.triggerBlade.rotation.z.toFixed(4)),
+          }
+        : null,
       shellsToInsert: this.shellsToInsert,
       ejectedShellsActive: this.shellPool.filter((s) => s.active).length,
     };
@@ -155,6 +161,9 @@ export class ShotgunAnimator {
     this.insertShellMesh.visible = false;
     this.shellsToInsert = 0;
     this.ejectedThisCycle = false;
+    if (this.refs.triggerBlade) {
+      this.refs.triggerBlade.rotation.z = -0.28;
+    }
     this.enterState('fire_recoil');
   }
 
@@ -180,6 +189,13 @@ export class ShotgunAnimator {
   private enterState(next: ShotgunAnimState): void {
     this.state = next;
     this.stateTime = 0;
+    if (this.refs.triggerBlade) {
+      if (next === 'fire_recoil') {
+        this.refs.triggerBlade.rotation.z = -0.28;
+      } else {
+        this.refs.triggerBlade.rotation.z = 0;
+      }
+    }
     if (next === 'pump_back_eject') {
       this.ejectedThisCycle = false;
       this.callbacks.onPumpBack?.();
@@ -225,14 +241,14 @@ export class ShotgunAnimator {
   private setPumpTravel(amount01: number): void {
     const travel = THREE.MathUtils.clamp(amount01, 0, 1);
     if (this.refs.pumpForend) {
-      // In Balistucia (+X forward, -X stock): slide -0.09 along X
+      // In Balistucia (+X forward, -X stock): slide -0.09 along X only (Δz <= 0.002)
       this.refs.pumpForend.position.x = this.basePumpX - travel * 0.09;
-      this.refs.pumpForend.position.z = this.basePumpZ + travel * 0.11;
+      this.refs.pumpForend.position.z = this.basePumpZ;
     }
     if (this.refs.breechBolt) {
-      // In Balistucia: receiver right plate slides -0.035 along X
+      // In Balistucia: receiver right plate slides -0.035 along X only
       this.refs.breechBolt.position.x = this.baseBoltX - travel * 0.035;
-      this.refs.breechBolt.position.z = this.baseBoltZ + travel * 0.11 * 0.82;
+      this.refs.breechBolt.position.z = this.baseBoltZ;
     }
   }
 
@@ -279,7 +295,14 @@ export class ShotgunAnimator {
           this.baseRootRot.z
         );
         this.setPumpTravel(0);
-        if (t >= 1) this.enterState('pump_back_eject');
+        if (this.refs.triggerBlade) {
+          // Trigger pull: rotates backward during recoil (rotation.z <= -0.25)
+          this.refs.triggerBlade.rotation.z = -0.28 * (1 - t * 0.5);
+        }
+        if (t >= 1) {
+          if (this.refs.triggerBlade) this.refs.triggerBlade.rotation.z = 0;
+          this.enterState('pump_back_eject');
+        }
         break;
       }
 

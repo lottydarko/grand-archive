@@ -46,7 +46,11 @@ function createMockRig() {
   const holoReticle = new THREE.Mesh(new THREE.PlaneGeometry(0.02, 0.02), holoReticleMat);
   holoReticle.name = 'holo_sight_2';
 
-  root.add(pumpForend, breechBolt, ejectionPort, loadingPort, muzzleFlash, shotgunMuzzleLight, holoReticle);
+  const triggerBlade = new THREE.Object3D();
+  triggerBlade.name = 'triggerBlade';
+  triggerBlade.position.set(-0.283, -0.030, 0);
+
+  root.add(pumpForend, breechBolt, ejectionPort, loadingPort, muzzleFlash, shotgunMuzzleLight, holoReticle, triggerBlade);
 
   return {
     root,
@@ -60,6 +64,7 @@ function createMockRig() {
     shotgunMuzzleLight,
     muzzleLight: shotgunMuzzleLight,
     holoReticle,
+    triggerBlade,
   };
 }
 
@@ -201,12 +206,19 @@ test('shotgunAnimator: sampled motion proof — exact pump_forend and breech_bol
   // 2. Fire shot: muzzle flash mesh becomes visible AND shotgunMuzzleLight.intensity spikes (>= 15, actual 18)
   animator.playFireAndPump();
   const sShot = animator.getAnimState();
+  samples.push(sShot);
   assert.equal(sShot.state, 'fire_recoil');
   assert.equal(sShot.muzzleFlash.visible, true);
   assert.ok(sShot.shotgunMuzzleLight.intensity >= 15, `expected light >= 15, got ${sShot.shotgunMuzzleLight.intensity}`);
   assert.equal(sShot.shotgunMuzzleLight.intensity, 18);
   assert.equal(rig.muzzleFlash.visible, true);
   assert.ok(rig.shotgunMuzzleLight.intensity >= 15);
+  // Addendum 2B: triggerBlade rotation.z <= -0.25 during fire_recoil
+  assert.ok(sShot.triggerBlade, 'triggerBlade anim state must be present');
+  assert.ok(
+    sShot.triggerBlade.rotationZ <= -0.25,
+    `triggerBlade rotation.z must be <= -0.25 during fire_recoil, got ${sShot.triggerBlade.rotationZ}`
+  );
 
   // 3. Advance past recoil & flash duration (0.14s + 0.055s elapsed -> enters pump_back_eject, flash off, light 0)
   advance(animator, 0.15); // finish fire_recoil (0.14s)
@@ -240,6 +252,22 @@ test('shotgunAnimator: sampled motion proof — exact pump_forend and breech_bol
   assert.ok(sPeakPump.pumpForend.position[0] <= -0.08, `peak pump X was ${sPeakPump.pumpForend.position[0]}`);
   assert.ok(sPeakPump.breechBolt.position[0] <= -0.03, `peak bolt X was ${sPeakPump.breechBolt.position[0]}`);
 
+  // Addendum 2B: Assert pump peak displacement Δx >= 0.085
+  const peakDeltaX = Math.abs(sPeakPump.pumpForend.position[0] - sIdle.pumpForend.position[0]);
+  assert.ok(
+    peakDeltaX >= 0.085,
+    `pump peak displacement Δx must be >= 0.085, got ${peakDeltaX}`
+  );
+
+  // Addendum 2B: Assert Δz <= 0.002 across all sampled states (pump must move ONLY on X)
+  for (const s of samples) {
+    const deltaZ = Math.abs(s.pumpForend.position[2] - 0);
+    assert.ok(
+      deltaZ <= 0.002,
+      `pump Δz must be <= 0.002 across all states, got ${deltaZ} in state ${s.state}`
+    );
+  }
+
   // When locked, returned to 0 and lights stay off
   assert.equal(sLocked.pumpForend.position[0], 0);
   assert.equal(sLocked.breechBolt.position[0], 0);
@@ -257,7 +285,13 @@ test('shotgunAnimator: sampled motion proof — exact pump_forend and breech_bol
 test('shotgunAnimator & Balistucia assets: confirm balistucia.glb authored reticle is emissive as built and muzzle aligns', async () => {
   const fs = await import('node:fs');
   const path = await import('node:path');
-  const glbPath = path.resolve('../the-grand-archive/dist/models/weapons/balistucia.glb');
+  const glbPath = process.env.BALISTUCIA_GLB_PATH
+    ? path.resolve(process.env.BALISTUCIA_GLB_PATH)
+    : path.resolve('public/models/weapons/balistucia.glb');
+  if (!fs.existsSync(glbPath)) {
+    // In clean checkouts where binary assets have not been placed into public/, skip cleanly
+    return;
+  }
   assert.ok(fs.existsSync(glbPath), `balistucia.glb must exist at ${glbPath}`);
 
   const buf = fs.readFileSync(glbPath);

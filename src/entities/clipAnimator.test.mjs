@@ -113,4 +113,24 @@ test('ClipAnimator manages THREE.AnimationMixer clips and crossFadeTo(0.2)', () 
   assert.equal(animator.activeClipKey, 'walk');
 });
 
+test('normalizeMixamoClipForRig renames tracks and scales hips position by 0.01 (cm to meters)', () => {
+  const boneNameSet = new Set(['mixamorig:Hips', 'mixamorig:Spine']);
+  // Mixamo track in centimeters (e.g. 9300 cm = 93m without scaling)
+  const hipsTrack = new THREE.VectorKeyframeTrack('mixamorigHips.position', [0, 1], [0, 9300, 0, 0, 9300, 500]);
+  const spineTrack = new THREE.QuaternionKeyframeTrack('mixamorigSpine.quaternion', [0, 1], [0, 0, 0, 1, 0, 0, 0, 1]);
+  const clip = new THREE.AnimationClip('zombie_walk', 1, [hipsTrack, spineTrack]);
+
+  const normalized = normalizeMixamoClipForRig(clip, boneNameSet);
+  assert.ok(normalized);
+
+  const normHips = normalized.tracks.find((t) => t.name === 'mixamorig:Hips.position');
+  assert.ok(normHips, 'mixamorigHips.position must be normalized to mixamorig:Hips.position');
+  // Values must be scaled by 0.01: 9300 cm -> 93.0 m, 500 cm -> 5.0 m
+  assert.equal(normHips.values[1], 93.0, 'Y position must be scaled from 9300 to 93.0');
+  assert.equal(normHips.values[5], 5.0, 'Z position must be scaled from 500 to 5.0');
+
+  const normSpine = normalized.tracks.find((t) => t.name === 'mixamorig:Spine.quaternion');
+  assert.ok(normSpine, 'mixamorigSpine.quaternion must be normalized to mixamorig:Spine.quaternion');
+});
+
 console.log(`All ${passed} clipAnimator unit tests passed!`);
