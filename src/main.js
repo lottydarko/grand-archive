@@ -1955,12 +1955,15 @@ function stepSimulation(dt) {
   );
 
   // Player Flashlight SpotLight + drifting dust motes inside the beam
+  // Lighting pass (Nov 23, 2026 — playtest: rooms ~85% black, pool dim at
+  // range): flashlight target 28 -> 40 and aura 0.9 -> 1.15. Conservative,
+  // single-number changes, flagged for Lotty's verdict at the next playtest.
   const flashActive = isPlayingActive && gameState.flashlightOn;
-  const flashTargetIntensity = flashActive ? 28.0 : 0.0;
+  const flashTargetIntensity = flashActive ? 40.0 : 0.0;
   flashlight.intensity = THREE.MathUtils.damp(flashlight.intensity, flashTargetIntensity, 16, dt);
   playerAuraLight.intensity = THREE.MathUtils.damp(
     playerAuraLight.intensity,
-    isPlayingActive ? (gameState.flashlightOn ? 0.9 : 0.32) : 0.0,
+    isPlayingActive ? (gameState.flashlightOn ? 1.15 : 0.32) : 0.0,
     5.0,
     dt
   );
