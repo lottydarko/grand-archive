@@ -117,13 +117,36 @@ test('chromebookProfiler: applyMatteHorrorProfile does not force receiveShadow o
   // Test chromebook profile
   applyMatteHorrorProfile(mockRenderer, scene, camera, 'chromebook');
   assert.equal(mockRenderer._ratio, 0.85);
-  assert.equal(mockRenderer.shadowMap.enabled, false);
+  // Lighting pass (Nov 22, 2026): the chromebook profile no longer disables
+  // shadows — it enables them with PCFSoft, same as capable.
+  assert.equal(mockRenderer.shadowMap.enabled, true);
+  assert.equal(mockRenderer.shadowMap.type, THREE.PCFSoftShadowMap);
   assert.equal(camera.far, 45);
 
   // Test capable profile
   applyMatteHorrorProfile(mockRenderer, scene, camera, 'capable');
   assert.equal(mockRenderer.shadowMap.enabled, true);
   // Mesh receiveShadow should not be force-mutated
+});
+
+test('chromebookProfiler: chromebook profile enables PCFSoft shadows (lighting pass)', () => {
+  // The config flag and the applied renderer state must agree: shadows ON.
+  assert.equal(PROFILE_CONFIGS.chromebook.shadowsEnabled, true);
+
+  // Start from a shadows-off renderer to prove the profile turns them on
+  // (performance is protected by the small flashlight shadow map, not by
+  // disabling the shadow pass).
+  const mockRenderer = {
+    setPixelRatio(val) { this._ratio = val; },
+    shadowMap: { enabled: false, type: null, autoUpdate: false },
+  };
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+
+  applyMatteHorrorProfile(mockRenderer, scene, camera, 'chromebook');
+  assert.equal(mockRenderer.shadowMap.enabled, true, 'chromebook profile must NOT disable shadow mapping');
+  assert.equal(mockRenderer.shadowMap.type, THREE.PCFSoftShadowMap);
+  assert.equal(mockRenderer.shadowMap.autoUpdate, true);
 });
 
 test('chromebookProfiler: ChromebookProfiler telemetry reports draw calls under 100 on ?perf=1', () => {

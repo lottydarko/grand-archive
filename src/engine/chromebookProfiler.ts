@@ -36,7 +36,7 @@ export const PROFILE_CONFIGS: Record<DeviceProfile, ProfileConfig> = {
   chromebook: {
     pixelRatioCap: 1.0,
     renderScale: 0.85,
-    shadowsEnabled: false,
+    shadowsEnabled: true,
     maxActivePointLights: 3,
     cameraFar: 45,
     fogNear: 10,
@@ -181,7 +181,9 @@ export function disposeObject3D(
  * Applies the Matte Horror rendering profile.
  *
  * Scopes:
- * - On 'chromebook': realtime shadows disabled, pixelRatio capped to 1.0 * 0.85,
+ * - On 'chromebook': realtime shadows ENABLED with PCFSoft (lighting pass —
+ *   performance is protected by small shadow maps on the single shadow-casting
+ *   light, NOT by disabling shadows), pixelRatio capped to 1.0 * 0.85,
  *   point lights capped to 3 active, camera far distance locked to 45.
  * - On 'capable': shadows kept intact, without force-enabling receiveShadow
  *   on every mesh (Muse catch #3).
@@ -198,8 +200,9 @@ export function applyMatteHorrorProfile(
 
   if (profile === 'chromebook') {
     renderer.setPixelRatio(config.renderScale);
-    renderer.shadowMap.enabled = false;
-    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.autoUpdate = true;
 
     if (camera) {
       camera.far = config.cameraFar;

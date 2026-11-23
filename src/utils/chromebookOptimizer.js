@@ -4,15 +4,18 @@ export const MAX_SAFE_FRAME_DT = 1 / 20;
 
 /**
  * Ultra-lean PS2 mode (Lotty's patch brief, Nov 20, 2026 — supersedes the
- * baked-shadow profile): sub-native 0.75 render scale, real-time shadow
- * passes OFF entirely (lighting/fog mood carries the look), draw distance
+ * baked-shadow profile): sub-native 0.75 render scale, draw distance
  * tightened to 45 with fog matched so distant geometry culls early.
+ *
+ * Lighting pass (Nov 22, 2026): this function no longer touches the shadow
+ * map. Shadow state is owned by applyMatteHorrorProfile — realtime shadows
+ * are ON with PCFSoft on every profile, and performance is protected by
+ * the single small (512x512) flashlight shadow map, not by disabling the
+ * shadow pass. The 0.75 render scale below remains the big fill-rate win.
  */
 export function applyChromebookRendererProfile(renderer, camera, scene) {
   if (!renderer) return;
   renderer.setPixelRatio(0.75); // Sub-native PS2 render scale — the big fill-rate win
-  renderer.shadowMap.enabled = false; // No real-time shadow pass at all
-  renderer.shadowMap.autoUpdate = false;
   if (camera) {
     camera.far = 45;
     camera.updateProjectionMatrix();

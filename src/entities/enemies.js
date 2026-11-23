@@ -262,7 +262,7 @@ export class EnemyManager {
       if (tex) this._bloodPoolTex = tex;
     });
 
-    tryLoadModel('heroes/zombie', { castShadow: false, receiveShadow: true }).then((gltf) => {
+    tryLoadModel('heroes/zombie', { castShadow: true, receiveShadow: true }).then((gltf) => {
       if (!gltf) {
         console.warn('[FALLBACK] heroes/zombie failed to load; procedural body & shadow retained');
         return;
@@ -300,7 +300,7 @@ export class EnemyManager {
     });
 
     // §E: Preload ghoul.glb and swap onto MazeOneGhoul instances
-    tryLoadModel('heroes/ghoul', { castShadow: false, receiveShadow: true }).then((gltf) => {
+    tryLoadModel('heroes/ghoul', { castShadow: true, receiveShadow: true }).then((gltf) => {
       if (!gltf) {
         console.warn('[FALLBACK] heroes/ghoul failed to load; procedural body & shadow retained');
         return;

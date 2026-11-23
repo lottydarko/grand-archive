@@ -116,6 +116,15 @@ flashlightTarget.position.set(0, -0.08, -10);
 camera.add(flashlightTarget);
 flashlight.target = flashlightTarget;
 camera.add(flashlight);
+// Lighting pass: the flashlight is the game's ONE shadow-casting light.
+// A single small 512x512 PCFSoft map is the whole shadow budget on the
+// Chromebook profile — enemies cast into it, so models read as shaded
+// volumes instead of flat cutouts on blob decals. Shadow camera far
+// matches the light's 27m distance.
+flashlight.castShadow = true;
+flashlight.shadow.mapSize.set(512, 512);
+flashlight.shadow.camera.near = 0.1;
+flashlight.shadow.camera.far = 27;
 
 // Subtle volumetric beam haze (soft, zero circular rim artifact in center crosshair)
 const beamConeGeo = new THREE.ConeGeometry(2.6, 15.0, 16, 1, true);
@@ -179,8 +188,10 @@ applyMatteHorrorProfile(renderer, scene, camera, deviceProfile);
 const chromebookProfiler = new ChromebookProfiler(renderer, scene, deviceProfile);
 
 // Chromebook ultra-lean profile (Lotty's patch brief, Nov 20, 2026):
-// 0.75 sub-native render scale, real-time shadows OFF, draw distance 45
-// with matched fog. The adaptive scaler starts at that same 0.75 and may
+// 0.75 sub-native render scale, draw distance 45 with matched fog.
+// (Lighting pass, Nov 22, 2026: shadow state is owned by the Matte Horror
+// profile above — realtime shadows stay ON; this pass no longer kills them.)
+// The adaptive scaler starts at that same 0.75 and may
 // only step DOWN from it (never above) when the frame rate still sags,
 // with half-rate rendering as the last resort. The simulation always
 // ticks at full rate; only drawing scales.
@@ -1833,8 +1844,8 @@ function stepSimulation(dt) {
   const targetEnvInt = !isPlayingActive
     ? 0.34
     : transformer && transformer.mode === 'survival'
-      ? 0.09
-      : 0.14;
+      ? 0.2
+      : 0.3;
   scene.environmentIntensity = THREE.MathUtils.damp(
     scene.environmentIntensity,
     targetEnvInt,
