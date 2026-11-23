@@ -153,18 +153,24 @@ export class LionBoss {
     if (this.hasGlbModel || !sourceScene) return false;
 
     const cloned = SkeletonUtils.clone(sourceScene);
-    const box = new THREE.Box3().setFromObject(cloned);
-    const size = new THREE.Vector3();
-    const center = new THREE.Vector3();
-    box.getSize(size);
-    box.getCenter(center);
+    const inner = new THREE.Group();
+    inner.add(cloned);
+    inner.updateMatrixWorld(true);
+    const rawBox = new THREE.Box3().setFromObject(inner);
+    const rawSize = new THREE.Vector3();
+    rawBox.getSize(rawSize);
 
     const targetH = 1.5; // matches the procedural lion + hitbox volume
-    const scale = targetH / Math.max(size.y, 0.01);
+    const scale = targetH / Math.max(rawSize.y, 0.01);
+    inner.scale.setScalar(scale);
+    inner.updateMatrixWorld(true);
+    const groundedBox = new THREE.Box3().setFromObject(inner);
+    const groundedCenter = new THREE.Vector3();
+    groundedBox.getCenter(groundedCenter);
+    inner.position.set(-groundedCenter.x, -groundedBox.min.y, -groundedCenter.z);
+
     const holder = new THREE.Group();
-    cloned.scale.setScalar(scale);
-    cloned.position.set(-center.x * scale, -box.min.y * scale, -center.z * scale);
-    holder.add(cloned);
+    holder.add(inner);
 
     const bones = {};
     const rest = {};
@@ -668,18 +674,24 @@ export class MazeOneGhoul {
     if (this.hasGlbModel || !sourceScene) return false;
 
     const cloned = SkeletonUtils.clone(sourceScene);
-    const box = new THREE.Box3().setFromObject(cloned);
-    const size = new THREE.Vector3();
-    const center = new THREE.Vector3();
-    box.getSize(size);
-    box.getCenter(center);
+    const inner = new THREE.Group();
+    inner.add(cloned);
+    inner.updateMatrixWorld(true);
+    const rawBox = new THREE.Box3().setFromObject(inner);
+    const rawSize = new THREE.Vector3();
+    rawBox.getSize(rawSize);
 
     const targetH = 1.68;
-    const scale = targetH / Math.max(size.y, 0.01);
+    const scale = targetH / Math.max(rawSize.y, 0.01);
+    inner.scale.setScalar(scale);
+    inner.updateMatrixWorld(true);
+    const groundedBox = new THREE.Box3().setFromObject(inner);
+    const groundedCenter = new THREE.Vector3();
+    groundedBox.getCenter(groundedCenter);
+    inner.position.set(-groundedCenter.x, -groundedBox.min.y, -groundedCenter.z);
+
     const holder = new THREE.Group();
-    cloned.scale.setScalar(scale);
-    cloned.position.set(-center.x * scale, -box.min.y * scale, -center.z * scale);
-    holder.add(cloned);
+    holder.add(inner);
 
     const bones = {};
     const rest = {};
@@ -720,20 +732,19 @@ export class MazeOneGhoul {
     this._animT += dt;
     const t = this._animT;
 
+    // Keep Ghoul feet strictly grounded at floor Y = 0 (zero hover bob)
+    this._glbHolder.position.y = 0;
     if (this.state === GHOUL_STATES.CHASE) {
-      // Hunched stalking gait + predatory sway
-      this._glbHolder.position.y = Math.abs(Math.sin(t * 7.2)) * 0.07;
+      // Hunched stalking gait + predatory sway (grounded)
       this._glbHolder.rotation.x = 0.16 + Math.sin(t * 7.2) * 0.05;
       this._glbHolder.rotation.z = Math.sin(t * 3.6) * 0.08;
     } else if (this.state === GHOUL_STATES.MELEE) {
-      // Claw-swipe forward lunge pulse
+      // Claw-swipe forward lunge pulse (grounded)
       const swipe = Math.sin(t * 14.0);
-      this._glbHolder.position.y = 0.03;
       this._glbHolder.rotation.x = 0.24 + swipe * 0.18;
       this._glbHolder.rotation.z = swipe * 0.14;
     } else {
-      // Idle hunched breathing
-      this._glbHolder.position.y = Math.sin(t * 2.1) * 0.025;
+      // Idle hunched breathing (grounded)
       this._glbHolder.rotation.x = 0.1 + Math.sin(t * 1.4) * 0.03;
       this._glbHolder.rotation.z = Math.sin(t * 1.1) * 0.04;
     }

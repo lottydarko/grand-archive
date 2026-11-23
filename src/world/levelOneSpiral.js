@@ -289,63 +289,69 @@ export function buildLevelOneCorridor(scene) {
     metalness: 0.2,
   });
 
+  // Helper guaranteeing EVERY architectural wall has BOTH a visible mesh AND a matching AABB collider.
+  const wallAudit = [];
+  const addSealedWall = (name, minX, maxX, minZ, maxZ, height, mat, yBottom = 0) => {
+    const w = maxX - minX;
+    const d = maxZ - minZ;
+    const cx = (minX + maxX) * 0.5;
+    const cz = (minZ + maxZ) * 0.5;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, height, d), mat);
+    mesh.name = name;
+    mesh.position.set(cx, yBottom + height * 0.5, cz);
+    root.add(mesh);
+    const collider = { minX, maxX, minZ, maxZ };
+    staticColliders.push(collider);
+    wallAudit.push({ name, mesh, collider });
+    return mesh;
+  };
+  const addCeiling = (name, x, z, w, d, y, mat) => {
+    const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
+    ceiling.name = name;
+    ceiling.rotation.x = Math.PI / 2;
+    ceiling.position.set(x, y, z);
+    root.add(ceiling);
+    return ceiling;
+  };
+  const addLintel = (name, minX, maxX, minZ, maxZ, yBottom, yTop, mat) => {
+    const h = yTop - yBottom;
+    if (h <= 0.01) return null;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(maxX - minX, h, maxZ - minZ), mat);
+    mesh.name = name;
+    mesh.position.set((minX + maxX) * 0.5, yBottom + h * 0.5, (minZ + maxZ) * 0.5);
+    root.add(mesh);
+    return mesh;
+  };
+
   // 1. White Aether passage (4 m x 8 m, Z ∈ [7, 15], X ∈ [-2, 2])
   const aetherFloor = new THREE.Mesh(new THREE.PlaneGeometry(4, 8), aetherFloorMat);
   aetherFloor.rotation.x = -Math.PI / 2;
   aetherFloor.position.set(0, 0.01, 11);
   root.add(aetherFloor);
+  addCeiling('AetherCeiling', 0, 11, 4.5, 8.5, 4.5, aetherFloorMat);
 
-  const aetherWallGeo = new THREE.BoxGeometry(0.5, 4.5, 8);
-  const aetherWallL = new THREE.Mesh(aetherWallGeo, castleStoneMat);
-  aetherWallL.position.set(-2.25, 2.25, 11);
-  const aetherWallR = new THREE.Mesh(aetherWallGeo, castleStoneMat);
-  aetherWallR.position.set(2.25, 2.25, 11);
-  root.add(aetherWallL, aetherWallR);
-  staticColliders.push(
-    { minX: -2.5, maxX: -2.0, minZ: 7.0, maxZ: 15.0 },
-    { minX: 2.0, maxX: 2.5, minZ: 7.0, maxZ: 15.0 }
-  );
+  addSealedWall('AetherWallWest', -2.5, -2.0, 7.0, 15.0, 4.5, castleStoneMat);
+  addSealedWall('AetherWallEast', 2.0, 2.5, 7.0, 15.0, 4.5, castleStoneMat);
 
   // 2. Castle Room 1 / Barrel Room (8 m x 8 m, Z ∈ [15, 23], X ∈ [-4, 4]) — Castle starts here
   const barrelRoomFloor = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), castleStoneMat);
   barrelRoomFloor.rotation.x = -Math.PI / 2;
   barrelRoomFloor.position.set(0, 0.01, 19);
   root.add(barrelRoomFloor);
+  addCeiling('BarrelRoomCeiling', 0, 19, 8.6, 8.6, 5.0, castleStoneMat);
 
-  const brWallSideGeo = new THREE.BoxGeometry(0.5, 5.0, 8);
-  const brWallL = new THREE.Mesh(brWallSideGeo, castleStoneMat);
-  brWallL.position.set(-4.25, 2.5, 19);
-  const brWallR = new THREE.Mesh(brWallSideGeo, castleStoneMat);
-  brWallR.position.set(4.25, 2.5, 19);
-  root.add(brWallL, brWallR);
-  staticColliders.push(
-    { minX: -4.5, maxX: -4.0, minZ: 15.0, maxZ: 23.0 },
-    { minX: 4.0, maxX: 4.5, minZ: 15.0, maxZ: 23.0 }
-  );
+  addSealedWall('BarrelRoomWallWest', -4.5, -4.0, 15.0, 23.0, 5.0, castleStoneMat);
+  addSealedWall('BarrelRoomWallEast', 4.0, 4.5, 15.0, 23.0, 5.0, castleStoneMat);
 
-  // South wings (Z = 15, doorway [-2, 2] from Aether passage)
-  const brSouthWingGeo = new THREE.BoxGeometry(2.0, 5.0, 0.5);
-  const brSouthL = new THREE.Mesh(brSouthWingGeo, castleStoneMat);
-  brSouthL.position.set(-3.0, 2.5, 14.75);
-  const brSouthR = new THREE.Mesh(brSouthWingGeo, castleStoneMat);
-  brSouthR.position.set(3.0, 2.5, 14.75);
-  root.add(brSouthL, brSouthR);
-  staticColliders.push(
-    { minX: -4.0, maxX: -2.0, minZ: 14.5, maxZ: 15.0 },
-    { minX: 2.0, maxX: 4.0, minZ: 14.5, maxZ: 15.0 }
-  );
+  // South wings (Z = 15, doorway [-2, 2] from Aether passage; outer ends cap corners ±4.5)
+  addSealedWall('BarrelRoomSouthWest', -4.5, -2.0, 14.5, 15.0, 5.0, castleStoneMat);
+  addSealedWall('BarrelRoomSouthEast', 2.0, 4.5, 14.5, 15.0, 5.0, castleStoneMat);
+  addLintel('BarrelRoomSouthLintel', -2.0, 2.0, 14.5, 15.0, 4.4, 5.0, castleStoneMat);
 
-  // North wings (Z = 23, doorway [-2, 2] into Room 2)
-  const brNorthWingGeo = new THREE.BoxGeometry(2.0, 5.0, 0.5);
-  const brNorthL = new THREE.Mesh(brNorthWingGeo, castleStoneMat);
-  brNorthL.position.set(-3.0, 2.5, 23.25);
-  const brNorthR = new THREE.Mesh(brNorthWingGeo, castleStoneMat);
-  brNorthR.position.set(3.0, 2.5, 23.25);
-  root.add(brNorthL, brNorthR);
-  staticColliders.push(
-    { minX: -4.0, maxX: -2.0, minZ: 23.0, maxZ: 23.5 },
-    { minX: 2.0, maxX: 4.0, minZ: 23.0, maxZ: 23.5 }
-  );
+  // North wings (Z = 23, doorway [-2, 2] into Room 2; outer ends cap corners ±4.5)
+  addSealedWall('BarrelRoomNorthWest', -4.5, -2.0, 23.0, 23.5, 5.0, castleStoneMat);
+  addSealedWall('BarrelRoomNorthEast', 2.0, 4.5, 23.0, 23.5, 5.0, castleStoneMat);
+  addLintel('BarrelRoomNorthLintel', -2.0, 2.0, 23.0, 23.5, 4.4, 5.0, castleStoneMat);
 
   // Balistucia shotgun stand in Barrel Room (Balistucia rests on its stand)
   const shotgunStandMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.35, 0.85, 16), plinthMat);
@@ -383,37 +389,19 @@ export function buildLevelOneCorridor(scene) {
   room2Floor.rotation.x = -Math.PI / 2;
   room2Floor.position.set(0, 0.01, 26);
   root.add(room2Floor);
+  addCeiling('Room2Ceiling', 0, 26, 10.6, 6.6, 5.0, castleStoneMat);
 
-  const r2WallSideGeo = new THREE.BoxGeometry(0.5, 5.0, 6);
-  const r2WallL = new THREE.Mesh(r2WallSideGeo, castleStoneMat);
-  r2WallL.position.set(-5.25, 2.5, 26);
-  const r2WallR = new THREE.Mesh(r2WallSideGeo, castleStoneMat);
-  r2WallR.position.set(5.25, 2.5, 26);
-  root.add(r2WallL, r2WallR);
-  staticColliders.push(
-    { minX: -5.5, maxX: -5.0, minZ: 23.0, maxZ: 29.0 },
-    { minX: 5.0, maxX: 5.5, minZ: 23.0, maxZ: 29.0 }
-  );
+  addSealedWall('Room2WallWest', -5.5, -5.0, 23.0, 29.0, 5.0, castleStoneMat);
+  addSealedWall('Room2WallEast', 5.0, 5.5, 23.0, 29.0, 5.0, castleStoneMat);
 
-  // South step-in wings (Z = 23, from [-5, -2] and [2, 5])
-  const r2SouthWingGeo = new THREE.BoxGeometry(3.0, 5.0, 0.5);
-  const r2SouthL = new THREE.Mesh(r2SouthWingGeo, castleStoneMat);
-  r2SouthL.position.set(-3.5, 2.5, 22.75);
-  const r2SouthR = new THREE.Mesh(r2SouthWingGeo, castleStoneMat);
-  r2SouthR.position.set(3.5, 2.5, 22.75);
-  root.add(r2SouthL, r2SouthR);
+  // South step-in wings (Z = 23, from [-5.5, -2] and [2, 5.5]) — BOTH mesh AND collider so corners are sealed!
+  addSealedWall('Room2SouthWest', -5.5, -2.0, 22.5, 23.0, 5.0, castleStoneMat);
+  addSealedWall('Room2SouthEast', 2.0, 5.5, 22.5, 23.0, 5.0, castleStoneMat);
 
-  // North wings (Z = 29, doorway [-1, 1] into Maze One)
-  const r2NorthWingGeo = new THREE.BoxGeometry(4.0, 5.0, 0.5);
-  const r2NorthL = new THREE.Mesh(r2NorthWingGeo, castleStoneMat);
-  r2NorthL.position.set(-3.0, 2.5, 29.25);
-  const r2NorthR = new THREE.Mesh(r2NorthWingGeo, castleStoneMat);
-  r2NorthR.position.set(3.0, 2.5, 29.25);
-  root.add(r2NorthL, r2NorthR);
-  staticColliders.push(
-    { minX: -5.0, maxX: -1.0, minZ: 29.0, maxZ: 29.5 },
-    { minX: 1.0, maxX: 5.0, minZ: 29.0, maxZ: 29.5 }
-  );
+  // North wings (Z = 29, doorway [-1, 1] into Maze One; outer ends cap corners ±5.5)
+  addSealedWall('Room2NorthWest', -5.5, -1.0, 29.0, 29.5, 5.0, castleStoneMat);
+  addSealedWall('Room2NorthEast', 1.0, 5.5, 29.0, 29.5, 5.0, castleStoneMat);
+  addLintel('Room2NorthLintel', -1.0, 1.0, 29.0, 29.5, 4.6, 5.0, castleStoneMat);
 
   // Room 2 North Exit Tutorial Gate (locked during ADS tutorial until brain wipe finishes)
   const room2GateMesh = new THREE.Mesh(new THREE.BoxGeometry(2.4, 4.6, 0.45), ironGateMat);
@@ -426,41 +414,19 @@ export function buildLevelOneCorridor(scene) {
   mazeFloor.rotation.x = -Math.PI / 2;
   mazeFloor.position.set(0, 0.01, 40);
   root.add(mazeFloor);
+  addCeiling('MazeOneCeiling', 0, 40, 31.0, 23.0, 4.6, mazeWallMat);
 
-  const mazeWallSideGeo = new THREE.BoxGeometry(0.5, 4.6, 22);
-  const mazeWallL = new THREE.Mesh(mazeWallSideGeo, mazeWallMat);
-  mazeWallL.position.set(-15.25, 2.3, 40);
-  const mazeWallR = new THREE.Mesh(mazeWallSideGeo, mazeWallMat);
-  mazeWallR.position.set(15.25, 2.3, 40);
-  root.add(mazeWallL, mazeWallR);
-  staticColliders.push(
-    { minX: -15.5, maxX: -15.0, minZ: 29.0, maxZ: 51.0 },
-    { minX: 15.0, maxX: 15.5, minZ: 29.0, maxZ: 51.0 }
-  );
+  // West boundary aligned flush at X ∈ [-15.0, -14.5] so West Return Stair (X ∈ [-17, -15]) stays full 2.0 m wide with zero step gap!
+  addSealedWall('MazeWallWest', -15.0, -14.5, 29.0, 51.0, 5.0, mazeWallMat);
+  addSealedWall('MazeWallEast', 15.0, 15.5, 29.0, 51.0, 4.6, mazeWallMat);
 
   // South wings (Z = 29, doorway [-1, 1] at col 7 'E')
-  const mazeSouthWingGeo = new THREE.BoxGeometry(14.0, 4.6, 0.5);
-  const mazeSouthL = new THREE.Mesh(mazeSouthWingGeo, mazeWallMat);
-  mazeSouthL.position.set(-8.0, 2.3, 28.75);
-  const mazeSouthR = new THREE.Mesh(mazeSouthWingGeo, mazeWallMat);
-  mazeSouthR.position.set(8.0, 2.3, 28.75);
-  root.add(mazeSouthL, mazeSouthR);
-  staticColliders.push(
-    { minX: -15.0, maxX: -1.0, minZ: 28.5, maxZ: 29.0 },
-    { minX: 1.0, maxX: 15.0, minZ: 28.5, maxZ: 29.0 }
-  );
+  addSealedWall('MazeSouthWest', -15.0, -1.0, 28.5, 29.0, 4.6, mazeWallMat);
+  addSealedWall('MazeSouthEast', 1.0, 15.5, 28.5, 29.0, 4.6, mazeWallMat);
 
   // North wings (Z = 51, doorway [-1, 1] at col 7 'X')
-  const mazeNorthWingGeo = new THREE.BoxGeometry(14.0, 4.6, 0.5);
-  const mazeNorthL = new THREE.Mesh(mazeNorthWingGeo, mazeWallMat);
-  mazeNorthL.position.set(-8.0, 2.3, 51.25);
-  const mazeNorthR = new THREE.Mesh(mazeNorthWingGeo, mazeWallMat);
-  mazeNorthR.position.set(8.0, 2.3, 51.25);
-  root.add(mazeNorthL, mazeNorthR);
-  staticColliders.push(
-    { minX: -15.0, maxX: -1.0, minZ: 51.0, maxZ: 51.5 },
-    { minX: 1.0, maxX: 15.0, minZ: 51.0, maxZ: 51.5 }
-  );
+  addSealedWall('MazeNorthWest', -15.0, -1.0, 51.0, 51.5, 4.6, mazeWallMat);
+  addSealedWall('MazeNorthEast', 1.0, 15.5, 51.0, 51.5, 4.6, mazeWallMat);
 
   // Single InstancedMesh for ALL internal Spiral walls (cell size 2.0 m)
   const wallGeo = new THREE.BoxGeometry(SPIRAL_CELL_SIZE, 4.6, SPIRAL_CELL_SIZE);
@@ -479,83 +445,57 @@ export function buildLevelOneCorridor(scene) {
   const lionFloor = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), aetherBlindingMat);
   lionFloor.rotation.x = -Math.PI / 2;
   lionFloor.position.set(0, 0.01, 58);
-  const lionCeiling = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), aetherBlindingMat);
+  const lionCeiling = new THREE.Mesh(new THREE.PlaneGeometry(14.5, 14.5), aetherBlindingMat);
   lionCeiling.rotation.x = Math.PI / 2;
   lionCeiling.position.set(0, 5.0, 58);
   const lionBackdrop = new THREE.Mesh(new THREE.PlaneGeometry(13.8, 4.8), aetherBlindingMat);
   lionBackdrop.position.set(0, 2.5, 64.8);
   root.add(lionFloor, lionCeiling, lionBackdrop);
 
-  // East Wall (solid)
-  const lionWallR = new THREE.Mesh(new THREE.BoxGeometry(0.5, 5.0, 14), castleStoneMat);
-  lionWallR.position.set(7.25, 2.5, 58);
-  root.add(lionWallR);
-  staticColliders.push({ minX: 7.0, maxX: 7.5, minZ: 51.0, maxZ: 65.0 });
+  // East Wall (solid, corner-capped to Z = 65.5)
+  addSealedWall('LionWallEast', 7.0, 7.5, 50.5, 65.5, 5.0, castleStoneMat);
 
   // West Wall — split with opening at Z ∈ [62, 65] for return stair
-  const lionWallLSouth = new THREE.Mesh(new THREE.BoxGeometry(0.5, 5.0, 11.0), castleStoneMat);
-  lionWallLSouth.position.set(-7.25, 2.5, 56.5);
-  const lionWestLintel = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.0, 3.0), castleStoneMat);
-  lionWestLintel.position.set(-7.25, 4.5, 63.5);
-  root.add(lionWallLSouth, lionWestLintel);
-  staticColliders.push({ minX: -7.5, maxX: -7.0, minZ: 51.0, maxZ: 62.0 });
+  addSealedWall('LionWallWestSouth', -7.5, -7.0, 50.5, 62.0, 5.0, castleStoneMat);
+  addLintel('LionWallWestLintel', -7.5, -7.0, 62.0, 65.0, 4.0, 5.0, castleStoneMat);
 
   // North back wall (Z = 65)
-  const lionWallNorth = new THREE.Mesh(new THREE.BoxGeometry(14.5, 5.0, 0.5), castleStoneMat);
-  lionWallNorth.position.set(0, 2.5, 65.25);
-  root.add(lionWallNorth);
-  staticColliders.push({ minX: -7.5, maxX: 7.5, minZ: 65.0, maxZ: 65.5 });
+  addSealedWall('LionWallNorth', -7.5, 7.5, 65.0, 65.5, 5.0, castleStoneMat);
 
   // South wings (Z = 51, doorway [-2, 2] from Maze One)
-  const lionSouthWingGeo = new THREE.BoxGeometry(5.0, 5.0, 0.5);
-  const lionSouthL = new THREE.Mesh(lionSouthWingGeo, castleStoneMat);
-  lionSouthL.position.set(-4.5, 2.5, 50.75);
-  const lionSouthR = new THREE.Mesh(lionSouthWingGeo, castleStoneMat);
-  lionSouthR.position.set(4.5, 2.5, 50.75);
-  root.add(lionSouthL, lionSouthR);
-  staticColliders.push(
-    { minX: -7.0, maxX: -2.0, minZ: 50.5, maxZ: 51.0 },
-    { minX: 2.0, maxX: 7.0, minZ: 50.5, maxZ: 51.0 }
-  );
+  addSealedWall('LionSouthWest', -7.5, -2.0, 50.5, 51.0, 5.0, castleStoneMat);
+  addSealedWall('LionSouthEast', 2.0, 7.5, 50.5, 51.0, 5.0, castleStoneMat);
+  addLintel('LionSouthLintel', -2.0, 2.0, 50.5, 51.0, 4.6, 5.0, castleStoneMat);
 
   // 6. RETURN STAIR: 2m wide on the WEST side of the castle, running full length back south,
-  // through the Aether's west side, into the hall's north-west corner.
+  // through the Aether's west side, into the hall's north-west corner (X ∈ [-12, -10], Z = 7).
 
   // 6a. Connector hall from Lion Room West opening to West corridor (X ∈ [-17, -7], Z ∈ [62, 65])
   const connectorFloor = new THREE.Mesh(new THREE.PlaneGeometry(10.0, 3.0), castleStoneMat);
   connectorFloor.rotation.x = -Math.PI / 2;
   connectorFloor.position.set(-12.0, 0.01, 63.5);
-  const connectorWallN = new THREE.Mesh(new THREE.BoxGeometry(10.5, 5.0, 0.5), castleStoneMat);
-  connectorWallN.position.set(-12.25, 2.5, 65.25);
-  const connectorWallS = new THREE.Mesh(new THREE.BoxGeometry(8.0, 5.0, 0.5), castleStoneMat);
-  connectorWallS.position.set(-11.0, 2.5, 61.75);
-  root.add(connectorFloor, connectorWallN, connectorWallS);
-  staticColliders.push(
-    { minX: -17.5, maxX: -7.0, minZ: 65.0, maxZ: 65.5 },
-    { minX: -15.0, maxX: -7.0, minZ: 61.5, maxZ: 62.0 }
-  );
+  root.add(connectorFloor);
+  addCeiling('ReturnConnectorCeiling', -12.0, 63.5, 10.5, 3.5, 5.0, castleStoneMat);
+
+  addSealedWall('ReturnConnectorWallNorth', -17.5, -7.0, 65.0, 65.5, 5.0, castleStoneMat);
+  addSealedWall('ReturnConnectorWallSouth', -15.0, -7.0, 61.5, 62.0, 5.0, castleStoneMat);
 
   // 6b. Full-length West Stair Corridor (X ∈ [-17, -15], Z ∈ [15, 65], width 2.0 m)
   const westStairFloor = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 50.0), castleStoneMat);
   westStairFloor.rotation.x = -Math.PI / 2;
   westStairFloor.position.set(-16.0, 0.01, 40.0);
-  const westOuterWall = new THREE.Mesh(new THREE.BoxGeometry(0.5, 5.0, 50.0), castleStoneMat);
-  westOuterWall.position.set(-17.25, 2.5, 40.0);
-  root.add(westStairFloor, westOuterWall);
-  staticColliders.push({ minX: -17.5, maxX: -17.0, minZ: 15.0, maxZ: 65.0 });
+  root.add(westStairFloor);
+  addCeiling('WestStairCeiling', -16.0, 40.0, 2.5, 50.5, 5.0, castleStoneMat);
 
-  // Inner East walls along West corridor:
-  // Along Lion Room: Z ∈ [51, 62], X = -14.75
-  const westInnerWallLion = new THREE.Mesh(new THREE.BoxGeometry(0.5, 5.0, 11.0), castleStoneMat);
-  westInnerWallLion.position.set(-14.75, 2.5, 56.5);
-  root.add(westInnerWallLion);
-  staticColliders.push({ minX: -15.0, maxX: -14.5, minZ: 51.0, maxZ: 62.0 });
+  // Outer West wall runs continuously from Z = 9.5 (dogleg corner) to Z = 65.5 (connector corner)
+  addSealedWall('WestStairOuterWall', -17.5, -17.0, 9.5, 65.5, 5.0, castleStoneMat);
 
-  // Along Room 2 & Barrel Room: Z ∈ [15, 29], X = -14.75
-  const westInnerWallSouth = new THREE.Mesh(new THREE.BoxGeometry(0.5, 5.0, 14.0), castleStoneMat);
-  westInnerWallSouth.position.set(-14.75, 2.5, 22.0);
-  root.add(westInnerWallSouth);
-  staticColliders.push({ minX: -15.0, maxX: -14.5, minZ: 15.0, maxZ: 29.0 });
+  // Inner East walls along West corridor (continuous at X ∈ [-15.0, -14.5]):
+  // Along Lion Room: Z ∈ [51, 62]
+  addSealedWall('WestStairInnerLion', -15.0, -14.5, 51.0, 62.0, 5.0, castleStoneMat);
+  // Along Maze One: sealed by MazeWallWest (X ∈ [-15.0, -14.5], Z ∈ [29, 51])
+  // Along Room 2, Barrel Room, and upper Aether passage: Z ∈ [12, 29]
+  addSealedWall('WestStairInnerSouth', -15.0, -14.5, 12.0, 29.0, 5.0, castleStoneMat);
 
   // Physical stone steps along West corridor descending south
   const westStairsGroup = new THREE.Group();
@@ -567,18 +507,28 @@ export function buildLevelOneCorridor(scene) {
   }
   root.add(westStairsGroup);
 
-  // 6c. Passage through Aether's west side into Museum Hall NW corner (Z ∈ [7, 15], X from -16 to -11)
-  const aetherWestStairFloor = new THREE.Mesh(new THREE.PlaneGeometry(6.0, 8.0), castleStoneMat);
-  aetherWestStairFloor.rotation.x = -Math.PI / 2;
-  aetherWestStairFloor.position.set(-13.5, 0.01, 11.0);
-  root.add(aetherWestStairFloor);
+  // 6c. Sealed dogleg passage through Aether's west side into Museum Hall NW corner (Z ∈ [7, 15], X ∈ [-17, -10])
+  // Route: south down [-17,-15]×[10,15] -> turn east along [-17,-10]×[10,12] -> turn south through [-12,-10]×[7,10] into Hall NW.
+  const aetherWestDropFloor = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 5.0), castleStoneMat);
+  aetherWestDropFloor.rotation.x = -Math.PI / 2;
+  aetherWestDropFloor.position.set(-16.0, 0.01, 12.5);
+  const aetherWestTurnFloor = new THREE.Mesh(new THREE.PlaneGeometry(7.0, 2.0), castleStoneMat);
+  aetherWestTurnFloor.rotation.x = -Math.PI / 2;
+  aetherWestTurnFloor.position.set(-13.5, 0.01, 11.0);
+  const aetherWestEntryFloor = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 3.0), castleStoneMat);
+  aetherWestEntryFloor.rotation.x = -Math.PI / 2;
+  aetherWestEntryFloor.position.set(-11.0, 0.01, 8.5);
+  root.add(aetherWestDropFloor, aetherWestTurnFloor, aetherWestEntryFloor);
 
-  staticColliders.push(
-    { minX: -17.5, maxX: -16.0, minZ: 11.0, maxZ: 15.0 }, // Outer west upper
-    { minX: -13.5, maxX: -12.0, minZ: 7.0, maxZ: 11.0 },  // Outer west lower into Hall NW
-    { minX: -15.0, maxX: -13.5, minZ: 11.0, maxZ: 15.0 }, // Inner east upper
-    { minX: -10.5, maxX: -9.5, minZ: 7.0, maxZ: 11.0 }    // Inner east lower into Hall NW
-  );
+  addCeiling('AetherWestDropCeiling', -16.0, 12.5, 2.5, 5.5, 5.0, castleStoneMat);
+  addCeiling('AetherWestTurnCeiling', -13.5, 11.0, 7.5, 2.5, 5.0, castleStoneMat);
+  addCeiling('AetherWestEntryCeiling', -11.0, 8.5, 2.5, 3.5, 5.0, castleStoneMat);
+
+  // Sealed walls (BOTH visible meshes AND colliders) bounding every outer & inner face of the Aether west dogleg:
+  addSealedWall('AetherWestTurnNorth', -15.0, -9.5, 12.0, 12.5, 5.0, castleStoneMat); // North wall of east-jog
+  addSealedWall('AetherWestTurnSouth', -17.5, -12.0, 9.5, 10.0, 5.0, castleStoneMat); // South wall of east-jog
+  addSealedWall('AetherWestEntryWest', -12.5, -12.0, 7.0, 10.0, 5.0, castleStoneMat); // West wall into Hall NW
+  addSealedWall('AetherWestEntryEast', -10.0, -9.5, 7.0, 12.5, 5.0, castleStoneMat); // East wall into Hall NW
 
   // 7. Exterior Ledges (1m wide on East and South faces of Castle)
   const ledgeMat = new THREE.MeshStandardMaterial({
@@ -646,6 +596,7 @@ export function buildLevelOneCorridor(scene) {
     root,
     spiral,
     staticColliders,
+    wallAudit,
     barrelMesh,
     shotgunStandMesh,
     portalGateMesh,

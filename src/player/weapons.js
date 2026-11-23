@@ -80,9 +80,12 @@ export class WeaponSystem {
     this.camera = camera;
     this.callbacks = callbacks;
 
-    // §A / §D: Level One starts UNARMED. Arsenal unlocks in Castle Room 1: Balistucia + Sword.
+    // §A / §D / Playtest Fix 1-2: Start UNARMED. Pistol (Glock) and Sword are strictly
+    // pickup-only (owned flags default to false; neither renders, mounts, or enters cycler until collected).
     this.activeWeapon = 'unarmed'; // 'unarmed' | 'shotgun' | 'sword' | 'glock' | 'knife'
-    this.loadout = 'level1'; // 'level1' (Balistucia + Sword ONLY) | 'standard'
+    this.loadout = 'level1'; // 'level1' | 'standard'
+    this.pistolOwned = false;
+    this.swordOwned = false;
     this.weaponsUnlocked = {
       shotgun: false,
       sword: false,
@@ -140,7 +143,11 @@ export class WeaponSystem {
     this.armsLoaded = false;
     this.armsRoot = null;
     this._heroGlockScene = null;
+    this._heroGlockLoadStarted = false;
     this._mountedGlockOnArms = false;
+    this._heroGlockHandMount = null;
+    this._standaloneGlockPivot = null;
+    this._armsRefGlockMesh = null;
 
     // Grab system (Stage 4 Slot 2): procedural finger-pose layer over the
     // arms mixer + reach motion on the arms pivot. See grabAnimator.js.
@@ -243,36 +250,70 @@ export class WeaponSystem {
     else this._reserveAmmo = val;
   }
 
+  _isWeaponOwned(weapon) {
+    if (weapon === 'glock') return Boolean(this.pistolOwned && this.weaponsUnlocked.glock);
+    if (weapon === 'sword') return Boolean(this.swordOwned && this.weaponsUnlocked.sword);
+    if (weapon === 'shotgun') return Boolean(this.weaponsUnlocked.shotgun);
+    if (weapon === 'knife') return Boolean(this.loadout !== 'level1' && this.weaponsUnlocked.knife);
+    return false;
+  }
+
   setLoadout(loadout, { unarmed = false } = {}) {
     this.loadout = loadout;
     if (this.cycler) this.cycler.loadout = loadout;
+    // Sync owned flags (Glock and Sword are NEVER auto-granted by loadout change)
+    this.weaponsUnlocked.glock = Boolean(this.pistolOwned);
+    this.weaponsUnlocked.sword = Boolean(this.swordOwned);
     if (loadout === 'level1') {
-      if (unarmed || (!this.weaponsUnlocked.shotgun && !this.weaponsUnlocked.sword)) {
+      this.weaponsUnlocked.knife = false;
+      const ownedOrder = ['shotgun', 'sword', 'glock'].filter((w) => this._isWeaponOwned(w));
+      if (unarmed || ownedOrder.length === 0) {
         this.activeWeapon = 'unarmed';
         this.holstered = true;
         this.holsterBlend = 1;
         if (this.cycler) this.cycler.forceEquip('unarmed');
         this._syncVisibility();
         this._updateFlashlightMount();
-      } else if (this.weaponsUnlocked.shotgun) {
-        this.equip('shotgun');
-      } else if (this.weaponsUnlocked.sword) {
-        this.equip('sword');
+      } else {
+        this.equip(ownedOrder[0]);
       }
     } else {
-      this.weaponsUnlocked.glock = true;
+      // Standard loadout still respects pistol pickup-only & sword pickup-only
       this.weaponsUnlocked.knife = true;
-      this.equip('glock');
+      if (unarmed) {
+        this.activeWeapon = 'unarmed';
+        this.holstered = true;
+        this.holsterBlend = 1;
+        if (this.cycler) this.cycler.forceEquip('unarmed');
+        this._syncVisibility();
+        this._updateFlashlightMount();
+      } else if (this._isWeaponOwned('glock')) {
+        this.equip('glock');
+      } else {
+        this.equip('knife');
+      }
     }
   }
 
   unlockWeapon(weapon, { autoEquip = true } = {}) {
-    if (weapon !== 'shotgun' && weapon !== 'sword' && weapon !== 'glock' && weapon !== 'knife') return;
-    if (this.loadout === 'level1' && (weapon === 'glock' || weapon === 'knife')) return;
-    this.weaponsUnlocked[weapon] = true;
+    if (weapon !== 'shotgun' && weapon !== 'sword' && weapon !== 'glock' && weapon !== 'knife') return false;
+    if (this.loadout === 'level1' && weapon === 'knife') return false;
+    if (weapon === 'glock') {
+      this.pistolOwned = true;
+      this.weaponsUnlocked.glock = true;
+      this._loadHeroGlockIfOwned();
+    } else if (weapon === 'sword') {
+      this.swordOwned = true;
+      this.weaponsUnlocked.sword = true;
+    } else {
+      this.weaponsUnlocked[weapon] = true;
+    }
     if (autoEquip) {
       this.equip(weapon);
+    } else {
+      this._syncVisibility();
     }
+    return true;
   }
 
   // ---- Grab system (Stage 4 Slot 2, Nov 21, 2026) ----
@@ -572,6 +613,10 @@ export class WeaponSystem {
   }
 
   _tryMountHeroGlockToArms() {
+    // Pistol pickup-only: NEVER mount the Glock onto fps_arms before pistolOwned === true
+    if (!this.pistolOwned || !this.weaponsUnlocked.glock) {
+      return;
+    }
     if (this._mountedGlockOnArms || !this.armsLoaded || !this._heroGlockScene || !this.armsRoot) {
       return;
     }
@@ -810,49 +855,14 @@ export class WeaponSystem {
       }
 
       this._collectGrabBones();
-      this._tryMountHeroGlockToArms();
-    });
-
-    // 2. Load high-detail hero Glock (glock.glb) — mounted onto Hand.R.001 once fps_arms loads
-    tryLoadModel('heroes/glock', { castShadow: false, receiveShadow: false }).then((gltf) => {
-      if (!gltf) {
-        console.warn('[FALLBACK] heroes/glock failed to load; procedural fallback Glock retained');
-        return;
-      }
-      if (!this.glockGroup) return;
-      this._heroGlockScene = gltf.scene;
-
-      if (this.armsLoaded) {
+      if (this.pistolOwned && this.weaponsUnlocked.glock) {
         this._tryMountHeroGlockToArms();
-        return;
       }
-
-      // Temporary standalone mount until fps_arms arrives (muzzle along -X -> rotate -PI/2 so barrel points -Z!)
-      const model = gltf.scene.clone(true);
-      const box = new THREE.Box3().setFromObject(model);
-      const size = new THREE.Vector3();
-      const center = new THREE.Vector3();
-      box.getSize(size);
-      box.getCenter(center);
-
-      model.position.sub(center);
-      const pivot = new THREE.Group();
-      pivot.add(model);
-
-      const maxDim = Math.max(size.x, size.y, size.z, 0.001);
-      const s = 0.28 / maxDim;
-      pivot.scale.setScalar(s);
-      pivot.rotation.y = size.x > size.z * 1.15 ? -Math.PI * 0.5 : 0;
-      pivot.position.set(0, -0.015, -0.025);
-
-      for (const child of this.glockGroup.children) {
-        if (child !== this.muzzleFlashMesh && child !== this.muzzleLight) {
-          child.visible = false;
-        }
-      }
-      this._standaloneGlockPivot = pivot;
-      this.glockGroup.add(pivot);
+      this._syncVisibility();
     });
+
+    // 2. Hero Glock (glock.glb) is NOT loaded or mounted at start —
+    // loaded lazily ONLY when a pistol pickup sets pistolOwned = true (_loadHeroGlockIfOwned).
 
     // 3. Load hero Combat Knife (knife.glb)
     tryLoadModel('heroes/knife', { castShadow: false, receiveShadow: false }).then((gltf) => {
@@ -886,6 +896,7 @@ export class WeaponSystem {
         child.visible = false;
       }
       this.knifeGroup.add(pivot);
+      this._syncVisibility();
     });
 
     // 4. Load hero Shotgun (balistucia.glb) & shell (shotgun_shell.glb)
@@ -907,6 +918,7 @@ export class WeaponSystem {
       let breechBolt = null;
       let ejectionPort = null;
       let loadingPort = null;
+      let holoReticleMesh = null;
 
       shotgunScene.traverse((obj) => {
         if (obj.name === 'shotgun_root') shotgunRoot = obj;
@@ -1023,18 +1035,93 @@ export class WeaponSystem {
           },
         }
       );
+      this._syncVisibility();
     });
+  }
+
+  _loadHeroGlockIfOwned() {
+    if (!this.pistolOwned || !this.weaponsUnlocked.glock) return;
+    if (this._heroGlockScene) {
+      if (this.armsLoaded && !this._mountedGlockOnArms) {
+        this._tryMountHeroGlockToArms();
+      } else if (!this._standaloneGlockPivot && this.glockGroup) {
+        this._attachStandaloneHeroGlock();
+      }
+      this._syncVisibility();
+      return;
+    }
+    if (this._heroGlockLoadStarted) return;
+    this._heroGlockLoadStarted = true;
+
+    tryLoadModel('heroes/glock', { castShadow: false, receiveShadow: false }).then((gltf) => {
+      if (!gltf) {
+        console.warn('[FALLBACK] heroes/glock failed to load; procedural fallback Glock retained');
+        return;
+      }
+      this._heroGlockScene = gltf.scene;
+      // Guard again in case a reset happened while loading
+      if (!this.pistolOwned || !this.weaponsUnlocked.glock || !this.glockGroup) return;
+
+      if (this.armsLoaded) {
+        this._tryMountHeroGlockToArms();
+      } else {
+        this._attachStandaloneHeroGlock();
+      }
+      this._syncVisibility();
+    });
+  }
+
+  _attachStandaloneHeroGlock() {
+    if (!this._heroGlockScene || !this.glockGroup || this._standaloneGlockPivot) return;
+    const model = this._heroGlockScene.clone(true);
+    const box = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    box.getSize(size);
+    box.getCenter(center);
+
+    model.position.sub(center);
+    const pivot = new THREE.Group();
+    pivot.add(model);
+
+    const maxDim = Math.max(size.x, size.y, size.z, 0.001);
+    const s = 0.28 / maxDim;
+    pivot.scale.setScalar(s);
+    pivot.rotation.y = size.x > size.z * 1.15 ? -Math.PI * 0.5 : 0;
+    pivot.position.set(0, -0.015, -0.025);
+
+    for (const child of this.glockGroup.children) {
+      if (child !== this.muzzleFlashMesh && child !== this.muzzleLight) {
+        child.visible = false;
+      }
+    }
+    this._standaloneGlockPivot = pivot;
+    this.glockGroup.add(pivot);
   }
 
   reset({ levelOne = true } = {}) {
     this.loadout = levelOne ? 'level1' : 'standard';
+    this.pistolOwned = false;
+    this.swordOwned = false;
     this.weaponsUnlocked = {
       shotgun: false,
       sword: false,
-      glock: !levelOne,
+      glock: false,
       knife: !levelOne,
     };
-    this.activeWeapon = levelOne ? 'unarmed' : 'glock';
+    this.activeWeapon = 'unarmed';
+    // Unmount hero Glock if it was mounted during a previous run
+    if (this._heroGlockHandMount) {
+      if (this._heroGlockHandMount.parent) {
+        this._heroGlockHandMount.parent.remove(this._heroGlockHandMount);
+      }
+      this._heroGlockHandMount.visible = false;
+      this._heroGlockHandMount = null;
+    }
+    this._mountedGlockOnArms = false;
+    if (this._standaloneGlockPivot) {
+      this._standaloneGlockPivot.visible = false;
+    }
     this._ammoInMag = this.magSize;
     this._reserveAmmo = 60;
     this.shotgunAmmoInMag = this.shotgunMagSize;
@@ -1062,6 +1149,11 @@ export class WeaponSystem {
     if (this.shotgunMuzzleLight) this.shotgunMuzzleLight.intensity = 0;
     if (this.shotgunMuzzleFlash) this.shotgunMuzzleFlash.visible = false;
     if (this.shellCasings) this.shellCasings.reset();
+    if (this.cycler) {
+      this.cycler.loadout = this.loadout;
+      this.cycler.hasDrawnInitial = false;
+      this.cycler.forceEquip('unarmed');
+    }
     this._playArmsClip('idle', { loop: true, fade: 0.18 });
     this._syncVisibility();
     this._updateFlashlightMount();
@@ -1075,6 +1167,7 @@ export class WeaponSystem {
     this.holstered = !this.holstered;
     this.inspecting = false;
     if (this.holstered) this.cancelReload();
+    this._syncVisibility();
     return this.holstered;
   }
 
@@ -1153,16 +1246,14 @@ export class WeaponSystem {
       return true;
     }
     if (weapon !== 'glock' && weapon !== 'knife' && weapon !== 'shotgun' && weapon !== 'sword') return false;
-    // §D: Glock and Knife are out of script for Level One — strictly blocked.
-    if (this.loadout === 'level1') {
-      if (weapon === 'glock' || weapon === 'knife') return false;
-      if (!this.weaponsUnlocked[weapon]) return false;
-    }
+    // Strict ownership guard: Pistol (glock) and Sword (sword) require pickup ownership in EVERY loadout.
+    if (!this._isWeaponOwned(weapon)) return false;
     if (this.holstered) this.holstered = false;
     if (this.activeWeapon === weapon && !this.quickKnifeActive) {
       if (this.cycler && this.cycler.state !== CYCLER_STATES.CARRY) {
         this.cycler.forceEquip(weapon);
       }
+      this._syncVisibility();
       this._updateFlashlightMount();
       return true;
     }
@@ -1186,20 +1277,8 @@ export class WeaponSystem {
     this.inspecting = false;
     this.quickKnifeActive = false;
     if (instant) {
-      if (this.loadout === 'level1') {
-        if (this.activeWeapon === 'shotgun' && this.weaponsUnlocked.sword) {
-          return this.equip('sword');
-        }
-        if (this.activeWeapon === 'sword' && this.weaponsUnlocked.shotgun) {
-          return this.equip('shotgun');
-        }
-        if (this.activeWeapon === 'unarmed') {
-          if (this.weaponsUnlocked.shotgun) return this.equip('shotgun');
-          if (this.weaponsUnlocked.sword) return this.equip('sword');
-        }
-        return false;
-      }
-      return this.equip(this.activeWeapon === 'glock' ? 'knife' : 'glock');
+      const target = this.cycler ? this.cycler.getIncomingTarget() : null;
+      return target ? this.equip(target) : false;
     }
     if (this.cycler) {
       return this.cycler.requestSwap();
@@ -1208,25 +1287,40 @@ export class WeaponSystem {
   }
 
   _syncVisibility() {
-    const visibleWeapon = this.cycler ? this.cycler.visibleWeapon : this.activeWeapon;
-    const isUnarmed = visibleWeapon === 'unarmed' || visibleWeapon === null;
-    const isShotgun = !isUnarmed && visibleWeapon === 'shotgun' && !this.quickKnifeActive;
-    const isSword = !isUnarmed && visibleWeapon === 'sword' && !this.quickKnifeActive;
-    const showKnife =
-      !isUnarmed &&
-      this.loadout !== 'level1' &&
-      (visibleWeapon === 'knife' || this.quickKnifeActive) &&
-      !isSword;
-    const showGlock =
-      !isUnarmed && this.loadout !== 'level1' && visibleWeapon === 'glock' && !showKnife;
+    // STRICT SINGLE-WEAPON VISIBILITY LAW:
+    // Only the ACTIVE (and owned) weapon viewmodel may be visible; EVERY non-active weapon
+    // model gets visible = false explicitly (never rely on animation state to hide them).
+    const rawVisible = this.cycler ? this.cycler.visibleWeapon : this.activeWeapon;
+    const isUnarmed =
+      this.holstered ||
+      rawVisible === 'unarmed' ||
+      rawVisible === null ||
+      !this._isWeaponOwned(rawVisible);
 
-    if (this.glockGroup) this.glockGroup.visible = showGlock;
+    const showQuickKnife =
+      !this.holstered &&
+      this.quickKnifeActive &&
+      this._isWeaponOwned('knife');
+
+    const activeVis = isUnarmed ? null : rawVisible;
+    const showShotgun = !showQuickKnife && activeVis === 'shotgun';
+    const showSword = !showQuickKnife && activeVis === 'sword';
+    const showKnife = showQuickKnife || activeVis === 'knife';
+    const showGlock = !showQuickKnife && activeVis === 'glock';
+
+    if (this.shotgunGroup) this.shotgunGroup.visible = showShotgun;
+    if (this.swordGroup) this.swordGroup.visible = showSword;
     if (this.knifeGroup) this.knifeGroup.visible = showKnife;
-    if (this.shotgunGroup) this.shotgunGroup.visible = isShotgun;
-    if (this.swordGroup) this.swordGroup.visible = isSword;
-    if (this._heroGlockHandMount) this._heroGlockHandMount.visible = showGlock;
-    // The arms rig's built-in Glock19 reference mesh stays hidden in EVERY
-    // loadout — the hero hand mount is the only pistol that may ever show.
+
+    // Glock never renders or mounts when unowned or non-active; if mounted on arms, hide glockGroup so never doubled.
+    if (this.glockGroup) this.glockGroup.visible = showGlock && !this._mountedGlockOnArms;
+    if (this._heroGlockHandMount) {
+      this._heroGlockHandMount.visible = showGlock && this._mountedGlockOnArms;
+    }
+    if (this._standaloneGlockPivot) {
+      this._standaloneGlockPivot.visible = showGlock && !this._mountedGlockOnArms;
+    }
+    // The arms rig's built-in Glock19 reference mesh stays hidden in EVERY loadout.
     if (this._armsRefGlockMesh) this._armsRefGlockMesh.visible = false;
     if (this.armsRoot) this.armsRoot.visible = true;
   }
@@ -1521,7 +1615,7 @@ export class WeaponSystem {
     if (this.reloading || this.quickKnifeActive) return false;
 
     if (this.activeWeapon === 'glock') {
-      if (this.loadout === 'level1') return false;
+      if (!this._isWeaponOwned('glock')) return false;
       if (this.ammoInMag >= this.magSize || this.reserveAmmo <= 0) return false;
       this.inspecting = false;
       this.reloading = true;
@@ -1533,6 +1627,7 @@ export class WeaponSystem {
     }
 
     if (this.activeWeapon === 'shotgun') {
+      if (!this._isWeaponOwned('shotgun')) return false;
       if (this.shotgunAmmoInMag >= this.shotgunMagSize || this.shotgunReserve <= 0) return false;
       this.inspecting = false;
       this.reloading = true;
@@ -1555,14 +1650,15 @@ export class WeaponSystem {
     if (this.isCycleLocked) return false;
     if (this.grabAnimator.active) return false; // hands are busy — unskippable grab
     if (this.activeWeapon === 'unarmed') return false;
+    if (!this._isWeaponOwned(this.activeWeapon)) return false;
     if (this.holstered) {
       this.holstered = false;
       this.swapAnim = 0.65;
+      this._syncVisibility();
       return false;
     }
     this.inspecting = false;
     if (this.activeWeapon === 'knife') {
-      if (this.loadout === 'level1') return false;
       return this.triggerKnifeSlash(false);
     }
     if (this.activeWeapon === 'sword') {
@@ -1571,13 +1667,19 @@ export class WeaponSystem {
     if (this.activeWeapon === 'shotgun') {
       return this._fireShotgun(enemyManager, worldMeshes);
     }
-    if (this.loadout === 'level1') return false;
-    return this._fireGlock(enemyManager, worldMeshes);
+    if (this.activeWeapon === 'glock') {
+      return this._fireGlock(enemyManager, worldMeshes);
+    }
+    return false;
   }
 
   triggerSwordSlash() {
+    if (!this._isWeaponOwned('sword')) return false;
     if (this.isCycleLocked || this.swordSlashing || this.shoving) return false;
-    if (this.holstered) this.holstered = false;
+    if (this.holstered) {
+      this.holstered = false;
+      this._syncVisibility();
+    }
     this.inspecting = false;
     this.swordSlashing = true;
     this.swordSlashTimer = 0;
@@ -1723,6 +1825,7 @@ export class WeaponSystem {
   }
 
   _fireGlock(enemyManager, worldMeshes) {
+    if (!this._isWeaponOwned('glock')) return false;
     if (this.isCycleLocked || this.reloading || this.quickKnifeActive || this.shoving || this.fireCooldown > 0) return false;
     if (this.ammoInMag <= 0) {
       sfx.playDryFire();

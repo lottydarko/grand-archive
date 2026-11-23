@@ -245,9 +245,11 @@ export function buildGrandLibrary(scene, renderer, tracks = [], isSoftwareGl = f
   const wallGroup = new THREE.Group();
   scene.add(wallGroup);
 
-  const portalHalfW = 3.2;
+  // Locked floor plan: White Aether passage is 4 m wide (X ∈ [-2, +2], Z ∈ [7, 15]).
+  // Align North Portal archway flush with White Aether (portalHalfW = 2.0) so zero gap exists beside the portal gate.
+  const portalHalfW = 2.0;
   const portalH = 4.4;
-  const northSideSpan = HALF_W - portalHalfW; // 8.8 m each side
+  const northSideSpan = HALF_W - portalHalfW; // 10.0 m on east side
 
   // South wall (z = -7)
   const southWall = new THREE.Mesh(new THREE.BoxGeometry(HALL_W + 0.8, HALL_H, 0.6), mats.stone);
@@ -261,14 +263,14 @@ export function buildGrandLibrary(scene, renderer, tracks = [], isSoftwareGl = f
   eastWall.position.set(HALF_W + 0.3, HALL_H * 0.5, 0);
   wallGroup.add(westWall, eastWall);
 
-  // North wall (z = +7) split around the 6.4 m wide Portal Archway and the NW Return Stair archway (x ∈ [-12, -10])
-  const nwMidSpan = 10.0 - portalHalfW; // 6.8 m between return stair opening and portal arch
+  // North wall (z = +7) split around the 4.0 m wide Portal Archway (x ∈ [-2, +2]) and the NW Return Stair archway (x ∈ [-12, -10])
+  const nwMidSpan = 10.0 - portalHalfW; // 8.0 m between return stair opening (-10) and portal arch (-2)
   const northLeft = new THREE.Mesh(new THREE.BoxGeometry(nwMidSpan, HALL_H, 0.6), mats.stone);
   northLeft.position.set(-(portalHalfW + nwMidSpan * 0.5), HALL_H * 0.5, HALF_D + 0.3);
   const nwStairLintel = new THREE.Mesh(new THREE.BoxGeometry(2.0, HALL_H - 3.6, 0.6), mats.stone);
   nwStairLintel.position.set(-11.0, 3.6 + (HALL_H - 3.6) * 0.5, HALF_D + 0.3);
-  const northRight = new THREE.Mesh(new THREE.BoxGeometry(northSideSpan, HALL_H, 0.6), mats.stone);
-  northRight.position.set(portalHalfW + northSideSpan * 0.5, HALL_H * 0.5, HALF_D + 0.3);
+  const northRight = new THREE.Mesh(new THREE.BoxGeometry(northSideSpan + 0.6, HALL_H, 0.6), mats.stone);
+  northRight.position.set(portalHalfW + (northSideSpan + 0.6) * 0.5, HALL_H * 0.5, HALF_D + 0.3);
   const northLintel = new THREE.Mesh(
     new THREE.BoxGeometry(portalHalfW * 2 + 0.4, HALL_H - portalH, 0.7),
     mats.stone
@@ -286,7 +288,7 @@ export function buildGrandLibrary(scene, renderer, tracks = [], isSoftwareGl = f
   portalArchTrim.position.set(0, portalH + 0.08, HALF_D + 0.12);
   wallGroup.add(portalPillarL, portalPillarR, portalArchTrim);
 
-  // Hall wall perimeter colliders (North portal opening x ∈ [-3.2, +3.2] stays open for portalGate)
+  // Hall wall perimeter colliders (North portal opening x ∈ [-2.0, +2.0] matches White Aether & portalGate)
   staticColliders.push(
     { minX: -HALF_W - 0.6, maxX: HALF_W + 0.6, minZ: -HALF_D - 0.6, maxZ: -HALF_D + 0.05 }, // South
     { minX: -HALF_W - 0.6, maxX: -HALF_W + 0.05, minZ: -HALF_D - 0.6, maxZ: HALF_D + 0.6 }, // West

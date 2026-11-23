@@ -29,7 +29,7 @@ const STUDIO_CLIPS = {
     '/audio/voice/character/breathing-heavy-01.mp3',
   ],
   crawlGrunt: [
-    '/audio/voice/character/panting-01.mp3',
+    '/audio/voice/character/grunt-01.mp3',
     '/audio/voice/character/breathing-heavy-01.mp3',
   ],
   // §E Taunt Law: ZERO attack/sighting voiced yells — telegraph uses non-verbal growl SFX only.
@@ -55,6 +55,7 @@ class SoundEffects {
     this._loadingUrls = new Set();
     this._preloaded = false;
     this._lastPantMs = 0;
+    this._pantCooldownUntilMs = 0;
 
     // Looping atmospheric ambience layers (roomtone + clock/basement drip — zero music)
     this._ambienceActive = false;
@@ -862,18 +863,83 @@ class SoundEffects {
     click.stop(now + 0.05);
   }
 
-  /** Synced post-sprint / exhaustion heavy panting using studio panting-01.mp3. */
-  playPanting(intensity = 1.0) {
-    if (this.muted) return;
+  /**
+   * Natural post-sprint panting with smooth fade-in/fade-out envelope and >=30s
+   * cooldown AFTER playback stops. Never plays abruptly or continuously.
+   */
+  playPanting(intensity = 0.75) {
+    if (this.muted) return false;
     const nowMs = performance.now();
-    if (nowMs - this._lastPantMs < 1650) return;
-    this._lastPantMs = nowMs;
+    if (nowMs < this._pantCooldownUntilMs) return false;
     const ctx = this.ensureContext();
-    if (!ctx) return;
-    this._playStudioClip('panting', {
-      volume: Math.min(0.68, 0.28 + intensity * 0.38),
-      rate: 0.94 + Math.random() * 0.1,
-    });
+    if (!ctx) return false;
+
+    const fadeInSec = 0.42;
+    const fadeOutSec = 0.75;
+    const maxPlaySec = 2.6;
+    const postStopCooldownMs = 30000;
+    const clampedIntensity = Math.max(0.25, Math.min(1.0, intensity));
+    const peakVol = Math.min(0.48, 0.20 + clampedIntensity * 0.24);
+    const now = ctx.currentTime;
+
+    const list = STUDIO_CLIPS.panting || [];
+    const buf = list.length > 0 ? this._clipBuffers.get(list[0]) : null;
+    if (!buf && list.length > 0) {
+      this._loadClip(list[0]);
+    }
+
+    if (buf) {
+      const rate = 0.94 + Math.random() * 0.06; // human-paced rate
+      const clipDur = Math.min(maxPlaySec, Math.max(fadeInSec + fadeOutSec + 0.15, buf.duration / rate));
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = rate;
+
+      // Soften high-frequency digital harshness so breaths sound natural and organic
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 2600;
+
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(peakVol, now + fadeInSec);
+      const fadeOutStart = Math.max(now + fadeInSec + 0.05, now + clipDur - fadeOutSec);
+      gain.gain.setValueAtTime(peakVol, fadeOutStart);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + clipDur);
+
+      src.connect(lp).connect(gain).connect(this._getBusInput());
+      src.start(now);
+      src.stop(now + clipDur + 0.04);
+
+      this._lastPantMs = nowMs;
+      this._pantCooldownUntilMs = nowMs + clipDur * 1000 + postStopCooldownMs;
+      return true;
+    }
+
+    // Procedural organic fallback: two soft low-passed exhales with natural fade in/out
+    if (this.noiseBuffer) {
+      const dur = 2.2;
+      const src = ctx.createBufferSource();
+      src.buffer = this.noiseBuffer;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 540;
+      bp.Q.value = 1.4;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(peakVol * 0.45, now + fadeInSec);
+      gain.gain.setValueAtTime(peakVol * 0.35, now + dur - fadeOutSec);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+      src.connect(bp).connect(gain).connect(this._getBusInput());
+      src.start(now);
+      src.stop(now + dur + 0.04);
+
+      this._lastPantMs = nowMs;
+      this._pantCooldownUntilMs = nowMs + dur * 1000 + postStopCooldownMs;
+      return true;
+    }
+
+    return false;
   }
 
   /** Loud sprint steps, grounded walk steps, near-silent crouch sneak steps. */

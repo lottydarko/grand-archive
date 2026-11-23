@@ -99,6 +99,22 @@ export const ITEM_CATALOG = {
     maxStack: 1,
     kind: 'weapon',
   },
+  pistol_pickup: {
+    id: 'pistol_pickup',
+    name: 'glock 19',
+    tag: 'weapon',
+    description: '9mm sidearm. joins the arsenal only once recovered in the field.',
+    maxStack: 1,
+    kind: 'weapon',
+  },
+  glock_pickup: {
+    id: 'glock_pickup',
+    name: 'glock 19',
+    tag: 'weapon',
+    description: '9mm sidearm. joins the arsenal only once recovered in the field.',
+    maxStack: 1,
+    kind: 'weapon',
+  },
   red_shells: {
     id: 'red_shells',
     name: 'red shell box',

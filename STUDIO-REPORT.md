@@ -1612,6 +1612,69 @@ All 14 Level One sequence tests passed!
 ✔ Vite Production Build: 78 modules transformed, built in 12.36s
 ```
 
+---
+
+# PLAYTEST FIX ROUND CHECKPOINT (ALL 7 ITEMS)
+
+**Prepared for:** Lotty (Creator), via Muse (Manager)
+**Status:** All 7 playtest fixes implemented and regression-tested (`7/7` new regression tests PASS; `86/88` full suite PASS; `vite build` PASS).
+
+## 1. Changes Implemented (Items 1–7)
+
+1. **PISTOL PICKUP-ONLY (`src/player/weapons.js`, `src/player/weaponCycler.js`, `src/player/inventoryLogic.js`, `src/world/pickups.js`, `src/main.js`)**
+   - Added explicit `pistolOwned` flag (default `false` in constructor, `setLoadout`, and `reset()`).
+   - Removed Glock from all starting loadouts (`level1` and `standard`) and from `WeaponCycler` until owned (`getOwnedCycleList()`).
+   - Removed startup loading/mounting of `heroes/glock` from `_loadHeroWeaponModels()`; added lazy `_loadHeroGlockIfOwned()` triggered ONLY when `unlockWeapon('glock')` runs upon collecting a `pistol_pickup` / `glock_pickup`.
+   - Guarded `equip('glock')`, `startReload`, `triggerPrimary`, `_fireGlock`, `act.equipGlock`, HUD labels, and `body.dataset` so Glock never renders, mounts, or appears in weapon UI prior to pickup.
+   - Added `pistol_pickup` / `glock_pickup` to `ITEM_CATALOG`, `world/pickups.js`, `applyPickupEffect()`, and `GRAB_PICKUPS`.
+
+2. **SWORD SAME RULE (`src/player/weapons.js`, `src/player/weaponCycler.js`, `src/main.js`)**
+   - Added explicit `swordOwned` flag (default `false` in constructor, `setLoadout`, and `reset()`).
+   - Removed Sword from starting loadout and `WeaponCycler` until granted by collecting the Barrel Room `sword_pickup` (rolled out on destroying the barrel).
+   - Guarded `equip('sword')`, `triggerSwordSlash()`, and HUD/dataset readouts on `swordOwned && weaponsUnlocked.sword`.
+   - Verified `LionBoss.takeDamage` sword-smite kill rule remains untouched and works identically once the sword is granted.
+
+3. **WEAPONS CLUSTERED (`src/player/weapons.js`)**
+   - Hardened `_syncVisibility()` so ONLY the single active AND owned weapon viewmodel is `visible = true`; all other weapon viewmodels (`shotgunGroup`, `swordGroup`, `knifeGroup`, `glockGroup`, `_heroGlockHandMount`, `_standaloneGlockPivot`, `_armsRefGlockMesh`) are explicitly forced `visible = false` on every equip, swap, cycler frame, holster toggle, reset, and async GLB load.
+   - When hero Glock is mounted on arms (`_heroGlockHandMount`), `glockGroup` is forced `visible = false` so it can never double-render.
+   - Also fixed undeclared `holoReticleMesh` in `balistucia.glb` scene traversal.
+
+4. **MISSING WALLS (`src/world/library.js`, `src/world/levelOneSpiral.js`)**
+   - **Museum Hall North Portal (`library.js`)**: Narrowed `portalHalfW` from `3.2 m` to `2.0 m` so Hall north wall meshes and colliders join White Aether (`4×8 m`, `X ∈ [-2, +2]`) and `portalGateMesh` flush with zero `1.0 m` side gaps.
+   - **Level One Castle & West Return Stair (`levelOneSpiral.js`)**: Rebuilt all castle/stair walls via a unified `addSealedWall()` helper that ALWAYS creates BOTH a visible `THREE.Mesh` AND an identical `staticColliders` entry (logged in `corridor.wallAudit`):
+     - Sealed Room 2 south step-in wings (`Room2SouthWest`, `Room2SouthEast`) with colliders as well as meshes (eliminating 1 m corner slip-through gaps).
+     - Added full ceilings (`AetherCeiling`, `BarrelRoomCeiling`, `Room2Ceiling`, `MazeOneCeiling`, `ReturnConnectorCeiling`, `WestStairCeiling`, `AetherWest*Ceiling`) and doorway lintels.
+     - Aligned `MazeWallWest` flush at `X ∈ [-15.0, -14.5]` with `WestStairInnerLion` and `WestStairInnerSouth`.
+     - Built a fully sealed West Return Stair dogleg through Aether's west flank (`Z ∈ [7, 15]`, connecting `X ∈ [-17, -15]` → east jog `Z ∈ [10, 12]` → Hall NW doorway `X ∈ [-12, -10], Z = 7`) with BOTH visible meshes and colliders on every face.
+
+5. **ENEMIES HOVERING (`src/entities/enemies.js`, `src/entities/lionAndGhoulController.js`)**
+   - Upgraded `_attachZombieGlb`, `_attachGhostGlb`, `MazeOneGhoul.attachGlbModel`, and `LionBoss.attachGlbModel` to two-pass post-scale `Box3` grounding (`min.y === 0`).
+   - Removed upward hover lifts (`+0.12` on Ghost GLB, `0.24 + sin * 0.14` in `_updateGhost`, procedural ghost cloak `y = 0.14` → `0.0`, procedural zombie legs `0.4` → `0.39`, and `+0.07` / `+0.03` / sine hover in `MazeOneGhoul._animateGlb`).
+   - Guarded `import.meta.glob` in `enemies.js` for Node test runner compatibility.
+
+6. **PANTING (`src/player/staminaLogic.js`, `src/audio/sfx.js`, `src/main.js`)**
+   - Enforced `PANT_MIN_SPRINT_SEC = 4.0`, `PANT_DURATION_SEC = 2.6`, and `PANT_COOLDOWN_SEC = 30.0` in `staminaLogic.js`.
+   - Added `pantPlayRemaining` so the `>= 30.0 s` cooldown begins ticking strictly AFTER active panting finishes.
+   - Gated exhaustion panting on `sprintRunTime >= 4.0 s` so walking, sprint start, and short sprints never pant.
+   - Removed the direct `sfx.playPanting(1.0)` bypass on out-of-breath shove in `src/main.js`, and removed `panting-01.mp3` from `crawlGrunt` in `src/audio/sfx.js`.
+   - Rewrote `sfx.playPanting()` with smooth `GainNode` fade-in (`0.42 s`) / fade-out (`0.75 s`) envelopes and `>= 30,000 ms` post-stop cooldown (`_pantCooldownUntilMs`).
+
+7. **DISC COUNT (`src/game/levelOneSequence.js`, `src/main.js`)**
+   - Added `enter_maze_one` transition and removed the fragile `step === MAZE_ONE` guard from `collect_maze_disc` so collecting a maze disc always increments `mazeDiscsCollected` (`0 → 1 → 2 → 3`) and unlocks `mazeExitUnlocked = true` + `line11` VO on the 3rd disc.
+   - Added `#disc-counter-wrap` / `#disc-counter-label` (`discs X / 3`) to `#playing-hud`, synced `body.dataset.mazeDiscs` / `mazeDiscsRequired` / `mazeExitOpen` and `__archiveTest.getState()`.
+   - Fixed dead-closure `hudDirty` bug in `applyPickupEffect()` by invoking `updateHudReadouts()` directly inside `applyPickupEffect()` so async grab `onClose` callbacks immediately update the HUD.
+   - Wired `mazeExitOpen` at the 3-disc trap-door gate to check `levelOneState.mazeExitUnlocked && levelOneState.mazeDiscsCollected >= levelOneState.mazeDiscsRequired`.
+
+## 2. Verification Results & Missing Sandbox Items
+
+- **New Regression Suite (`node --test src/game/playtestFixes.test.mjs`)**: **7 / 7 PASS** (0 fail, 0 skipped).
+- **Updated Test (`src/player/weaponsFlashlight.test.mjs`)**: **6 / 6 PASS** (updated standard loadout Glock test to unlock pistol via pickup first).
+- **Full Unit Test Suite (23 files, 88 tests)**: **86 / 88 PASS**, **2 FAIL** — solely `src/player/fpsArmsV8.test.mjs` (lines 19 & 29), which asserts `public/models/heroes/fps_arms.glb` exists on disk.
+- **Vite Production Build (`npx vite build`)**: **PASS** (`78 modules transformed`, `dist/index.html` 2.10 kB, `dist/assets/index-*.js` 1,230.72 kB, built in `1.03s`).
+- **Prebuild Asset Gate (`node src/engine/heroGlbGuard.check.mjs`)**: **BLOCKED in sandbox** (expected) — `public/` currently contains only `1` file (`public/data/player_quips.json`) and `assets/` contains `0` files because the 13 external hero GLBs (`knife.glb`, `zombie.glb`, `glock_slide.glb`, `glock_frame.glb`, `ghost.glb`, `ghoul.glb`, `lion.glb`, `glock.glb`, `fps_arms.glb`, `glock_magprop.glb`, `crt_terminal.glb`, `crt_deskset.glb`, `bat.glb`) are staged via `link_assets.py` on the local build machine and are not committed to the repo. No fake/placeholder assets were fabricated.
+- **Git Push to `main`**: **NOT EXECUTABLE IN SANDBOX** — `git status` reports `fatal: not a git repository (or any of the parent directories): .git`. Stage assets with `link_assets.py`, re-run `npm run build` + `node --test`, and run `git push origin main` from the host Git repository checkout.
+
+
 
 
 

@@ -21,10 +21,13 @@ import { LionBoss, MazeOneGhoul, validateEnemyDamage } from './lionAndGhoulContr
 import { getSpiralMazeLayout, LEVEL_ONE_SPAWNS } from '../world/levelOneSpiral.js';
 
 // Zero-404 auto-discovery of Mixamo FBX animation clips dropped into public/animations/
-const DISCOVERED_FBX_MODULES = import.meta.glob('/public/animations/*.fbx', {
-  query: '?url',
-  import: 'default',
-});
+const DISCOVERED_FBX_MODULES =
+  typeof import.meta.glob === 'function'
+    ? import.meta.glob('/public/animations/*.fbx', {
+        query: '?url',
+        import: 'default',
+      })
+    : {};
 
 /**
  * Enemy AI, Rigged 3D Models, 5-State Zombie Animation Machine, Pooled Blood FX,
@@ -354,17 +357,24 @@ export class EnemyManager {
   _attachZombieGlb(enemy) {
     if (!this._zombieGltf || enemy.hasGlbModel) return;
     const cloned = SkeletonUtils.clone(this._zombieGltf.scene);
-    const box = new THREE.Box3().setFromObject(cloned);
-    const size = new THREE.Vector3();
-    const center = new THREE.Vector3();
-    box.getSize(size);
-    box.getCenter(center);
+    const inner = new THREE.Group();
+    inner.add(cloned);
+    inner.updateMatrixWorld(true);
+    const rawBox = new THREE.Box3().setFromObject(inner);
+    const rawSize = new THREE.Vector3();
+    rawBox.getSize(rawSize);
 
     const targetH = enemy.variant === 'sprinter' ? 1.68 : 1.84;
-    const scale = targetH / Math.max(size.y, 0.01);
+    const scale = targetH / Math.max(rawSize.y, 0.01);
+    inner.scale.setScalar(scale);
+    inner.updateMatrixWorld(true);
+    const groundedBox = new THREE.Box3().setFromObject(inner);
+    const groundedCenter = new THREE.Vector3();
+    groundedBox.getCenter(groundedCenter);
+    inner.position.set(-groundedCenter.x, -groundedBox.min.y, -groundedCenter.z);
+
     const holder = new THREE.Group();
-    cloned.scale.setScalar(scale);
-    cloned.position.set(-center.x * scale, -box.min.y * scale, -center.z * scale);
+    holder.add(inner);
 
     // Capture mixamorig:* bones & rest Euler poses for organic procedural shamble/sway/flinch/collapse
     const bones = {};
@@ -391,8 +401,6 @@ export class EnemyManager {
         }
       }
     });
-
-    holder.add(cloned);
 
     // Keep invisible raycast hitboxes aligned cleanly over the sculpted zombie torso & head
     for (const child of enemy.bodyRig.children) {
@@ -429,25 +437,31 @@ export class EnemyManager {
   _attachGhostGlb(enemy) {
     if (!this._ghostGltf || enemy.hasGlbModel) return;
     const cloned = this._ghostGltf.scene.clone(true);
-    const box = new THREE.Box3().setFromObject(cloned);
-    const size = new THREE.Vector3();
-    const center = new THREE.Vector3();
-    box.getSize(size);
-    box.getCenter(center);
+    const inner = new THREE.Group();
+    inner.add(cloned);
+    inner.updateMatrixWorld(true);
+    const rawBox = new THREE.Box3().setFromObject(inner);
+    const rawSize = new THREE.Vector3();
+    rawBox.getSize(rawSize);
 
     const targetH = 2.35;
-    const scale = targetH / Math.max(size.y, 0.01);
-    const holder = new THREE.Group();
-    cloned.scale.setScalar(scale);
-    cloned.position.set(-center.x * scale, 0.12 - box.min.y * scale, -center.z * scale);
+    const scale = targetH / Math.max(rawSize.y, 0.01);
+    inner.scale.setScalar(scale);
+    inner.updateMatrixWorld(true);
+    const groundedBox = new THREE.Box3().setFromObject(inner);
+    const groundedCenter = new THREE.Vector3();
+    groundedBox.getCenter(groundedCenter);
+    // Grounded strictly at floor Y = 0 (zero hover lift)
+    inner.position.set(-groundedCenter.x, -groundedBox.min.y, -groundedCenter.z);
 
+    const holder = new THREE.Group();
     cloned.traverse((child) => {
       if (child.isMesh) {
         child.material = enemy.outerShroudMat;
         child.renderOrder = 8;
       }
     });
-    holder.add(cloned);
+    holder.add(inner);
 
     const invisibleHitMat = new THREE.MeshBasicMaterial({
       transparent: true,
@@ -523,7 +537,7 @@ export class EnemyManager {
       new THREE.Vector2(0.27, 1.62),
       new THREE.Vector2(0.42, 1.05),
       new THREE.Vector2(0.54, 0.48),
-      new THREE.Vector2(0.46, 0.14),
+      new THREE.Vector2(0.46, 0.0),
     ];
     this.ghostCloakGeo = new THREE.LatheGeometry(lathePts, 18);
   }
@@ -746,9 +760,9 @@ export class EnemyManager {
 
     const legGeo = new THREE.BoxGeometry(0.16, 0.78, 0.18);
     const leftLeg = new THREE.Mesh(legGeo, coatMat);
-    leftLeg.position.set(-0.14, 0.4, 0);
+    leftLeg.position.set(-0.14, 0.39, 0);
     const rightLeg = new THREE.Mesh(legGeo, coatMat);
-    rightLeg.position.set(0.14, 0.4, 0);
+    rightLeg.position.set(0.14, 0.39, 0);
 
     const torso = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.82, 0.34), coatMat);
     torso.position.set(0, 1.12, 0.05);
@@ -1539,9 +1553,9 @@ export class EnemyManager {
       z.alerted = true;
     }
 
-    // Idle state (player sneaking quietly out of detection range)
+    // Idle state (player sneaking quietly out of detection range) — feet stay grounded at Y = 0
     if (z.animState === ZOMBIE_STATES.IDLE && z.staggerTimer <= 0) {
-      z.bodyRig.position.y = Math.sin(elapsed * 1.6 + z.id) * 0.015;
+      z.bodyRig.position.y = 0;
       this._animateZombieMixamoBones(z, elapsed, dt);
       return;
     }
@@ -1654,7 +1668,7 @@ export class EnemyManager {
     z.leftArm.rotation.x = Math.sin(z.gaitPhase * 0.5) * 0.16;
     z.rightArm.rotation.x = -Math.sin(z.gaitPhase * 0.5) * 0.16;
     z.headGroup.rotation.z = Math.sin(z.gaitPhase * 0.5) * 0.14;
-    z.bodyRig.position.y = Math.abs(swing) * 0.055;
+    z.bodyRig.position.y = 0; // Keep feet strictly grounded at floor Y = 0
     z.bodyRig.rotation.z = Math.sin(z.gaitPhase) * 0.065;
 
     this._animateZombieMixamoBones(z, elapsed, dt);
@@ -1691,7 +1705,10 @@ export class EnemyManager {
     while (dYaw < -Math.PI) dYaw += Math.PI * 2;
     g.group.rotation.y += dYaw * Math.min(1, dt * 3.8);
 
-    g.bodyRig.position.y = 0.24 + Math.sin(elapsed * 1.85 + g.floatPhase) * 0.14;
+    // Grounded strictly at floor Y = 0 (zero hover above floor); eerie sway via subtle roll & wisps
+    g.group.position.y = 0;
+    g.bodyRig.position.y = 0;
+    g.bodyRig.rotation.z = Math.sin(elapsed * 1.55 + g.floatPhase) * 0.04;
     for (let w = 0; w < g.wisps.length; w++) {
       g.wisps[w].rotation.z = Math.sin(elapsed * 3.2 + g.floatPhase + w * 2.1) * 0.24;
     }

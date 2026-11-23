@@ -238,6 +238,11 @@ hudRoot.innerHTML = `
       <div id="floor-label" class="horror-text text-5xl text-[#e4c2b8] leading-none">floor 1</div>
     </div>
 
+    <!-- Top-Right Maze One Disc Counter (visible in Maze One / while collecting discs) -->
+    <div id="disc-counter-wrap" class="fixed top-7 right-8 text-right hidden">
+      <div id="disc-counter-label" class="horror-text text-3xl text-[#e4d5b9] leading-none">discs 0 / 3</div>
+    </div>
+
     <!-- Center-Lower Contextual Interact / Climb / Crawl Prompt -->
     <div id="interact-prompt" class="fixed bottom-28 left-1/2 -translate-x-1/2 text-center opacity-0 transition-opacity duration-150">
       <span id="interact-text" class="horror-text text-4xl text-[#efe7d8]"></span>
@@ -358,6 +363,8 @@ const dom = {
   crosshair: document.getElementById('crosshair'),
   floorWrap: document.getElementById('floor-wrap'),
   floorLabel: document.getElementById('floor-label'),
+  discCounterWrap: document.getElementById('disc-counter-wrap'),
+  discCounterLabel: document.getElementById('disc-counter-label'),
   interactPrompt: document.getElementById('interact-prompt'),
   interactText: document.getElementById('interact-text'),
   whisperBanner: document.getElementById('whisper-banner'),
@@ -881,21 +888,40 @@ function handleDropInventorySlot(slotIndex) {
   updateHudReadouts();
 }
 
+function getDisplayWeaponName() {
+  if (!weapons) return 'unarmed';
+  const w = weapons.activeWeapon;
+  if (w === 'glock' && !(weapons.pistolOwned && weapons.weaponsUnlocked?.glock)) return 'unarmed';
+  if (w === 'sword' && !(weapons.swordOwned && weapons.weaponsUnlocked?.sword)) return 'unarmed';
+  return w || 'unarmed';
+}
+
 function syncBodyDataset() {
+  const displayWeapon = getDisplayWeaponName();
   document.body.dataset.state = gameState.phase;
   document.body.dataset.mode = transformer ? transformer.mode : 'exploration';
   document.body.dataset.floor = transformer ? String(transformer.floor) : '0';
   document.body.dataset.hp = String(Math.round(gameState.hp));
-  document.body.dataset.weapon = weapons ? weapons.activeWeapon : 'unarmed';
+  document.body.dataset.weapon = displayWeapon;
+  document.body.dataset.pistolOwned = weapons && weapons.pistolOwned ? 'true' : 'false';
+  document.body.dataset.swordOwned = weapons && weapons.swordOwned ? 'true' : 'false';
   document.body.dataset.ammo = weapons
-    ? weapons.activeWeapon === 'shotgun'
+    ? displayWeapon === 'shotgun'
       ? `${weapons.shotgunAmmoInMag}/${weapons.shotgunReserve}`
-      : weapons.activeWeapon === 'glock'
+      : displayWeapon === 'glock'
         ? `${weapons.ammoInMag}/${weapons.reserveAmmo}`
-        : weapons.activeWeapon === 'sword' || weapons.activeWeapon === 'knife'
+        : displayWeapon === 'sword' || displayWeapon === 'knife'
           ? 'blade'
           : 'unarmed'
     : 'unarmed';
+  document.body.dataset.mazeDiscs = levelOneState ? String(levelOneState.mazeDiscsCollected || 0) : '0';
+  document.body.dataset.mazeDiscsRequired = levelOneState ? String(levelOneState.mazeDiscsRequired || 3) : '3';
+  document.body.dataset.mazeExitOpen =
+    levelOneState &&
+    levelOneState.mazeExitUnlocked &&
+    levelOneState.mazeDiscsCollected >= levelOneState.mazeDiscsRequired
+      ? 'true'
+      : 'false';
   document.body.dataset.trapdoor =
     transformer && transformer.trapdoorOpenAmount > 0.5 ? 'open' : 'closed';
   document.body.dataset.inventory = gameState.phase === 'inventory' ? 'open' : 'closed';
@@ -928,22 +954,23 @@ function updateHudReadouts() {
   }
 
   if (weapons) {
-    if (weapons.activeWeapon === 'unarmed') {
+    const displayWeapon = getDisplayWeaponName();
+    if (displayWeapon === 'unarmed') {
       dom.ammoMain.textContent = '';
       dom.weaponLabel.textContent = 'unarmed';
     } else if (weapons.holstered) {
       dom.ammoMain.textContent = 'holstered';
       dom.weaponLabel.textContent =
-        weapons.activeWeapon === 'shotgun' ? 'balistucia' : weapons.activeWeapon;
-    } else if (weapons.activeWeapon === 'shotgun') {
+        displayWeapon === 'shotgun' ? 'balistucia' : displayWeapon;
+    } else if (displayWeapon === 'shotgun') {
       dom.ammoMain.textContent = weapons.reloading
         ? 'reloading...'
         : `${weapons.shotgunAmmoInMag} / ${weapons.shotgunReserve}`;
       dom.weaponLabel.textContent = 'balistucia';
-    } else if (weapons.activeWeapon === 'sword') {
+    } else if (displayWeapon === 'sword') {
       dom.ammoMain.textContent = 'blade';
       dom.weaponLabel.textContent = 'sword';
-    } else if (weapons.activeWeapon === 'glock') {
+    } else if (displayWeapon === 'glock') {
       dom.ammoMain.textContent = weapons.reloading
         ? 'reloading...'
         : `${weapons.ammoInMag} / ${weapons.reserveAmmo}`;
@@ -951,6 +978,23 @@ function updateHudReadouts() {
     } else {
       dom.ammoMain.textContent = 'blade';
       dom.weaponLabel.textContent = 'knife';
+    }
+  }
+
+  if (dom.discCounterWrap && dom.discCounterLabel) {
+    const inMaze =
+      (levelOneZones && levelOneZones.currentZone === LEVEL_ONE_ZONES.MAZE_ONE) ||
+      (levelOneState &&
+        (levelOneState.step === LEVEL_ONE_STEPS.MAZE_ONE ||
+          levelOneState.step === LEVEL_ONE_STEPS.MAZE_ONE_DISCS_ACQUIRED));
+    const collected = levelOneState ? levelOneState.mazeDiscsCollected || 0 : 0;
+    const required = levelOneState ? levelOneState.mazeDiscsRequired || 3 : 3;
+    const showDiscHud =
+      Boolean(levelOneState && !levelOneState.levelCompleted) &&
+      (inMaze || collected > 0);
+    dom.discCounterWrap.classList.toggle('hidden', !showDiscHud);
+    if (showDiscHud) {
+      dom.discCounterLabel.textContent = `discs ${collected} / ${required}`;
     }
   }
 
@@ -1352,7 +1396,13 @@ window.__archiveTest = {
     cameraPos: camera.position.toArray(),
     cameraRot: [camera.rotation.x, camera.rotation.y, camera.rotation.z],
     armsLoaded: weapons ? weapons.armsLoaded : false,
+    activeWeapon: getDisplayWeaponName(),
+    pistolOwned: weapons ? Boolean(weapons.pistolOwned) : false,
+    swordOwned: weapons ? Boolean(weapons.swordOwned) : false,
     glockMounted: weapons ? weapons._mountedGlockOnArms : false,
+    mazeDiscsCollected: levelOneState ? levelOneState.mazeDiscsCollected : 0,
+    mazeDiscsRequired: levelOneState ? levelOneState.mazeDiscsRequired : 3,
+    mazeExitUnlocked: levelOneState ? Boolean(levelOneState.mazeExitUnlocked) : false,
     ammo: weapons ? `${weapons.ammoInMag}/${weapons.reserveAmmo}` : '15/60',
     bloodPoolCount: enemies ? enemies.bloodPools.length : 0,
     bloodPoolScales: enemies ? enemies.bloodPools.map((bp) => Number(bp.mesh.scale.x.toFixed(2))) : [],
@@ -1770,6 +1820,11 @@ async function bootstrap() {
           showWhisper('claim Balistucia — shoot the barrel', 3.0);
         }
       } else if (zoneId === LEVEL_ONE_ZONES.MAZE_ONE) {
+        if (levelOneState) {
+          const mazeRes = advanceLevelOne(levelOneState, 'enter_maze_one');
+          levelOneState = mazeRes.state;
+          playLevelOneEvents(mazeRes.events);
+        }
         if (!levelOneSpawnFlags.mazeOnePopulated) {
           levelOneSpawnFlags.mazeOnePopulated = true;
           enemies.spawnMazeOnePopulation();
@@ -1784,8 +1839,8 @@ async function bootstrap() {
               worldItems.spawn('red_shells', ammo.x, 0, ammo.z, 6);
             }
           }
-          updateHudReadouts();
         }
+        updateHudReadouts();
       }
     },
     canTriggerBoss: () => {
@@ -2002,7 +2057,9 @@ function stepSimulation(dt) {
       (levelOneState.weaponsUnlocked?.sword || levelOneState.swordPickedUp)
   );
   const mazeExitOpen = Boolean(
-    levelOneState && levelOneState.mazeExitUnlocked
+    levelOneState &&
+      levelOneState.mazeExitUnlocked &&
+      levelOneState.mazeDiscsCollected >= levelOneState.mazeDiscsRequired
   );
   const room2NorthLocked = Boolean(
     levelOneSpawnFlags.room2Triggered &&
@@ -2351,11 +2408,10 @@ function stepSimulation(dt) {
         controls.addTrauma(hitShove ? 0.28 : 0.14);
         hudDirty = true;
       } else {
-        sfx.playPanting(1.0);
         showWhisper('out of breath', 1.4);
       }
     }
-    if (act.equipGlock) {
+    if (act.equipGlock && weapons.pistolOwned) {
       weapons.equip('glock');
       hudDirty = true;
     }
@@ -2434,12 +2490,24 @@ function stepSimulation(dt) {
           worldItems.removeById(interactable.id);
           sfx.playAmmoPickup();
           if (levelOneState) {
-            levelOneState = advanceLevelOne(levelOneState, 'collect_maze_disc').state;
+            const res = advanceLevelOne(levelOneState, 'collect_maze_disc');
+            levelOneState = res.state;
+            playLevelOneEvents(res.events);
+            const collected = levelOneState.mazeDiscsCollected;
+            const required = levelOneState.mazeDiscsRequired;
             showWhisper(
-              `maze disc ${levelOneState.mazeDiscsCollected}/${levelOneState.mazeDiscsRequired}`,
-              2.4
+              levelOneState.mazeExitUnlocked
+                ? `maze disc ${collected}/${required} — north trap-door unsealed`
+                : `maze disc ${collected}/${required}`,
+              2.6
             );
           }
+          hudDirty = true;
+        } else if (interactable.itemId === 'pistol_pickup' || interactable.itemId === 'glock_pickup') {
+          worldItems.removeById(interactable.id);
+          sfx.playAmmoPickup();
+          weapons.unlockWeapon('glock');
+          showWhisper('acquired glock 19', 2.6);
           hudDirty = true;
         } else if (interactable.itemId === 'shotgun_pickup') {
           worldItems.removeById(interactable.id);
@@ -2491,6 +2559,8 @@ function stepSimulation(dt) {
             showWhisper('satchel is full — drop something [tab]', 2.6);
           }
         }
+        // Flush HUD immediately so async grab onClose callbacks update weapon, ammo, and disc counters.
+        updateHudReadouts();
       };
 
       // Hero pickups play the unskippable first-person grab (Stage 4 Slot 2);
@@ -2501,6 +2571,8 @@ function stepSimulation(dt) {
         golden_vinyl: { profile: 'fast', pose: 'discPinch' },
         level_disc: { profile: 'fast', pose: 'discPinch' },
         maze_disc: { profile: 'fast', pose: 'discPinch' },
+        pistol_pickup: { profile: 'fast', pose: 'gripWrap' },
+        glock_pickup: { profile: 'fast', pose: 'gripWrap' },
         shotgun_pickup: { profile: 'fast', pose: 'gripWrap' },
         sword_pickup: { profile: 'fast', pose: 'swordGrip' },
         darko_drink: { profile: 'fast', pose: 'canGrip' },

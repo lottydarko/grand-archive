@@ -366,25 +366,44 @@ export function advanceLevelOne(state, event, payload = {}) {
       break;
     }
 
-    case 'collect_maze_disc': {
+    case 'enter_maze_one': {
       if (
-        next.step === LEVEL_ONE_STEPS.MAZE_ONE ||
-        next.step === LEVEL_ONE_STEPS.MAZE_ONE_DISCS_ACQUIRED
+        next.step !== LEVEL_ONE_STEPS.MAZE_ONE &&
+        next.step !== LEVEL_ONE_STEPS.MAZE_ONE_DISCS_ACQUIRED &&
+        next.step !== LEVEL_ONE_STEPS.AETHER_LION_ENCOUNTER &&
+        next.step !== LEVEL_ONE_STEPS.GOLDEN_VINYL_CLAIMED &&
+        next.step !== LEVEL_ONE_STEPS.RETURN_TO_HALL &&
+        next.step !== LEVEL_ONE_STEPS.LEVEL_ONE_COMPLETE
       ) {
-        const amount = Math.max(1, payload.count || 1);
+        next.step = LEVEL_ONE_STEPS.MAZE_ONE;
+        events.push({ type: 'maze_one_started' });
+      }
+      break;
+    }
+
+    case 'collect_maze_disc': {
+      const amount = Math.max(1, payload.count || 1);
+      if (next.mazeDiscsCollected < next.mazeDiscsRequired) {
         next.mazeDiscsCollected = Math.min(next.mazeDiscsRequired, next.mazeDiscsCollected + amount);
         events.push({
           type: 'maze_disc_collected',
           collected: next.mazeDiscsCollected,
           required: next.mazeDiscsRequired,
         });
-        if (next.mazeDiscsCollected >= next.mazeDiscsRequired) {
+      }
+      if (next.mazeDiscsCollected >= next.mazeDiscsRequired) {
+        if (
+          next.step !== LEVEL_ONE_STEPS.AETHER_LION_ENCOUNTER &&
+          next.step !== LEVEL_ONE_STEPS.GOLDEN_VINYL_CLAIMED &&
+          next.step !== LEVEL_ONE_STEPS.RETURN_TO_HALL &&
+          next.step !== LEVEL_ONE_STEPS.LEVEL_ONE_COMPLETE
+        ) {
           next.step = LEVEL_ONE_STEPS.MAZE_ONE_DISCS_ACQUIRED;
-          if (!next.mazeExitUnlocked) {
-            next.mazeExitUnlocked = true;
-            queueVo('line11'); // maze-end door
-            events.push({ type: 'maze_exit_unlocked' });
-          }
+        }
+        if (!next.mazeExitUnlocked) {
+          next.mazeExitUnlocked = true;
+          queueVo('line11'); // maze-end door
+          events.push({ type: 'maze_exit_unlocked' });
         }
       }
       break;

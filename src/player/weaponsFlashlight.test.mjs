@@ -221,8 +221,9 @@ test('viewmodel arms: reparented to weapons.root (OUT of glockGroup), visible ac
   weapons.equip('sword');
   assert.strictEqual(weapons.armsRoot.visible, true, 'Arms visible with sword');
 
-  // 4. Standard - glock
+  // 4. Standard - glock (pickup-only: must unlock first)
   weapons.setLoadout('standard');
+  weapons.unlockWeapon('glock');
   weapons.equip('glock');
   assert.strictEqual(weapons.armsRoot.visible, true, 'Arms visible with glock');
 

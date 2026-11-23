@@ -239,6 +239,33 @@ export class WorldItemManager {
       hilt.rotation.x = Math.PI / 2;
       hilt.position.set(0, 0.08, 0.29);
       visual.add(blade, guard, hilt);
+    } else if (itemId === 'pistol_pickup' || itemId === 'glock_pickup') {
+      const slideMat = new THREE.MeshStandardMaterial({ color: 0x20232a, roughness: 0.36, metalness: 0.72 });
+      const gripMat = new THREE.MeshStandardMaterial({ color: 0x16171a, roughness: 0.78, metalness: 0.12 });
+      const fallbackGroup = new THREE.Group();
+      const slide = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.042, 0.21), slideMat);
+      slide.position.set(0, 0.11, 0);
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.11, 0.052), gripMat);
+      grip.position.set(0, 0.055, 0.065);
+      grip.rotation.x = 0.24;
+      fallbackGroup.add(slide, grip);
+      visual.add(fallbackGroup);
+      tryLoadModel('heroes/glock', { castShadow: false, receiveShadow: true }).then((gltf) => {
+        if (!gltf || !gltf.scene) return;
+        const m = gltf.scene.clone(true);
+        m.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(m);
+        const size = new THREE.Vector3();
+        const center = new THREE.Vector3();
+        box.getSize(size);
+        box.getCenter(center);
+        const longest = Math.max(size.x, size.y, size.z, 0.01);
+        const scale = 0.26 / longest;
+        m.scale.setScalar(scale);
+        m.position.set(-center.x * scale, 0.06 - box.min.y * scale, -center.z * scale);
+        fallbackGroup.visible = false;
+        visual.add(m);
+      });
     } else if (itemId === 'red_shells' || itemId === 'shotgun_ammo') {
       visual.add(createRedShellsBoxPickupMesh());
     } else {

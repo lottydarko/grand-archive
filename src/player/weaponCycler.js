@@ -97,25 +97,24 @@ export class WeaponCycler {
     return DRAW_SEC_DEFAULT;
   }
 
+  getOwnedCycleList() {
+    const unlocked = this.getUnlockedWeapons() || {};
+    const order =
+      this.loadout === 'level1'
+        ? ['shotgun', 'sword', 'glock']
+        : ['shotgun', 'sword', 'glock', 'knife'];
+    return order.filter((w) => Boolean(unlocked[w]));
+  }
+
   getIncomingTarget() {
-    const unlocked = this.getUnlockedWeapons();
-    if (this.loadout === 'level1') {
-      if (this.activeWeapon === 'shotgun') {
-        return unlocked.sword ? 'sword' : null;
-      }
-      if (this.activeWeapon === 'sword') {
-        return unlocked.shotgun ? 'shotgun' : null;
-      }
-      if (this.activeWeapon === 'unarmed') {
-        if (unlocked.shotgun) return 'shotgun';
-        if (unlocked.sword) return 'sword';
-      }
-      return null;
+    const owned = this.getOwnedCycleList();
+    if (owned.length === 0) return null;
+    if (this.activeWeapon === 'unarmed' || !owned.includes(this.activeWeapon)) {
+      return owned[0];
     }
-    // Standard loadout: glock <-> knife
-    if (this.activeWeapon === 'glock') return unlocked.knife ? 'knife' : null;
-    if (this.activeWeapon === 'knife') return unlocked.glock ? 'glock' : null;
-    return null;
+    if (owned.length < 2) return null;
+    const idx = owned.indexOf(this.activeWeapon);
+    return owned[(idx + 1) % owned.length];
   }
 
   requestSwap() {
