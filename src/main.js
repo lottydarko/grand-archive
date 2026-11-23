@@ -142,6 +142,11 @@ const flashlightCone = new THREE.Mesh(beamConeGeo, beamConeMat);
 flashlightCone.position.set(-0.2, -0.16, -0.45);
 flashlightCone.visible = false;
 camera.add(flashlightCone);
+// Temps for the per-frame cone-to-spotlight sync (one beam, see render loop)
+const _coneLightPos = new THREE.Vector3();
+const _coneTargetPos = new THREE.Vector3();
+const _coneDir = new THREE.Vector3();
+const _coneForward = new THREE.Vector3(0, 0, -1);
 
 // Fine airborne dust motes drifting inside the flashlight beam
 const beamMoteCount = 64;
@@ -1864,6 +1869,19 @@ function stepSimulation(dt) {
     dt
   );
   flashlightCone.visible = flashActive && flashlight.intensity > 2.0;
+  if (flashlightCone.visible) {
+    // ONE beam (Lotty, Nov 22, 2026): the volumetric cone must emit from the
+    // spotlight's real position toward its real target. The light lives under
+    // the shotgun barrel / in the hand anchor — not at the camera — so a
+    // camera-fixed cone reads as a second light inside the light.
+    flashlight.getWorldPosition(_coneLightPos);
+    flashlight.target.getWorldPosition(_coneTargetPos);
+    camera.worldToLocal(_coneLightPos);
+    camera.worldToLocal(_coneTargetPos);
+    _coneDir.copy(_coneTargetPos).sub(_coneLightPos).normalize();
+    flashlightCone.position.copy(_coneLightPos);
+    flashlightCone.quaternion.setFromUnitVectors(_coneForward, _coneDir);
+  }
   beamDustPoints.visible = flashlightCone.visible;
   if (beamDustPoints.visible) {
     const posAttr = beamMoteGeo.attributes.position;

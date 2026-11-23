@@ -11,6 +11,8 @@ export const EXHAUSTION_RECOVER_THRESHOLD = 35; // forced walk + panting until 3
 export const SHOVE_STAMINA_COST = 24;
 export const SPRINT_FOV_BONUS = 4.2; // +3 to +5 deg FOV kick while sprinting
 export const POST_SPRINT_BREATH_DURATION = 3.5; // 3-4 s heavy breathing decay
+export const PANT_MIN_SPRINT_SEC = 4.0; // panting audio only after a LONG continuous run (Lotty, Nov 22, 2026)
+export const PANT_COOLDOWN_SEC = 30; // ...and at most once per this window ("every once in a while")
 
 export function createStaminaState() {
   return {
@@ -20,6 +22,8 @@ export function createStaminaState() {
     exhausted: false,
     postSprintTimer: 0, // decays 3.5 -> 0 after sprinting for heavy breathing + panting sync
     pantingRequested: false,
+    sprintRunTime: 0, // continuous seconds spent sprinting (resets when sprinting stops)
+    pantCooldown: 0, // seconds until another panting audio trigger is allowed
   };
 }
 
@@ -37,6 +41,7 @@ export function updateStaminaState(
 ) {
   const wasSprinting = state.isSprinting;
   state.pantingRequested = false;
+  if (state.pantCooldown > 0) state.pantCooldown = Math.max(0, state.pantCooldown - dt);
 
   // Aiming or crouching forbids & cancels sprint immediately
   if (isAiming || isCrouching || !isMoving) {
@@ -50,6 +55,7 @@ export function updateStaminaState(
 
   if (wantsSprint && canSprint) {
     state.isSprinting = true;
+    state.sprintRunTime += dt;
     state.stamina = Math.max(0, state.stamina - SPRINT_DRAIN_PER_SEC * dt);
     state.postSprintTimer = Math.min(POST_SPRINT_BREATH_DURATION, state.postSprintTimer + dt * 1.4);
 
@@ -59,13 +65,28 @@ export function updateStaminaState(
       state.isSprinting = false;
       state.sprintToggled = false;
       state.postSprintTimer = POST_SPRINT_BREATH_DURATION;
-      state.pantingRequested = true;
+      // Full exhaustion is a "fuck ton of running" — pant, once per cooldown.
+      if (state.pantCooldown <= 0) {
+        state.pantingRequested = true;
+        state.pantCooldown = PANT_COOLDOWN_SEC;
+      }
+      state.sprintRunTime = 0;
     }
   } else {
     state.isSprinting = false;
-    if (wasSprinting && state.postSprintTimer < 2.2) {
-      state.postSprintTimer = POST_SPRINT_BREATH_DURATION;
-      state.pantingRequested = true;
+    if (wasSprinting) {
+      if (state.postSprintTimer < 2.2) {
+        state.postSprintTimer = POST_SPRINT_BREATH_DURATION;
+      }
+      // Panting AUDIO is rare (Lotty, Nov 22, 2026): only when a LONG
+      // continuous sprint ends, and only once per cooldown window. Short
+      // sprint bursts never pant; the viewmodel heave still uses
+      // postSprintTimer as before.
+      if (state.sprintRunTime >= PANT_MIN_SPRINT_SEC && state.pantCooldown <= 0) {
+        state.pantingRequested = true;
+        state.pantCooldown = PANT_COOLDOWN_SEC;
+      }
+      state.sprintRunTime = 0;
     }
 
     const regenRate = isMoving ? STAMINA_REGEN_WALK : STAMINA_REGEN_STILL;

@@ -767,12 +767,11 @@ export class PlayerControls {
     });
     this.isSprinting = stamRes.isSprinting;
 
-    // Trigger panting-01.mp3 when exhausted or decaying post-sprint heavy breathing
-    if (stamRes.pantingActive) {
-      const intensity = this.staminaState.exhausted
-        ? 1.0
-        : Math.min(1, this.staminaState.postSprintTimer / 3.5);
-      sfx.playPanting(intensity);
+    // Panting audio (Lotty, Nov 22, 2026): RARE — staminaLogic requests it
+    // only after a long continuous run or full exhaustion, once per 30 s
+    // cooldown. Never loop it off pantingActive again.
+    if (stamRes.pantingJustTriggered) {
+      sfx.playPanting(this.staminaState.exhausted ? 1.0 : 0.7);
     }
 
     // Stealth profile (quiet crouch sneak vs loud sprint)

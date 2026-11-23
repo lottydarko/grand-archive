@@ -481,6 +481,14 @@ export class WeaponSystem {
       }
     });
 
+    // The rig's built-in Glock19 is a posing reference ONLY — never a visible
+    // weapon. Hide it unconditionally (before any early return) so it can never
+    // leak into a loadout next to the equipped weapon (Lotty, Nov 22, 2026).
+    if (refGlockMesh) {
+      refGlockMesh.visible = false;
+      this._armsRefGlockMesh = refGlockMesh;
+    }
+
     if (!handBone) return;
 
     // Compute exact world-space bounding box of the rigged reference Glock19 in bind/idle pose
@@ -552,6 +560,13 @@ export class WeaponSystem {
       armsScene.traverse((child) => {
         if (child.isMesh) {
           child.frustumCulled = false;
+          // Hide the rig's built-in Glock19 reference mesh the moment the arms
+          // load — it is a posing reference, never a visible weapon, and must
+          // not depend on the hero-Glock mount succeeding (Lotty, Nov 22).
+          if (child.name && child.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === 'glock19') {
+            child.visible = false;
+            this._armsRefGlockMesh = child;
+          }
           const mats = Array.isArray(child.material) ? child.material : [child.material];
           for (const m of mats) {
             if (!m) continue;
@@ -1009,6 +1024,9 @@ export class WeaponSystem {
     if (this.shotgunGroup) this.shotgunGroup.visible = isShotgun;
     if (this.swordGroup) this.swordGroup.visible = isSword;
     if (this._heroGlockHandMount) this._heroGlockHandMount.visible = showGlock;
+    // The arms rig's built-in Glock19 reference mesh stays hidden in EVERY
+    // loadout — the hero hand mount is the only pistol that may ever show.
+    if (this._armsRefGlockMesh) this._armsRefGlockMesh.visible = false;
     if (this.armsRoot) this.armsRoot.visible = true;
   }
 

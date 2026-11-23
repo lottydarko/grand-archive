@@ -73,3 +73,42 @@ test('crouch-walk sneak shrinks zombie detection radius and prevents bat scatter
   assert.ok(sneak.zombieDetectRadius < walk.zombieDetectRadius);
   assert.ok(walk.zombieDetectRadius < sprint.zombieDetectRadius);
 });
+
+test('panting audio law (Lotty, Nov 22, 2026): rare — long runs only, once per cooldown', () => {
+  const step = (s, dt, sprinting) => {
+    s.sprintToggled = sprinting;
+    return updateStaminaState(s, dt, {
+      isMoving: true,
+      isAiming: false,
+      isCrouching: false,
+      sprintHold: sprinting,
+    });
+  };
+
+  // Short sprint burst (1.5 s) then stop -> NO panting
+  let s = createStaminaState();
+  for (let t = 0; t < 1.5; t += 0.1) step(s, 0.1, true);
+  let res = step(s, 0.1, false);
+  assert.equal(res.pantingJustTriggered, false, 'short sprint must not pant');
+
+  // Long continuous sprint (4.5 s) then stop -> panting fires once
+  s = createStaminaState();
+  for (let t = 0; t < 4.5; t += 0.1) step(s, 0.1, true);
+  res = step(s, 0.1, false);
+  assert.equal(res.pantingJustTriggered, true, 'long sprint stop must pant');
+
+  // Another long sprint right after -> cooldown blocks a second pant
+  for (let t = 0; t < 4.5; t += 0.1) step(s, 0.1, true);
+  res = step(s, 0.1, false);
+  assert.equal(res.pantingJustTriggered, false, 'cooldown must block repeat panting');
+
+  // Full exhaustion -> panting fires
+  s = createStaminaState();
+  let exhaustedRes = null;
+  for (let t = 0; t < 6 && !exhaustedRes; t += 0.1) {
+    const r = step(s, 0.1, true);
+    if (r.exhausted) exhaustedRes = r;
+  }
+  assert.ok(exhaustedRes, 'sprint to empty must exhaust');
+  assert.equal(exhaustedRes.pantingJustTriggered, true, 'exhaustion must pant');
+});
