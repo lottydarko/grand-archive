@@ -96,7 +96,7 @@ test('flashlight: swap to sword -> reparents to HandFlashlightAnchor, preserves 
   assert.strictEqual(weapons.flashlight.intensity, 0);
 
   // 3. Swap to sword (shotgun unequipped)
-  weapons.swap();
+  weapons.swap({ instant: true });
   assert.strictEqual(weapons.activeWeapon, 'sword');
   assert.strictEqual(weapons.flashlight.parent.name, 'HandFlashlightAnchor', 'Reparents to HandFlashlightAnchor');
 
@@ -110,7 +110,7 @@ test('flashlight: swap to sword -> reparents to HandFlashlightAnchor, preserves 
   assert.strictEqual(weapons.flashlight.intensity, 28, 'Intensity 28 in sword mount');
 
   // 6. Swap back to shotgun
-  weapons.swap();
+  weapons.swap({ instant: true });
   assert.strictEqual(weapons.activeWeapon, 'shotgun');
   assert.strictEqual(weapons.flashlight.parent.name, 'shotgun_root', 'Reparents back to shotgun_root');
   assert.strictEqual(weapons.flashlightOn, true, 'ON state preserved on swap back');

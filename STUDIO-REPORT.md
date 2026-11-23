@@ -803,3 +803,817 @@ SWORD EQUIPPED (SHOTGUN UNEQUIPPED):
 
 
 
+
+
+---
+
+# AUDIT REPORT: MUSE DIRECT PUSHES (COMMITS 1b6ceff & 6dc5199)
+
+**Date:** November 22, 2026  
+**Auditor:** Antigravity ("The Hands")  
+**Scope:** Verification of Muse's hero-model manifest additions, dynamic test updates, and prebuild gate wiring (`package.json`, `ASSET-PATHS.txt`, `heroGlbGuard.check.mjs`, `heroGlbGuard.test.mjs`).  
+**Directive:** Report only, no code changes this pass.
+
+---
+
+### 1. Git Pull & HEAD Verification
+- **Command:** `git pull origin main`
+- **Pushed Commits Integrated:**
+  - `1b6ceff`: `fix(1d): list ghoul.glb + lion.glb in ASSET-PATHS.txt; hero-model guard test reads the manifest (Muse)`
+  - `6dc5199`: `fix(build): wire hero-GLB guard into prebuild — missing enemy models now fail the build (Muse)`
+- **HEAD Hash:** `6dc519986c28bb7f3ed8c3e85564685c856413dc` (short: `6dc5199`)
+
+---
+
+### 2. Full Test Suite & Static Verification
+- **TypeScript Compiler (`npx tsc --noEmit`):**
+  - **Result:** **0 errors** (exit code 0).
+- **Unit Test Suite (`node --test`):**
+  - **Result:** **61 PASS / 0 FAIL (61 total tests)** across 18 test files (duration: 6.42s).
+  - Test count incremented from 60 to 61 due to Muse's new test case:
+    `✔ hero-GLB guard: wired into the build as a prebuild gate` in `src/engine/heroGlbGuard.test.mjs`.
+
+---
+
+### 3. Manifest (`ASSET-PATHS.txt`) & Dynamic Guard Test Verification
+- **`ASSET-PATHS.txt` Inspection:**
+  - **Line 232:** `public/models/heroes/ghoul.glb`
+  - **Line 233:** `public/models/heroes/lion.glb`
+  - Both enemy models are confirmed present in the build-time asset manifest.
+- **`src/engine/heroGlbGuard.test.mjs` Inspection:**
+  - Confirmed the test reads `ASSET-PATHS.txt` dynamically at runtime via `fs.readFileSync(manifestUrl, 'utf8')`.
+  - Filters paths matching `/^public\/models\/heroes\/.+\.glb$/`.
+  - Asserts that `ghoul.glb` and `lion.glb` are declared in the manifest rather than hardcoding static paths in the test body.
+  - Confirmed it asserts `checkHeroGlbInputs(heroGlbsFromManifest, 'public')` fails loudly when hero models are absent from `public/`.
+  - Confirmed it verifies `package.json` contains `"prebuild": "node src/engine/heroGlbGuard.check.mjs"`.
+
+---
+
+### 4. Build Gate Execution & Proof Audit (`npm run build`)
+
+#### Gate Behavior:
+Muse configured `package.json` with `"prebuild": "node src/engine/heroGlbGuard.check.mjs"`.
+Whenever `npm run build` is called, npm runs the `prebuild` lifecycle script before invoking `vite build`.
+`heroGlbGuard.check.mjs` executes `checkHeroGlbInputs()` against all hero GLBs declared in `ASSET-PATHS.txt`.
+
+#### Test Run Results:
+- **Build Run 1 (`npm run build`):**
+  - **Result:** **FAILED (Exit code 1)** at `prebuild`.
+  - **Output:**
+    ```
+    > react-example@0.0.0 prebuild
+    > node src/engine/heroGlbGuard.check.mjs
+
+    [HERO_GLB_GUARD] Missing required hero GLB build inputs: public/models/heroes/knife.glb, public/models/heroes/zombie.glb, public/models/heroes/glock_slide.glb, public/models/heroes/glock_frame.glb, public/models/heroes/ghost.glb, public/models/heroes/ghoul.glb, public/models/heroes/lion.glb, public/models/heroes/glock.glb, public/models/heroes/fps_arms.glb, public/models/heroes/glock_magprop.glb, public/models/heroes/crt_terminal.glb, public/models/heroes/crt_deskset.glb, public/models/heroes/bat.glb
+    [HERO_GLB_GUARD] Build blocked: stage the missing hero GLBs into public/ before building.
+    ```
+- **Discrepancy / Root Cause Description:**
+  - In `grand-archive-repo`, the directory `public/models/heroes/` does not exist (all model assets are gitignored and join at build/deployment stage).
+  - An exhaustive search across the entire workstation shows that `lion.glb` and `ghoul.glb` **do not exist on disk** (the sibling directory `the-grand-archive/dist/models/heroes/` only contains 11 legacy hero assets: `bat`, `crt_deskset`, `crt_terminal`, `fps_arms`, `ghost`, `glock`, `glock_frame`, `glock_magprop`, `glock_slide`, `knife`, and `zombie`).
+  - Because `public/models/heroes/lion.glb` does not physically exist, it cannot be temporarily moved out or restored from a non-existent file without manually staging mock/dummy assets (which was prohibited by the "report only, no code changes this pass" standing rule).
+  - **Gate Efficacy:** The prebuild gate successfully executed and functioned exactly as designed — it halted the build and prevented shipping a build that would silently fall back to procedural geometry for missing hero assets.
+
+
+---
+
+# HERO GLB STAGING & BUILD PROOF (NOVEMBER 22, 2026)
+
+**Auditor:** Antigravity ("The Hands")  
+**Scope:** Stage 13 hero GLBs into `grand-archive-repo/public/models/heroes/` and verify the prebuild gate and Vite production build.
+
+### 1. Staging Inventory & Exact File Sizes
+Created `grand-archive-repo/public/models/heroes/` and populated all 13 hero GLBs:
+- 11 legacy assets copied from `~/the-grand-archive/dist/models/heroes/`:
+  - `bat.glb`: 44,420 bytes
+  - `crt_deskset.glb`: 34,152 bytes
+  - `crt_terminal.glb`: 49,952 bytes
+  - `fps_arms.glb`: 723,396 bytes
+  - `ghost.glb`: 3,158,268 bytes
+  - `glock.glb`: 2,368,808 bytes
+  - `glock_frame.glb`: 3,366,824 bytes
+  - `glock_magprop.glb`: 1,488 bytes
+  - `glock_slide.glb`: 3,259,736 bytes
+  - `knife.glb`: 3,087,500 bytes
+  - `zombie.glb`: 4,305,860 bytes
+- 2 downloaded enemy models moved from `~/Downloads` (`/mnt/chromeos/MyFiles/Downloads`):
+  - `ghoul.glb`: **2,204,092 bytes** (exact match with required 2,204,092 bytes)
+  - `lion.glb`: **7,113,480 bytes** (exact match with required 7,113,480 bytes)
+
+### 2. Build Verification (`npm run build`)
+- **Prebuild Gate Output:**
+  ```
+  > react-example@0.0.0 prebuild
+  > node src/engine/heroGlbGuard.check.mjs
+
+  [HERO_GLB_GUARD] OK — 13 hero GLBs present in public/.
+  ```
+- **Vite Build Output:**
+  ```
+  ✓ built in 3.99s
+  ```
+- **Exit Code:** `0` (clean green production build).
+
+### 3. Unit Test Suite Results (`node --test`)
+- **Count:** **60 PASS / 1 FAIL (61 total tests)**.
+- **Root Cause of Single Failure (`src/engine/heroGlbGuard.test.mjs` line 19):**
+  - In commit `1b6ceff`, Muse updated the guard test to assert `checkHeroGlbInputs(heroGlbsFromManifest, 'public')` **throws** an error:
+    `// Hero GLBs join at build time and are not in the repo's public/, so the guard must fail loudly...`
+  - When the hero GLBs are staged into `public/models/heroes/` (as required for `npm run build`), `checkHeroGlbInputs()` succeeds (does not throw), causing `assert.throws` in this unit test to report `AssertionError [ERR_ASSERTION]: Missing expected exception`.
+  - When `checkHeroGlbInputs` is tested against an empty directory or missing assets, it throws as expected (`[HERO_GLB_GUARD] Missing required hero GLB build inputs...`).
+  - Recommendation for Muse: update line 34 of `src/engine/heroGlbGuard.test.mjs` to test against a non-existent directory (e.g. `checkHeroGlbInputs(heroGlbsFromManifest, 'empty-test-dir')`) so the unit test validates missing-file rejection regardless of whether local build inputs are staged.
+
+### 4. Git Status
+- `public/models/` is gitignored by `.gitignore` as a local build input.
+- Nothing in `public/models/heroes/` is tracked or committed.
+
+
+---
+
+# LIGHTING PASS AUDIT & V1.0.2 DIST BUILD (NOVEMBER 22, 2026)
+
+**Auditor:** Antigravity ("The Hands")  
+**Scope:** Verification of Muse's lighting pass commit `826a121`, unit test suite (66/66), static typecheck, and production dist bundling with all 13 hero GLBs.  
+**Directive:** Report only, no code changes this pass.
+
+---
+
+### 1. Git Pull & HEAD Verification
+- **Command:** `git pull origin main`
+- **Pushed Commits Integrated:**
+  - `d0c0c49`: `fix(test): hero-GLB guard throws-test uses an empty dir instead of the live public/ (Muse)`
+  - `826a121`: `fix(lighting): shadows on for the chromebook profile — flashlight casts, enemies cast, env fill raised (Muse)`
+- **HEAD Hash:** `826a12165d31898885e86b76ba698c74ddbd6f6e` (short: `826a121`)
+
+---
+
+### 2. Static Analysis & Unit Test Suite
+- **TypeScript Compiler (`npx tsc --noEmit`):**
+  - **Result:** **0 errors** (exit code 0).
+- **Unit Test Suite (`node --test`):**
+  - **Result:** **66 PASS / 0 FAIL (66 total tests)** across all test files (duration: ~15.39s).
+  - All 66 tests passing green:
+    - `chromebook profile enables PCFSoft shadows (lighting pass)`: **PASS**
+    - `hero-GLB guard: fails when a path in ASSET-PATHS.txt is missing from public/ at build inputs — ghoul.glb and lion.glb specifically`: **PASS** (uses isolated empty dir)
+    - `hero-GLB guard: passes when assets are present`: **PASS**
+    - `hero-GLB guard: wired into the build as a prebuild gate`: **PASS**
+    - `lighting pass: flashlight is the shadow-casting light (512 PCFSoft map)`: **PASS**
+    - `lighting pass: environment fill raised (gameplay 0.30, survival 0.20)`: **PASS**
+    - `lighting pass: zombie, ghoul and lion cast shadows; ghost stays unlit by design`: **PASS**
+    - `lighting pass: ultra-lean optimizer no longer disables the shadow map`: **PASS**
+    - All sequence, animator, audio, stamina, combat, and flashlight mount tests: **PASS**.
+
+---
+
+### 3. Production Build & Dist Verification (`npm run build`)
+- **Prebuild Gate Output:**
+  ```text
+  > react-example@0.0.0 prebuild
+  > node src/engine/heroGlbGuard.check.mjs
+
+  [HERO_GLB_GUARD] OK — 13 hero GLBs present in public/.
+  ```
+- **Vite Build Output:**
+  ```text
+  > react-example@0.0.0 build
+  > vite build
+
+  vite v8.3.8 building client environment for production...
+  ✓ 77 modules transformed.
+  dist/index.html                             2.10 kB │ gzip:   0.96 kB
+  dist/assets/index-D0IXxA2o.css             34.41 kB │ gzip:   8.55 kB
+  dist/assets/virtualGamepad-LZNFoR2I.js      4.62 kB │ gzip:   1.91 kB
+  dist/assets/index-BiUIz1gR.js           1,206.06 kB │ gzip: 330.61 kB
+  ✓ built in 5.91s
+  ```
+- **Dist Artifacts (`dist/`):**
+  - `dist/index.html` (2.10 kB)
+  - `dist/assets/index-BiUIz1gR.js` (1,206.06 kB)
+  - `dist/assets/index-D0IXxA2o.css` (34.41 kB)
+  - `dist/assets/virtualGamepad-LZNFoR2I.js` (4.62 kB)
+  - `dist/models/heroes/` (all 13 hero GLBs present, totaling 29 MB: `bat.glb`, `crt_deskset.glb`, `crt_terminal.glb`, `fps_arms.glb`, `ghost.glb`, `ghoul.glb`, `glock.glb`, `glock_frame.glb`, `glock_magprop.glb`, `glock_slide.glb`, `knife.glb`, `lion.glb`, `zombie.glb`)
+  - `dist/models/weapons/` (`balistucia.glb`)
+
+
+---
+
+# V1.0.2 DEBIAN RELEASE PACKAGE BUILD (NOVEMBER 22, 2026)
+
+**Auditor:** Antigravity ("The Hands")  
+**Scope:** Package the verified production build (`dist/` with gate OK, all 13 hero GLBs + balistucia.glb, PCFSoft shadow pass) into the official v1.0.2 `.deb` installation bundle.  
+**Status:** Packaged and staged. Ready for installation. (Installation pending step-by-step run with Lotty).
+
+### 1. Package Specifications
+- **Package Name:** `grand-archive-installation`
+- **Version:** `1.0.2`
+- **Architecture:** `all`
+- **Maintainer:** `Hollywood Sunshine <lottydarko@outlook.com>`
+- **Debian Format:** `2.0`
+- **Package File:** `the-grand-archive-installation_1.0.2_all.deb`
+- **File Size:** `402,634,184` bytes (~384 MiB)
+- **Locations on Machine:**
+  1. `/mnt/chromeos/MyFiles/Downloads/the-grand-archive-installation_1.0.2_all.deb` (direct ChromeOS Downloads path accessible to `ga-install.sh` and `ga-installer.py`)
+  2. `/home/lottydarko/the-grand-archive-installation_1.0.2_all.deb` (Linux home directory backup)
+
+### 2. Payload Contents
+- `/opt/grand-archive/game/`: Full v1.0.2 game tree (all 13 hero GLBs, `balistucia.glb`, updated bundle `index-BiUIz1gR.js` with Chromebook PCFSoft shadows, lighting pass, audio bus, and manifests).
+- `/opt/grand-archive/installer/`: Standalone clay installer server and frontend wizard.
+- `/opt/grand-archive/launch.sh`: Castle-icon desktop launcher script.
+- `/usr/share/applications/grand-archive-installer.desktop`: ChromeOS/Linux desktop entry.
+- `/usr/share/icons/hicolor/512x512/apps/grand-archive-installer.png`: Launcher icon.
+
+---
+
+# AUDIT REPORT: WEAPON SWAP & CYCLER MECHANICS (GRAND ARCHIVE)
+
+**Date:** November 22, 2026  
+**Auditor:** Antigravity ("The Hands")  
+**Scope:** Pre-implementation architectural audit of the weapon swap pipeline, visibility synchronization, and flashlight reparenting behavior.  
+**Directive:** Audit first, report before changing code.
+
+---
+
+### 1. How Weapon Swap Works Today (Y Button Path)
+- **Input Polling (`src/player/controls.js`):**
+  - **Gamepad:** Xbox standard `Y` button (index 3) is polled each frame against `this._prevGp.y`:
+    ```javascript
+    if (y && !this._prevGp.y) this.actions.swapWeapon = true;
+    ```
+  - **Keyboard:** `KeyQ` keydown listener triggers the PC equivalent:
+    ```javascript
+    else if (code === 'KeyQ') this.actions.swapWeapon = true;
+    ```
+- **Frame Consumption Loop (`src/main.js`):**
+  - In `stepSimulation(dt)` (lines 2205–2208):
+    ```javascript
+    if (act.swapWeapon) {
+      weapons.swap();
+      hudDirty = true;
+    }
+    ```
+- **Execution in Weapon System (`src/player/weapons.js`):**
+  - `weapons.swap()` inspects `this.loadout`:
+    - For `level1`: If active weapon is `'shotgun'` and `'sword'` is unlocked, calls `this.equip('sword')`. If active is `'sword'` and `'shotgun'` is unlocked, calls `this.equip('shotgun')`. If `'unarmed'`, equips whichever is unlocked.
+    - For `standard`: Toggles between `'glock'` and `'knife'`.
+  - In `this.equip(weapon)`:
+    - Overwrites `this.activeWeapon = weapon` immediately.
+    - Sets `this.swapAnim = 0.85` (a scalar damped to 0 in `update(dt)` that merely applies a vertical procedural drop `lowerY = this.swapAnim * 0.22`).
+    - Cancels reload via `this.cancelReload()`.
+    - Immediately calls `this._syncVisibility()` and `this._updateFlashlightMount()`.
+- **Architectural Findings & Gaps:**
+  - **No State Machine:** Swap is completely instantaneous and synchronous.
+  - **No Holster or Draw Stages:** The target weapon becomes active on the exact frame `swap()` is called.
+  - **No Action Locks:** Fire (`triggerPrimary`), ADS (`controls.aimAmount`), and pump are NOT locked during weapon swap. A player can initiate an attack or aim immediately on the swap frame.
+  - **No Input Queueing:** Rapid Y button presses immediately cycle back and forth each frame, resetting procedural offsets without completing any animation arc.
+
+---
+
+### 2. How Weapon Visibility is Synced Today
+- **Implementation (`src/player/weapons.js` - `_syncVisibility()`):**
+  - Computes boolean flags directly from `this.activeWeapon`:
+    ```javascript
+    const isUnarmed = this.activeWeapon === 'unarmed';
+    const isShotgun = !isUnarmed && this.activeWeapon === 'shotgun' && !this.quickKnifeActive;
+    const isSword = !isUnarmed && this.activeWeapon === 'sword' && !this.quickKnifeActive;
+    const showKnife = !isUnarmed && this.loadout !== 'level1' && (this.activeWeapon === 'knife' || this.quickKnifeActive) && !isSword;
+    const showGlock = !isUnarmed && this.loadout !== 'level1' && this.activeWeapon === 'glock' && !showKnife;
+    ```
+  - Directly sets mesh group visibility:
+    ```javascript
+    if (this.glockGroup) this.glockGroup.visible = showGlock;
+    if (this.knifeGroup) this.knifeGroup.visible = showKnife;
+    if (this.shotgunGroup) this.shotgunGroup.visible = isShotgun;
+    if (this.swordGroup) this.swordGroup.visible = isSword;
+    if (this._heroGlockHandMount) this._heroGlockHandMount.visible = showGlock;
+    if (this._armsRefGlockMesh) this._armsRefGlockMesh.visible = false;
+    if (this.armsRoot) this.armsRoot.visible = true;
+    ```
+- **Architectural Findings & Gaps:**
+  - Visibility is strictly coupled 1:1 with `this.activeWeapon`.
+  - When `activeWeapon` changes, the previous weapon vanishes instantly and the incoming weapon pops in on that exact frame.
+  - There is no concept of keeping the active outgoing weapon visible while it plays its holster animation behind the back, followed by flipping visibility at the holster→draw boundary where exactly ONE weapon is visible at every frame (never two, never zero after the first draw).
+
+---
+
+### 3. What the Flashlight Does Across a Swap Today
+- **Implementation (`src/player/weapons.js` - `_updateFlashlightMount()`):**
+  - Exactly one `THREE.SpotLight` (`PlayerFlashlight`) exists in the scene hierarchy.
+  - In `_updateFlashlightMount()`:
+    - If `this.activeWeapon === 'shotgun'`: reparents the spotlight to `this.shotgunRoot` (or `shotgunGroup`), mounting it under the barrel at local position `[0.26, -0.06, 0]` with target ahead at `[10.0, -0.06, 0]`.
+    - If `this.activeWeapon !== 'shotgun'` (sword or unarmed): reparents the spotlight to `this.handFlashlightAnchor` (held torch pose on the left viewmodel side) at local position `[0, 0, 0]` with target at `[-0.05, -0.08, -10.0]`.
+  - Volumetric beam (`flashlightCone` in `main.js`) syncs per frame to `this.flashlight.getWorldPosition()` and `this.flashlight.target.getWorldPosition()`.
+  - Flashlight ON/OFF state (`this.flashlightOn` and `this.flashlight.intensity`) is preserved across reparenting.
+- **Architectural Findings & Gaps:**
+  - Because `_updateFlashlightMount()` is called immediately when `equip()` is invoked, the spotlight jumps immediately from shotgun barrel to hand anchor (or vice-versa) before any holster animation can play.
+  - Under the new `WeaponCycler` state machine, the flashlight mount must follow the ACTIVE weapon: during `HOLSTER`, it must remain on the outgoing active weapon; at the `HOLSTER→DRAW` boundary behind the player's back, it flips to follow the incoming active weapon.
+
+---
+
+### 4. Implementation Blueprint: WeaponCycler State Machine
+- **State Machine Structure:**
+  - States: `CARRY` → `HOLSTER` → `DRAW` → `CARRY`.
+  - Constants:
+    - `HOLSTER_SEC = 0.5`
+    - `DRAW_SEC_SHOTGUN = 0.6`
+    - `DRAW_SEC_SWORD = 0.4`
+- **Visibility & Mount Hand-off:**
+  - During `HOLSTER`: Outgoing weapon remains visible; incoming weapon is hidden. Flashlight mount stays on outgoing active weapon.
+  - At `HOLSTER → DRAW` boundary (behind the back): Exactly at `t = HOLSTER_SEC`, outgoing weapon is hidden, incoming weapon becomes visible and active, and the flashlight mount reparents to the new active weapon.
+  - During `DRAW`: Incoming weapon is visible; outgoing weapon is hidden. Flashlight mount stays on incoming active weapon.
+  - Visibility Invariant: Exactly ONE weapon is visible at every single frame, never two, never zero after the first draw.
+- **Input Queueing & Action Locks:**
+  - `Fire`, `ADS`, and `pump` locked during `HOLSTER` and `DRAW`.
+  - Exactly one swap request mid-cycle is queued (`hasQueuedSwap = true`); further swap requests are discarded.
+  - When `DRAW` finishes, if a swap is queued, it immediately transitions into `HOLSTER` for the return cycle.
+- **Viewmodel Clip Hooks:**
+  - Viewmodel exposes named slots `'holster'` and `'draw'` with fixed duration constants.
+  - Driven by timed placeholder curves so mechanics are fully operational now; Blender baked clips will drop in 1:1.
+
+---
+
+# IMPLEMENTATION REPORT: WEAPON CYCLER COMPLETION & VERIFICATION
+
+**Date:** November 22, 2026  
+**Status:** COMPLETE & VERIFIED  
+**Author:** Antigravity  
+
+### 1. State Machine & Pipeline Implementation
+- **Architecture (`src/player/weaponCycler.js`):**
+  - Fully implemented `WeaponCycler` class orchestrating `CARRY` → `HOLSTER` → `DRAW` → `CARRY`.
+  - Constants enforced:
+    - `HOLSTER_SEC = 0.5`
+    - `DRAW_SEC_SHOTGUN = 0.6`
+    - `DRAW_SEC_SWORD = 0.4`
+    - `DRAW_SEC_DEFAULT = 0.5`
+  - Integrated `clipSlots = { holster: null, draw: null }` and `setClipSlot(slot, clip)` for 1:1 drop-in of baked Blender clips.
+  - Timed placeholder procedural curves (`createPlaceholderCurve`) evaluate smooth arc down and behind the back during holster, rising into ready carry during draw.
+  - Integrated `onPlayClip` callback notifying the viewmodel mixer on state boundaries.
+- **Weapon System Integration (`src/player/weapons.js`):**
+  - Connected `this.cycler.update(dt)` and continuous `_syncVisibility()` in `update()`.
+  - Applied sampled curve offsets (`cyclerOffset`) to `glockGroup`, `knifeGroup`, `shotgunGroup`, `swordGroup`, and `armsRoot`.
+  - Enforced `isCycleLocked` guard across `triggerPrimary()`, `startReload()`, `triggerKnifeSlash()`, `triggerSwordSlash()`, `triggerInspect()`, `triggerShove()`, and forced ADS `aim = 0` during cycling.
+  - Wired flashlight reparenting so the spotlight stays attached to the outgoing weapon throughout `HOLSTER` and flips cleanly to the incoming weapon exactly at the `t = HOLSTER_SEC` boundary behind the player's back.
+- **Player Controls & Main Loop Integration (`src/player/controls.js` & `src/main.js`):**
+  - Added `aimLocked` property to `PlayerControls` suppressing ADS when `isCycleLocked` is true.
+  - Synced `controls.aimLocked = weapons.isCycleLocked` before `controls.update()`.
+  - Added cycle-lock guard to `act.fire` and dirty flag updates on cycle lock state changes.
+
+### 2. Golden Rule Verification: Never Two Weapons, Never Zero Weapons
+- **Automated Invariant Test (`src/player/weaponCycler.test.mjs`):**
+  - Tested continuous 60 FPS frames across weapon swaps (Shotgun → Sword, and Sword → Shotgun).
+  - Every single simulation frame sampled active visibility across `shotgunGroup`, `swordGroup`, `glockGroup`, and `knifeGroup`.
+  - **Verdict:** Visible weapon count is strictly equal to 1 at every frame without exception.
+
+### 3. Test Suite & Verification Results
+- **`weaponCycler.test.mjs`**: 5 PASS / 0 FAIL (basic progression, golden rule visibility invariant, mid-cycle queueing, action locks, flashlight hand-off).
+- **`weaponsFlashlight.test.mjs`**: 6 PASS / 0 FAIL.
+- **`npx tsc --noEmit`**: 0 errors (clean compilation).
+
+---
+
+# IMPLEMENTATION REPORT: FPS ARMS v8 (BITKILN RIG) INTEGRATION & VERIFICATION
+
+**Date:** November 23, 2026  
+**Status:** COMPLETE & VERIFIED  
+**Author:** Antigravity  
+**Recipient:** Lotty (Creator), via Muse (Studio Manager)  
+
+### 1. Asset Staging & GLTF Structure Audit
+- **Files Staged:**
+  - `fps_arms_v8.glb` and `antigravity-v8-arms-wiring-note-2026-11-22.md` copied from Downloads into repository.
+  - Installed to `public/models/heroes/fps_arms.glb` (918,992 bytes) and `dist/models/heroes/fps_arms.glb`.
+  - Preserved backup `public/models/heroes/fps_arms_v7.glb` (723,396 bytes) until full on-device playtesting.
+  - `heroGlbGuard` prebuild check: **PASSED** (13 hero GLBs present).
+- **Skeletal & Mesh Verification:**
+  - **43 Bones**: Bitkiln PSX Horror FPS Kit rig with full individual 5-finger chains per hand:
+    - `{Left|Right}{Index|Middle|Ring|Pinky|Thumb}{Proximal|Intermediate|Distal}`.
+    - Grip hand bone: `RightHand`.
+    - Weapon anchor bone: `Weapon` (sits in the right hand).
+    - Support hand bone: `LeftHand`.
+  - **Single Mesh Entity**: Exactly ONE mesh entity `Arms` (1,564 vertices) partitioned into 3 material primitives:
+    - `Arms` (skin/forearms, 288 verts)
+    - `GloveMW3` (charcoal gloves with baked texture, 844 verts)
+    - `KnuckleRubber` (rubber knuckle guard pads, 432 verts)
+  - **Zero Glock19 Reference Mesh**: Confirmed that the old rig's embedded pistol mesh does not exist in this asset; no mesh suppression hacks needed.
+  - **Baked Clips (30 FPS)**: Verified presence of all 5 baked `GA_*` clips plus original bitkiln clips:
+    - `GA_Carry` (90f shotgun carry loop with support hand cupped under forend)
+    - `GA_Pump` (11f rack with support hand glued to forend)
+    - `GA_Reload` (40f cant → 2 shell pushes → return → rack → settle)
+    - `GA_Draw` (18f draw from behind the back, target ~0.6s)
+    - `GA_Holster` (15f holster to behind the back, target ~0.5s)
+    - `Draw`, `Holster`, `Fire`, `Idle`, `Walk`, `Run` (bitkiln original clips for Glock/utility)
+
+---
+
+### 2. Viewmodel Meter-Space Re-Fit & Mount Architecture
+- **Camera Meter-Space Pivot:**
+  - The bitkiln rig is authored in meters in viewmodel camera space (eye origin at `(0, 0, 0)`, forward down `-Z`).
+  - Updated `_loadHeroWeaponModels()` in `src/player/weapons.js`: detects `isV8Rig` via `armsScene.getObjectByName('RightHand') || armsScene.getObjectByName('Weapon')`.
+  - When `isV8Rig` is true:
+    - `armsScene.scale.set(1, 1, 1)` (no arbitrary rescaling).
+    - `armsScene.position.set(0, 0, 0)`.
+    - `armsPivot.rotation.set(0, 0, 0)` (removed old 90° Y rotation).
+    - `armsPivot.position.set(0, 0, 0)`.
+- **Mount Anchors:**
+  - **Gun Mount**: `_tryMountHeroGlockToArms()` finds `Weapon` bone (falling back to `RightHand`), parenting the hero weapon mount directly to the weapon bone.
+  - **Flashlight Hand Anchor**: Reparents `this.handFlashlightAnchor` directly to the `LeftHand` bone of the rig. When unequipped, the spotlight follows the player's left hand held as a carried torch.
+
+---
+
+### 3. Pump Travel Synchronization (0.09 m)
+- Verified `shotgunAnimator.setPumpTravel(amount01)`: displacement along `-X` is exactly `basePumpX - travel * 0.09` (matches 0.09 m travel in `ShotgunAnimator`).
+- In `_fireShotgun()`: firing triggers both `shotgunAnimator.playFireAndPump()` and `_playArmsClip('GA_Pump', { loop: false, fade: 0.05 })`.
+- Support hand on `GA_Pump` stays glued to the forend with travel matching `shotgunAnimator` at exactly 0.09 m.
+
+---
+
+### 4. GA_Reload Gun Cant Synchronization
+- **Weapon-Side Requirement:**
+  - In Blender, `GA_Reload` (40 frames @ 30 fps = 1.333 s) was solved with the hands locked to the canted gun (verified to 0.5 mm in gun space).
+  - Implemented and exported `computeShotgunReloadCant(frameProgress)` in `src/player/weapons.js`:
+    - **Pitch**: `-24°` (`-0.418879 rad`, muzzle up).
+    - **Roll**: `+10°` (`+0.174533 rad`).
+    - **Ease-in**: Smoothstep over frames 0–5 (`f / 5`).
+    - **Cant Hold**: Maintained locked across frames 5–34.
+    - **Shell Push Lift**: `+0.006 m` Gaussian lift pulse at `f = 13` (Shell 1) and `f = 19` (Shell 2).
+    - **Unwind**: Smoothstep unwind back to 0 over frames 34–39.
+    - **Settle**: Settled cleanly at `f = 40` (progress 1.0).
+- **Execution in Game Loop:**
+  - In `startReload()`: when `activeWeapon === 'shotgun'`, initializes `this.reloadTimer = 0`, sets `this.reloadDuration = 40 / 30` (1.333 s), and triggers `_playArmsClip('GA_Reload', { loop: false, fade: 0.12 })`.
+  - In `update(dt)`: advances `reloadTimer`, evaluates `computeShotgunReloadCant(this.reloadTimer / this.reloadDuration)`, and applies:
+    - `shotgunGroup.rotation.x = shotgunReloadPitch + recoil + idle`
+    - `shotgunGroup.rotation.z = shotgunReloadRoll + idle`
+    - `shotgunGroup.position.y = baseY + shotgunReloadLiftY + idle`
+  - Hands and gun cant together with zero grip detachment.
+
+---
+
+### 5. Cycler Baked Clip Swap
+- In `_loadHeroWeaponModels()`:
+  - Real baked clips `GA_Holster` and `GA_Draw` from `fps_arms_v8.glb` are registered into `cycler.setClipSlot('holster', gaHolsterClip)` and `cycler.setClipSlot('draw', gaDrawClip)`.
+  - When real clips are in `clipSlots`, `cycler.getSampledCurveOffset()` returns zero offset `{ position: (0,0,0), rotation: (0,0,0) }`, allowing the skeletal root and bone tracks to drive the viewmodel without fighting procedural curves.
+- In `_playCyclerClip(slot, info)`:
+  - Dynamically routes `GA_Holster` / `GA_Draw` when active weapon is shotgun.
+  - Dynamically routes `Holster` / `Draw` when active weapon is Glock.
+  - Gracefully falls back to carry idle on cycle completion.
+
+---
+
+### 6. Automated Verification Results
+1. **v8 Arms Test Suite (`node --test src/player/fpsArmsV8.test.mjs`) — 5 PASS / 0 FAIL:**
+   - `✔ v8 arms: file presence, size, and v7 backup preservation`
+   - `✔ v8 arms: GLTF inspection confirms 43 bones, finger chains, single Arms mesh, and MW3 materials`
+   - `✔ computeShotgunReloadCant: exact pitch -24 deg, roll 10 deg, f0-f5 ease, f13/f19 lift, f34-f39 unwind`
+   - `✔ pump travel sync: shotgunAnimator setPumpTravel is exactly 0.09 m`
+   - `✔ WeaponSystem: meter-space armsPivot re-fit, LeftHand flashlight anchor, and cycler slots`
+2. **Weapon Cycler Invariant Test (`node --test src/player/weaponCycler.test.mjs`) — 5 PASS / 0 FAIL:**
+   - 60 FPS continuous sampling confirms the Golden Rule holds: strictly 1 visible weapon on every frame.
+3. **Flashlight Mount Suite (`node --test src/player/weaponsFlashlight.test.mjs`) — 6 PASS / 0 FAIL:**
+   - Preserves single spotlight budget, under-barrel shotgun mount, and left-hand anchor torch hand-off.
+4. **Full Repository Unit Test Suite (`node --test $(find src -name "*.test.*" | sort)`) — 77 PASS / 0 FAIL (21 test files):**
+   - 100% test pass rate across all engine, player, weapon, enemy, audio, and level modules.
+5. **TypeScript Check (`npx tsc --noEmit`) — PASS:**
+   - 0 errors, 0 warnings.
+6. **Production Build (`npm run build` / `vite build`) — PASS:**
+   - Prebuild `heroGlbGuard` passed (13 hero GLBs verified).
+   - Rolldown / Vite production bundle compiled in 38.96s (exit code 0).
+
+---
+
+# BUILD PLAN: THE CASTLE — LOCKED FLOOR PLAN (FIX ROUND 2)
+
+**Date:** November 23, 2026  
+**Status:** CHECKPOINT PLAN (Pre-Code Gate)  
+**Author:** Antigravity  
+**Recipient:** Lotty (Creator), via Muse (Studio Manager)  
+
+---
+
+## 1. Locked Floor Plan Architectural Blueprint
+
+The geometry and compartmental layout for Level One is strictly bounded to the locked dimensions:
+
+```
+[MUSEUM HALL] 24x14 (X ∈ [-12, +12], Z ∈ [-7, +7])
+       │
+       ▼ (North Portal at Z = +7, opening X ∈ [-2, +2])
+[WHITE AETHER PASSAGE] 4x8 (X ∈ [-2, +2], Z ∈ [+7, +15])
+       │
+       ▼ (Castle Entry Double Gate at Z = +15)
+═════════════════════ THE CASTLE 30x50 (Z ∈ [15, 65]) ═════════════════════
+│                                                                          │
+│  [BARREL ROOM] 8x8 (X ∈ [-4, +4], Z ∈ [15, 23]) — CASTLE STARTS HERE    │
+│  • Balistucia Shotgun Pickup (-2.0, 0, 19.0)                             │
+│  • Shootable Barrel (2.0, 0.525, 19.5) -> Drops DARKO + Sword            │
+│                                                                          │
+│  [ROOM 2] 10x6 (X ∈ [-5, +5], Z ∈ [23, 29]) — ADS & BRAIN WIPE          │
+│  • Lone Tutorial Zombie (0.0, 0, 26.5)                                   │
+│  • Diegetic LT -> RT ADS freeze -> Headshot -> 1.35s Brain Wipe          │
+│                                                                          │
+│  [MAZE ONE: THE SPIRAL] 30x22 (X ∈ [-15, +15], Z ∈ [29, 51])             │
+│  • Authored 15x11 ASCII Grid, Cell Size = 2.0m x 2.0m (NO RNG)          │
+│  • 3 Maze Discs (D), 3 Zombies (Z), 2 Ghouls (G), 2 Ammo Boxes (A)       │
+│  • Trap-Door Exit at row 0 (Z = 50..51) OPENS ONLY WITH ALL 3 DISCS     │
+│                                                                          │
+│  [LION ROOM] 14x14 (X ∈ [-7, +7], Z ∈ [51, 65]) — ARENA & PLINTH         │
+│  • Boss Lion centered at (0.0, 0, 58.0)                                  │
+│  • Post-Boss Disc Plinth rises from underground to Y = 0 on Lion defeat   │
+│  • Return Stair to The Hall stays LOCKED until Lion is dead              │
+│                                                                          │
+│  [EXTERIOR LEDGES] 1m wide on East face (X ∈ [15, 16], Z ∈ [15, 65])      │
+│                    and South face (Z ∈ [14, 15], X ∈ [4, 16])            │
+│  • Bottomless Void beyond; falling off triggers compartment respawn      │
+════════════════════════════════════════════════════════════════════════════
+```
+
+---
+
+## 2. Mathematical Coordinate & Dimension Specifications
+
+### 2.1 Museum Hall (Unchanged)
+- **Width:** 24 m (`minX: -12.0`, `maxX: +12.0`)
+- **Depth:** 14 m (`minZ: -7.0`, `maxZ: +7.0`)
+- **Center:** Origin `(0, 0, 0)` with center triangle case holding the First Disc.
+- **North Portal Exit:** `Z = +7.0`, opening width 4 m (`X ∈ [-2.0, +2.0]`), opening gate mesh and collider.
+
+### 2.2 White Aether Passage (4 m × 8 m)
+- **Width:** 4 m (`minX: -2.0`, `maxX: +2.0`)
+- **Depth:** 8 m (`minZ: +7.0`, `maxZ: +15.0`)
+- **Floor:** Luminous white aether mesh with shallow water aesthetic.
+- **Enclosing Walls:** Sealed west wall at `X = -2.0` and east wall at `X = +2.0` spanning `Z = 7..15`.
+- **Termination:** Connects seamlessly into the Castle entry at `Z = +15.0`.
+
+### 2.3 The Castle (30 m × 50 m Footprint, Fully Sealed)
+The castle officially begins at `Z = 15.0` (at the Barrel Room entrance) and spans 50 meters to `Z = 65.0`. The maximum exterior width is 30 m (`X ∈ [-15.0, +15.0]`).
+1. **Barrel Room (8 m × 8 m — Castle Starts Here):**
+   - **Bounds:** `X ∈ [-4.0, +4.0]`, `Z ∈ [15.0, 23.0]`.
+   - **South Entrance:** `Z = 15.0` (doorway `X ∈ [-2.0, +2.0]` from White Aether passage).
+   - **North Doorway:** `Z = 23.0` (doorway `X ∈ [-2.0, +2.0]` into Room 2).
+   - **Perimeter Colliders:** West wall `X = -4.0`, East wall `X = +4.0`, South wall `Z = 15.0` (wings `[-4, -2]` and `[+2, +4]`), North wall `Z = 23.0` (wings `[-4, -2]` and `[+2, +4]`).
+   - **Contents:**
+     - Balistucia Shotgun Pickup: `(-2.0, 0, 19.0)`.
+     - Shootable Barrel: `(2.0, 0.525, 19.5)`, `userData.isTutorialBarrel = true`.
+     - Dropped items on barrel shot: DARKO drink at `(1.2, 0, 19.5)`, Sword at `(2.8, 0, 19.5)`.
+     - Contextual prompt: `'shoot the barrel [barrel]'`.
+
+2. **Room 2 (10 m × 6 m — ADS Tutorial & Brain Wipe):**
+   - **Bounds:** `X ∈ [-5.0, +5.0]`, `Z ∈ [23.0, 29.0]`.
+   - **South Doorway:** `Z = 23.0` (`X ∈ [-2.0, +2.0]`).
+   - **North Doorway:** `Z = 29.0` (`X ∈ [-2.0, +2.0]` into Maze One entrance).
+   - **Perimeter Colliders:** West wall `X = -5.0`, East wall `X = +5.0`, South step-in `Z = 23.0` (wings `[-5, -2]` and `[+2, +5]`), North wall `Z = 29.0` (wings `[-5, -2]` and `[+2, +5]`).
+   - **North Exit Gate Lock:** North doorway at `Z = 29.0` is sealed by colliders during the tutorial until `stepBrainWipe` completes.
+   - **Contents:** Lone tutorial zombie at `(0.0, 0, 26.5)`.
+
+3. **Maze One "The Spiral" (30 m × 22 m — Authored Grid, Fixed Map, NO RNG):**
+   - **Bounds:** `X ∈ [-15.0, +15.0]`, `Z ∈ [29.0, 51.0]`.
+   - **Grid Geometry:**
+     - 15 columns × 11 rows.
+     - Cell Size: exactly `2.0 m × 2.0 m` (`15 × 2.0 = 30.0 m` width, `11 × 2.0 = 22.0 m` depth).
+     - World mapping:
+       - `x = -15.0 + (col + 0.5) * 2.0` (col 0: `x = -14.0`, col 7: `x = 0.0`, col 14: `x = +14.0`).
+       - `z = 29.0 + (10 - row + 0.5) * 2.0` (row 10 [South]: `z = 30.0`, row 0 [North]: `z = 50.0`).
+     - South Entrance 'E' at `(col 7, row 10)` -> `(0.0, 30.0)` aligns with Room 2 exit at `Z = 29.0`.
+     - North Exit 'X' at `(col 7, row 0)` -> `(0.0, 50.0)` aligns with Lion Room entry at `Z = 51.0`.
+   - **Contents & Spawns:**
+     - 3 Discs ('D'):
+       - Disc 1: `(col 1, row 1)` -> `(-13.0, 48.0)`
+       - Disc 2: `(col 13, row 1)` -> `(+13.0, 48.0)`
+       - Disc 3: `(col 7, row 5)` -> `(0.0, 40.0)` (Center chamber)
+     - 3 Zombies ('Z'): `(0.0, 48.0)`, `(-13.0, 40.0)`, `(+13.0, 40.0)`.
+     - 2 Ghouls ('G'): `(+9.0, 44.0)`, `(-9.0, 36.0)`.
+     - 2 Red Shell Ammo Boxes ('A'): `(-9.0, 44.0)`, `(+9.0, 36.0)`.
+   - **Trap-Door Exit Requirement:**
+     - Physical trap-door gate at `(0.0, 2.3, 50.5)` with lock collider.
+     - Gate stays locked until `mazeDiscsCollected === 3`. Only with all 3 discs collected does the trap-door exit open.
+
+4. **Lion Room (14 m × 14 m — Boss Arena & Return Stair):**
+   - **Bounds:** `X ∈ [-7.0, +7.0]`, `Z ∈ [51.0, 65.0]`.
+   - **South Doorway:** `Z = 51.0` (`X ∈ [-2.0, +2.0]` from Maze One trap-door exit).
+   - **Perimeter Colliders:** North wall `Z = 65.0`, South wall `Z = 51.0` (wings `[-7, -2]` and `[+2, +7]`), West wall `X = -7.0`, East wall `X = +7.0`.
+   - **Contents:**
+     - Boss Lion (`boss_lion_1`): centered at `(0.0, 0, 58.0)`.
+     - Rising Disc Plinth Case: centered at `(0.0, -2.2, 58.0)`, rises to `y = 0.0` on Lion defeat.
+     - **Return Stair to The Hall:**
+       - Built against North wall (`X ∈ [-2.5, 2.5]`, `Z ∈ [62.0, 65.0]`).
+       - Physical iron gate / lock collider stays **LOCKED** while the Lion is alive.
+       - Unlocks cleanly when `state.lionBossDefeated` is true (Lion smote by Sword).
+
+---
+
+## 3. Castle Exterior Ledges, Void Fall & Compartment Respawn
+
+1. **Exterior Walkable Ledges (1 m Wide):**
+   - **East Face Ledge:** `X ∈ [15.0, 16.0]`, spanning the length of the castle from `Z = 15.0` to `Z = 65.0` at floor level (`Y = 0.0`).
+   - **South Face Ledge:** `Z ∈ [14.0, 15.0]`, spanning `X ∈ [4.0, 16.0]` on the exterior south castle wall.
+   - Guarded by perimeter colliders only where intentional, leaving the outer 1m edge walkable over the void.
+2. **Void Fall Detection & Respawn:**
+   - In `controls.update()` / `stepSimulation()`:
+     - Check `controls.position.y < -1.8` or falling beyond exterior bounds into the void (`X > 16.5` or `Z < 13.5` while outside the Hall/Aether).
+     - When void fall occurs:
+       - Screen vignette / red pulse.
+       - Immediately reset player velocity and position to the entrance of the current compartment they occupied:
+         - `MUSEUM_HALL`: `(0.0, 1.72, -5.2)`
+         - `WHITE_AETHER`: `(0.0, 1.72, 8.0)`
+         - `CASTLE_OF_THE_DEAD` (Barrel Room): `(0.0, 1.72, 16.0)`
+         - `ROOM_2`: `(0.0, 1.72, 24.0)`
+         - `MAZE_ONE`: `(0.0, 1.72, 30.0)`
+         - `LION_ROOM`: `(0.0, 1.72, 52.0)`
+
+---
+
+## 4. Staged Implementation & Testing Strategy
+
+- **Stage 1: Layout, Grid & Zone Bounds Definition**
+  - Update `src/world/levelOneSpiral.js`:
+    - Set `SPIRAL_CELL_SIZE = 2.0`, update `SPIRAL_ORIGIN_X = -14.0`, `SPIRAL_ORIGIN_Z = 30.0`.
+    - Set `LEVEL_ONE_SPAWNS` for Barrel Room (`Z ∈ [15, 23]`), Room 2 (`Z ∈ [23, 29]`), Maze One (`Z ∈ [29, 51]`), Lion Room (`Z ∈ [51, 65]`).
+    - Build sealed 3D geometry: Barrel Room (8x8), Room 2 (10x6), Spiral (30x22, 1 InstancedMesh draw call), Lion Room (14x14), East + South 1m ledges, Return Stair with lock mesh.
+  - Update `src/world/levelOneZones.js`:
+    - Align `zoneBounds` with locked compartment ranges.
+  - **Verification 1:** Create `src/world/levelOneCastle.test.mjs` asserting all exact dimensions, cell sizes, wall sealing, and trap-door / return stair collider gates.
+
+- **Stage 2: Main Simulation & Game Loop Wiring**
+  - Update `src/main.js`:
+    - Zone boundaries in `LevelOneZoneController` instantiation.
+    - Maze One trap-door exit open condition: `levelOneState.mazeDiscsCollected >= 3`.
+    - Return stair open condition: `levelOneState.lionBossDefeated` (`!levelOneState.lionAlive`).
+    - Void fall check and compartment-specific respawn handler.
+  - **Verification 2:** Run `node --test src/world/levelOneCastle.test.mjs`, `node --test src/game/levelOneSequence.test.mjs`, and full suite.
+
+---
+
+# EXECUTION REPORT — FIX ROUND 2: THE CASTLE (LEVEL ONE)
+
+**Date:** November 23, 2026  
+**Executed by:** Antigravity ("The Hands")  
+**Reporting to:** Lotty (Creator) & Muse (Producer)  
+**Status:** COMPLETE & FULLY VERIFIED (All 81 Repository Tests Green, Zero Build Errors)
+
+---
+
+## 1. Executive Summary
+
+Level One's Castle architecture has been completely reconstructed to the exact, locked floor plan coordinates, partitioning the sequence from the unchanged Museum Hall through the White Aether passage into the 30 m × 50 m Castle envelope (`Z = 15.0` to `Z = 65.0`). Every compartment geometry, authored grid dimension, gameplay gate condition, exterior ledge, and void respawn rule has been authored, wired into the active simulation loop, and validated with automated regression suites.
+
+---
+
+## 2. Floor Plan & Compartment Architecture Specifications
+
+| Compartment | Width ($X$) | Depth ($Z$) | Coordinate Extents | Key Content & Progression Anchor |
+| :--- | :--- | :--- | :--- | :--- |
+| **Museum Hall** | $24.0\text{ m}$ | $14.0\text{ m}$ | $X \in [-12.0, +12.0]$, $Z \in [-7.0, +7.0]$ | **UNCHANGED.** 8 display cases, initial disc pickup, North portal doorway at $Z = 7.0$. |
+| **White Aether Passage** | $4.0\text{ m}$ | $8.0\text{ m}$ | $X \in [-2.0, +2.0]$, $Z \in [7.0, 15.0]$ | Seamless transitions, glowing white aether fog, leads to Castle entrance at $Z = 15.0$. |
+| **Castle Room 1 (Barrel Room)** | $8.0\text{ m}$ | $8.0\text{ m}$ | $X \in [-4.0, +4.0]$, $Z \in [15.0, 23.0]$ | **Castle starts here.** Shotgun pickup at $(-2.0, 0, 19.0)$, tutorial barrel at $(2.0, 0.525, 19.5)$ dropping DARKO drink at $(1.2, 0, 19.5)$ and Sword at $(2.8, 0, 19.5)$. |
+| **Room 2 (ADS Tutorial)** | $10.0\text{ m}$ | $6.0\text{ m}$ | $X \in [-5.0, +5.0]$, $Z \in [23.0, 29.0]$ | Lone tutorial zombie at $(0.0, 0, 26.5)$, diegetic input-gated ADS tutorial + visor brain wipe. North exit gate at $Z = 29.0$ stays sealed until wipe completes. |
+| **Maze One ("The Spiral")** | $30.0\text{ m}$ | $22.0\text{ m}$ | $X \in [-15.0, +15.0]$, $Z \in [29.0, 51.0]$ | Authored $15 \times 11$ grid, cell size exactly $2.0\text{ m}$, **ZERO procedural generation**. 3 discs, 3 zombies, 2 ghouls, 2 ammo boxes. Trap-door exit at $Z = 50.5$ opens **ONLY** with all 3 discs collected. |
+| **Lion Room (Boss Arena)** | $14.0\text{ m}$ | $14.0\text{ m}$ | $X \in [-7.0, +7.0]$, $Z \in [51.0, 65.0]$ | Lion Boss centered at $(0.0, 0, 58.0)$. Disc case plinth rises out of ground to $Y = 0.0$ on boss defeat. **Return stair** at $Z \in [62.0, 65.0]$ stays **LOCKED** until the Lion is dead. |
+| **Exterior Ledges** | $1.0\text{ m}$ wide | $50.0\text{ m}$ / $12.0\text{ m}$ | East face: $X \in [15.0, 16.0], Z \in [15.0, 65.0]$<br>South face: $Z \in [14.0, 15.0], X \in [4.0, 16.0]$ | Open exterior castle ledges overlooking the void. Falling into the void immediately triggers screen flash and respawns the player at the entrance of the current compartment. |
+
+---
+
+## 3. Key Gates & Mechanics Implemented
+
+1. **Maze One Authored Grid & Cell Size (`2.0 m`):**
+   - Grid resolution is $15 \text{ columns} \times 11 \text{ rows}$ at $2.0\text{ m}$ cell size ($30.0\text{ m} \times 22.0\text{ m}$).
+   - World origin: `SPIRAL_ORIGIN_X = -14.0`, `SPIRAL_ORIGIN_Z = 30.0`.
+   - South entrance aligns at $(0.0, 30.0)$ with Room 2 north doorway ($Z = 29.0$).
+   - North exit aligns at $(0.0, 50.0)$ with Lion Room south doorway ($Z = 51.0$).
+   - Built with a single batched `InstancedMesh` draw call for PS2-era performance on Chromebook hardware.
+2. **Trap-Door Exit (3 Discs Required):**
+   - Authored trap-door gate mesh and dynamic collider at $Z = 50.5$.
+   - Gate remains collidable and locked when `mazeDiscsCollected < 3`.
+   - On collecting the 3rd disc, `mazeExitUnlocked = true` fires, swinging the trap-door open and unblocking entry into the Lion Room.
+3. **Lion Room Return Stair Lock:**
+   - Physical iron gate mesh and collider block the return stair at $Z = 62.5$.
+   - Gate collider dynamically active while `levelOneState.lionAlive === true`.
+   - Slaying the Lion with the Sword (`lion_sword_smite`) marks `lionAlive = false`, retracts the return stair gate collider, and causes the post-boss disc case plinth to rise from $Y = -2.2$ to $Y = 0.0$ at $(0.0, 0.0, 58.0)$.
+4. **1m Exterior Ledges & Compartment Respawns:**
+   - Walkable 1m ledges along Castle East face ($X \in [15.0, 16.0]$, $Z \in [15.0, 65.0]$) and South exterior face ($Z \in [14.0, 15.0]$, $X \in [4.0, 16.0]$).
+   - Void fall detection in `main.js`: if `player.position.y < -1.8` or if player wanders outside exterior castle limits into the void ($X > 16.5$ or $Z < 13.5$ outside Hall/Aether), player is immediately reset to the entrance of their current zone (`COMPARTMENT_RESPAWNS[currentZone]`) with zeroed velocity.
+
+---
+
+## 4. Verification & Automated Test Results
+
+### 1. Dedicated Castle Architecture Suite
+Command: `node --test src/world/levelOneCastle.test.mjs`
+```
+✔ Level One Castle: locked floor plan dimensions and envelope (10.2ms)
+✔ Maze One "The Spiral": authored grid, cell size 2.0m, exactly 30x22, zero RNG (5.7ms)
+✔ Level One Castle: 3 discs open trap-door exit; return stair locked until lion is dead (4.8ms)
+✔ Level One Castle: geometry building, colliders, 1m ledges, and return stair (85.4ms)
+ℹ tests 4 | suites 0 | pass 4 | fail 0
+```
+
+### 2. Level One Sequence & P1/P2/P3 Suite
+Command: `node --test src/game/levelOneSequence.test.mjs`
+```
+Running Level One sequence & script verification tests...
+  PASS: Hall setup: 8 cases (case0 unlocked, case1-case7 locked), 8 tribal symbols, allLesserEnemiesDead false before spawn
+  PASS: Part 1: player picks up disc in Hall -> carry state -> unskippable placement animation
+  PASS: Part 3: Portal -> White Aether -> Castle Room 1 (shotgun + barrel tutorial -> Darko drink + sword)
+  PASS: Part 4 & 5: Room 2 diegetic input-gated ADS tutorial + unskippable brain wipe
+  PASS: Part 6: Maze One 3-disc collection (no maze_key) unlocks maze exit on 3rd disc
+  PASS: Part 7 & 8: Lion boss encounter (gunfire cannot kill, sword smites out of ammo) -> second case unlock
+  PASS: Item 3: Gate holds when lesser enemies are alive; decrements on death until cleared
+  PASS: Item 3: First viewing is strictly unskippable; plays exact VO lines 01-05 wet with captions across Beats 1-5
+  PASS: Item 3: Repeat attempt (seenCount >= 1) allows skipping cleanly into Beat 5
+  PASS: Item 3: LionBoss Beat 2 stalk uses LUNGE with suppressed damage and stalk speed
+  PASS: Item 3: __archiveTest hooks contract (gate holds with lesser alive, first view unskippable, repeat skips to Beat 5)
+  PASS: P1 verification: Room 2 and Maze One spawn triggers fire on zone entry with fixed Spiral layout
+  PASS: P2 verification: damage audit rejects unseen non-ghost hit beyond 1.1m and reports attacker, distance, and sight line
+  PASS: P3 verification: stairs stay locked (canUnlockStairs false) until boss-dead AND post-boss disc seated in second case
+All 14 Level One sequence tests passed!
+✔ src/game/levelOneSequence.test.mjs (2130.8ms)
+```
+
+---
+
+# AUDIT & ARCHITECTURAL CORRECTIONS — THREE FIXES & STANDING CONFIRMATIONS
+
+**Date:** November 23, 2026  
+**Executed by:** Antigravity ("The Hands")  
+**Authority:** Lotty (Creator) & Muse (Producer)  
+**Status:** ALL 3 FIXES COMPLETE & FULLY VERIFIED (81/81 Tests Green, 0 Lint Errors, Build Passing)
+
+---
+
+## 1. The Three Fixes
+
+### Fix 1: Return Stair Placement (West Side of Castle)
+* **Previous Error:** Placed as a small 5-step strip against the north end of the Lion Room.
+* **Corrected Architecture:**
+  - **Width:** Exactly $2.0\text{ m}$.
+  - **Placement:** Runs along the **WEST side of the castle** ($X \in [-17.0, -15.0]$) spanning the entire 50-meter length of the castle from the Lion Room ($Z = 65.0$) south to $Z = 15.0$.
+  - **Connection to Lion Room:** Doorway on the **West wall** of the Lion Room at $X = -7.0, Z \in [62.0, 65.0]$. The `returnStairGateMesh` and collider block this doorway and stay **LOCKED** while the Lion is alive. Slaying the lion unlocks the gate.
+  - **Passage through White Aether & Entry to Museum Hall:** From $Z = 15.0$ down to $Z = 7.0$, the 2m wide stair passage cuts through the Aether's west flank and enters directly into the **north-west corner of the Museum Hall** at $X \in [-12.0, -10.0], Z = 7.0$.
+  - **Perimeter Sealing:** Enclosed by full-height stone wall colliders from $Z = 7.0$ to $Z = 65.0$.
+
+### Fix 2: The Ending Sequence (Ritual, Song, Level Complete)
+* **Full Sequence Flow:**
+  1. After defeating the Lion Boss, the post-boss disc case plinth rises out of the floor to $Y = 0.0$ at $(0, 0, 58.0)$.
+  2. The player claims the Golden Vinyl / Level Disc (`claim_golden_vinyl`).
+  3. The West Return Stair gate is open. The player travels down the west stair passage, through the Aether's west flank, and returns directly into the Museum Hall at $Z = 7.0$.
+  4. On stepping into the hall, zone progression advances to `return_to_hall`, prompting: *"place the golden vinyl in the second display case"*.
+  5. The player approaches **Case [2]** (slotIndex 1 / case1, "a-thousand-ways").
+  6. Interacting with Case [2] locks player movement and triggers the unskippable **2.8-second first-person grab ritual** (`weapons.startGrab({ profile: 'ritual', pose: 'discPinch' })`).
+  7. Upon disc seating (`onClose`):
+     - The case crack overlay shatters and opens (`flashCaseCrack(1)`).
+     - State transitions: `case1` unlocks, `state.step = 'level_one_complete'`, `state.levelCompleted = true`.
+     - The song **"a-thousand-ways"** begins full audio playback via `caseController.engageCaseWithDisc(...)`.
+     - Library rear trapdoor/stairs open for the descent into the next floor (`library.trapdoor.group.visible = true`).
+     - Celebratory Japanese cinema title card displays:
+       `title: 'LEVEL ONE COMPLETE'`, `jp: '第一階層 踏破'` (duration: 4.5s, theme: obsidian).
+     - Whisper caption displays: *"LEVEL ONE COMPLETE — The Archive yields."*
+  8. Upon ritual completion (`onDone`), player controls unlock.
+
+### Fix 3: Void Fall (First-Person Plummet & Splat)
+* **Previous Error:** Instant position snap with a screen flash.
+* **Corrected Behavior:**
+  - **Detection:** Player stepping off exterior ledges into empty void ($Y < -1.8$ or beyond exterior boundaries while not on stairs).
+  - **First-Person Plummet:**
+    - Player controls are locked (`controls.movementLocked = true`).
+    - Downward gravity accelerates the player into the abyss (`fallSpeed` reaches $-26\text{ m/s}$).
+    - The camera realistically tilts downward towards the black abyss ($\approx -80^\circ$).
+    - Screen darkens as the player plunges deeper into the black void.
+  - **Visceral Splat on Black Bottom:**
+    - At $Y = -22.0$ (or after $1.25\text{ s}$ of freefall), the player hits the pure black bottom.
+    - Bone-crunching impact audio triggers (`sfx.playBoneBreak()`, `sfx.playCinemaBoom()`).
+    - Maximum screen trauma shakes the viewport (`controls.addTrauma(1.0)`).
+    - Screen slams to pure black with a heavy radial blood-red impact splat.
+  - **Hold & Respawn:**
+    - Holds on the splat at the black bottom for $0.75\text{ s}$.
+    - Respawns player at the entrance of the current compartment (`COMPARTMENT_RESPAWNS[currentZone]`) with velocity reset and controls unlocked.
+    - **Crucial Rule Maintained:** All collected discs (`mazeDiscsCollected`, `discsClaimed`, `goldenVinylClaimed`), weapons, ammo, and inventory items are **strictly kept and preserved**.
+
+---
+
+## 2. Confirmation of Studio Directives
+
+| Directive | Audit Status | Code Location / Implementation Detail |
+| :--- | :--- | :--- |
+| **Lion Room lit WHITE, almost blinding Aether light** (lion reads as a dark shape against the glare) | **CONFIRMED & ADDED** | Implemented in `src/world/levelOneSpiral.js`: `aetherBlindingMat` with `emissive: 0xffffff` and `emissiveIntensity: 0.95` applied to the Lion Room floor ($14\times 14$), overhead radiant ceiling ($14\times 14$), and luminous North backdrop panel ($13.8\times 4.8\text{ m}$). The dark obsidian Lion stands out in high contrast against the glare. |
+| **Lion cannot be killed by gunfire** (staggers — shoot until out of ammo, then sword kills) | **CONFIRMED EXISTING** | Verified in `src/entities/lionAndGhoulController.js` (`LionBoss.takeDamage` lines 438-453) and `src/game/levelOneSequence.js` (`lion_gunfire_hit`): gunfire clamps HP at $\ge 1\text{ HP}$ (`immuneToGunDeath: true`), triggers hit stagger (`stagger = 0.28`), and sets `outOfAmmoSmiteReady = true` on empty reserve; `weaponType === 'sword'` executes fatal smite (`lion_sword_smite`). |
+| **Villain cutscene on entering the Lion Room** | **CONFIRMED EXISTING** | Verified in `src/main.js` (`startVillainCutscene()` invoked by `onLionBossStart` in `LevelOneZoneController`): executes 5 sequential cinematic beats, locks controls, transitions phases from Idle $\to$ Approach $\to$ Roar $\to$ Lunge Feint $\to$ Boss Fight, playing voiced lines `VO-LION-01` through `VO-LION-05` wet with captions. |
+| **Barrel Room = Balistucia on its stand** | **CONFIRMED & ADDED** | Added stone/brass weapon pedestal stand at $(-2.0, 0.425, 19.0)$ in `buildLevelOneCorridor`. Shotgun pickup sits atop the stand at $Y = 0.88\text{ m}$. |
+| **Shootable barrel in the NE corner** | **CONFIRMED & ADDED** | Repositioned tutorial barrel in `LEVEL_ONE_SPAWNS.castleRoom1.barrel` to $(2.8, 0.525, 21.8)$ (North-East corner of the $8\times 8\text{ m}$ room). |
+| **DARKO can + sword roll out when shot** | **CONFIRMED & ADDED** | Updated drop rollout vectors in `LEVEL_ONE_SPAWNS.castleRoom1`: `darkoDrop` at $(2.0, 0.0, 20.8)$ and `swordDrop` at $(1.4, 0.0, 20.2)$, rolling out southwest into the room when the NE barrel is destroyed. |
+| **North door locked until the sword is in hand** | **CONFIRMED & ADDED** | Added physical iron gate mesh `room1NorthGateMesh` at $Z = 23.0$ and dynamic collider `LEVEL_ONE_SPAWNS.castleRoom1.northGateCollider`. In `main.js`, `room1NorthOpen` is evaluated as `Boolean(levelOneState.weaponsUnlocked?.sword || levelOneState.swordPickedUp)`. Gate collider and mesh remain active and block progress until the sword is in the player's hand. |
+
+---
+
+## 3. Verification Suite Summary
+
+```
+✔ Level One Castle Architecture Suite (src/world/levelOneCastle.test.mjs): 4/4 PASS
+✔ Level One Sequence & Logic Suite (src/game/levelOneSequence.test.mjs): 14/14 PASS
+✔ Full Repository Test Suite (22 test files): 81/81 PASS (0 fail, 0 skipped)
+✔ TypeScript Typecheck (tsc --noEmit): 0 ERRORS
+✔ Prebuild Asset Check (heroGlbGuard): OK — 13 hero GLBs present
+✔ Vite Production Build: 78 modules transformed, built in 12.36s
+```
+
+
+
+
+
+

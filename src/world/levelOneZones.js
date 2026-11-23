@@ -10,6 +10,14 @@ export const LEVEL_ONE_ZONES = Object.freeze({
   LION_ROOM: 'lion_room',
 });
 
+export const DEFAULT_LEVEL_ONE_ZONE_BOUNDS = Object.freeze({
+  [LEVEL_ONE_ZONES.MUSEUM_HALL]: { minX: -12.0, maxX: 12.0, minZ: -7.0, maxZ: 7.0 },
+  [LEVEL_ONE_ZONES.WHITE_AETHER]: { minX: -2.0, maxX: 2.0, minZ: 7.0, maxZ: 15.0 },
+  [LEVEL_ONE_ZONES.CASTLE_OF_THE_DEAD]: { minX: -5.0, maxX: 5.0, minZ: 15.0, maxZ: 29.0 },
+  [LEVEL_ONE_ZONES.MAZE_ONE]: { minX: -15.0, maxX: 15.0, minZ: 29.0, maxZ: 51.0 },
+  [LEVEL_ONE_ZONES.LION_ROOM]: { minX: -7.0, maxX: 7.0, minZ: 51.0, maxZ: 65.0 },
+});
+
 const ZONE_ORDER = [
   LEVEL_ONE_ZONES.MUSEUM_HALL,
   LEVEL_ONE_ZONES.WHITE_AETHER,
@@ -58,7 +66,7 @@ export class LevelOneZoneController {
     onCaseRiseStart = null,
     onCaseRiseComplete = null,
   } = {}) {
-    this.zoneBounds = zoneBounds;
+    this.zoneBounds = { ...DEFAULT_LEVEL_ONE_ZONE_BOUNDS, ...zoneBounds };
     this.risingCaseMesh = risingCaseMesh;
     this.risingCaseStartY = risingCaseStartY;
     this.risingCaseEndY = risingCaseEndY;

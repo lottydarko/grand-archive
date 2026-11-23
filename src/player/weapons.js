@@ -11,11 +11,60 @@ import { ShellCasingSystem } from './shellCasings.js';
 import { GrabAnimator } from './grabAnimator.js';
 import { GRAB_POSES, lerpPose, clonePose } from './grabPoses.js';
 import { ShotgunAnimator } from '../weapons/shotgunAnimator.js';
+import {
+  WeaponCycler,
+  CYCLER_STATES,
+  HOLSTER_SEC,
+  DRAW_SEC_SHOTGUN,
+  DRAW_SEC_SWORD,
+  DRAW_SEC_DEFAULT,
+  createPlaceholderCurve,
+} from './weaponCycler.js';
 
 // Grab pose layer constants: per-joint share of a chain's total curl, and
 // the curl direction sign for this rig's finger bones (verified by render).
 const GRAB_JOINT_WEIGHTS = [0.45, 0.33, 0.22];
 const GRAB_CURL_SIGN = 1;
+
+/**
+ * Computes the exact weapon cant and shell-push lift for GA_Reload (40 frames @ 30 fps).
+ * Key points (wiring note):
+ * - pitch -24° (muzzle up) + roll 10°
+ * - easing in over f0-f5
+ * - holding with +0.006 lift on shell pushes at f13 and f19
+ * - unwinding over f34-f39
+ * Hands are solved locked to the canted gun in Blender (verified to 0.5 mm in gun space).
+ */
+export function computeShotgunReloadCant(frameProgress) {
+  const f = THREE.MathUtils.clamp(frameProgress * 40, 0, 40);
+  const targetPitch = -24 * (Math.PI / 180); // -0.418879 rad
+  const targetRoll = 10 * (Math.PI / 180);   // +0.174533 rad
+
+  let cantBlend = 0;
+  if (f <= 5) {
+    const t = f / 5;
+    cantBlend = t * t * (3 - 2 * t);
+  } else if (f <= 34) {
+    cantBlend = 1.0;
+  } else if (f <= 39) {
+    const t = 1 - (f - 34) / 5;
+    cantBlend = t * t * (3 - 2 * t);
+  } else {
+    cantBlend = 0;
+  }
+
+  // Shell push lift (+0.006 m lift at f13 and f19)
+  const push1 = Math.exp(-Math.pow((f - 13) / 1.5, 2));
+  const push2 = Math.exp(-Math.pow((f - 19) / 1.5, 2));
+  const liftY = (push1 + push2) * 0.006 * cantBlend;
+
+  return {
+    pitch: cantBlend === 0 ? 0 : targetPitch * cantBlend,
+    roll: cantBlend === 0 ? 0 : targetRoll * cantBlend,
+    liftY,
+    cantBlend,
+  };
+}
 
 /**
  * First-Person 3D Weapons Viewmodels & Combat System:
@@ -146,6 +195,23 @@ export class WeaponSystem {
     this._camDir = new THREE.Vector3();
     this._toTarget = new THREE.Vector3();
 
+    // WeaponCycler State Machine: CARRY -> HOLSTER -> DRAW -> CARRY
+    this.cycler = new WeaponCycler({
+      activeWeapon: this.activeWeapon,
+      loadout: this.loadout,
+      getUnlockedWeapons: () => this.weaponsUnlocked,
+      onActiveWeaponChanged: (newWeapon) => {
+        this.activeWeapon = newWeapon;
+        this._updateFlashlightMount();
+      },
+      onVisibilityChanged: () => {
+        this._syncVisibility();
+      },
+      onPlayClip: (slot, info) => {
+        this._playCyclerClip(slot, info);
+      },
+    });
+
     this._buildGlock();
     this._buildKnife();
     this._initShotgunMount();
@@ -153,6 +219,10 @@ export class WeaponSystem {
     this._loadHeroWeaponModels();
     this._syncVisibility();
     this._updateFlashlightMount();
+  }
+
+  get isCycleLocked() {
+    return Boolean(this.cycler && this.cycler.isLocked);
   }
 
   get ammoInMag() {
@@ -175,11 +245,13 @@ export class WeaponSystem {
 
   setLoadout(loadout, { unarmed = false } = {}) {
     this.loadout = loadout;
+    if (this.cycler) this.cycler.loadout = loadout;
     if (loadout === 'level1') {
       if (unarmed || (!this.weaponsUnlocked.shotgun && !this.weaponsUnlocked.sword)) {
         this.activeWeapon = 'unarmed';
         this.holstered = true;
         this.holsterBlend = 1;
+        if (this.cycler) this.cycler.forceEquip('unarmed');
         this._syncVisibility();
         this._updateFlashlightMount();
       } else if (this.weaponsUnlocked.shotgun) {
@@ -235,7 +307,23 @@ export class WeaponSystem {
 
   _collectGrabBones() {
     if (!this.armsRoot) return;
-    const chains = {
+    const v8Chains = {
+      R: {
+        index: ['RightIndexProximal', 'RightIndexIntermediate', 'RightIndexDistal'],
+        middle: ['RightMiddleProximal', 'RightMiddleIntermediate', 'RightMiddleDistal'],
+        ring: ['RightRingProximal', 'RightRingIntermediate', 'RightRingDistal'],
+        pinky: ['RightPinkyProximal', 'RightPinkyIntermediate', 'RightPinkyDistal'],
+        thumb: ['RightThumbProximal', 'RightThumbIntermediate', 'RightThumbDistal'],
+      },
+      L: {
+        index: ['LeftIndexProximal', 'LeftIndexIntermediate', 'LeftIndexDistal'],
+        middle: ['LeftMiddleProximal', 'LeftMiddleIntermediate', 'LeftMiddleDistal'],
+        ring: ['LeftRingProximal', 'LeftRingIntermediate', 'LeftRingDistal'],
+        pinky: ['LeftPinkyProximal', 'LeftPinkyIntermediate', 'LeftPinkyDistal'],
+        thumb: ['LeftThumbProximal', 'LeftThumbIntermediate', 'LeftThumbDistal'],
+      },
+    };
+    const legacyChains = {
       R: {
         index: ['IndexBeginning.R.001', 'Index.R.001', 'IndexTip.R.001'],
         thumb: ['ThumbBeginning.R.001', 'Thumb.R.001', 'ThumbTip.R.001'],
@@ -249,15 +337,15 @@ export class WeaponSystem {
     };
     const byName = new Map();
     this.armsRoot.traverse((o) => {
-      // GLTFLoader sanitizes node names (dots are stripped: 'Hand.R.001'
-      // loads as 'HandR001'), so match on alphanumeric-only keys.
-      if (o.isBone) byName.set(o.name.replace(/[^a-zA-Z0-9]/g, ''), o);
+      if (o.isBone) byName.set(o.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase(), o);
     });
+    const isV8 = byName.has('righthand') || byName.has('weapon') || byName.has('rightindexproximal');
+    const chains = isV8 ? v8Chains : legacyChains;
     const out = { R: {}, L: {} };
     for (const hand of ['R', 'L']) {
-      for (const chain of ['index', 'thumb', 'doubles']) {
+      for (const chain of Object.keys(chains[hand])) {
         out[hand][chain] = chains[hand][chain]
-          .map((n) => byName.get(n.replace(/[^a-zA-Z0-9]/g, '')))
+          .map((n) => byName.get(n.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()))
           .filter(Boolean);
         for (const b of out[hand][chain]) this._grabRest.set(b, b.quaternion.clone());
       }
@@ -268,16 +356,16 @@ export class WeaponSystem {
 
   _applyGrabPose(pose) {
     if (!this._grabBones) return;
-    // Chain curl limits (radians) matched to the fps_arms rig:
-    const CHAIN_MAX = { index: 2.0, doubles: 2.1, thumb: 1.5 };
+    const CHAIN_MAX = { index: 2.0, doubles: 2.1, thumb: 1.5, middle: 2.1, ring: 2.1, pinky: 2.1 };
     for (const hand of ['R', 'L']) {
       const pHand = pose[hand];
       if (!pHand) continue;
-      for (const chain of ['index', 'thumb', 'doubles']) {
+      for (const chain of Object.keys(this._grabBones[hand])) {
         const bones = this._grabBones[hand][chain];
         if (!bones || bones.length === 0) continue;
-        const curl = THREE.MathUtils.clamp(pHand[chain] ?? 0, 0, 1);
-        const max = CHAIN_MAX[chain];
+        const rawCurl = pHand[chain] ?? (chain === 'middle' || chain === 'ring' || chain === 'pinky' ? pHand.doubles : 0);
+        const curl = THREE.MathUtils.clamp(rawCurl ?? 0, 0, 1);
+        const max = CHAIN_MAX[chain] ?? 2.0;
         // Thumb curls along local Z; fingers curl along local X.
         const axis = chain === 'thumb' ? this._grabAxisZ : this._grabAxisX;
         for (let i = 0; i < bones.length; i++) {
@@ -333,15 +421,30 @@ export class WeaponSystem {
     const dummyRoot = new THREE.Object3D();
     const dummyShell = new THREE.Object3D();
     const dummyWorld = new THREE.Object3D();
-    this.shotgunAnimator = new ShotgunAnimator({
-      root: dummyRoot,
-      shellTemplate: dummyShell,
-      worldShellParent: dummyWorld,
-      muzzleFlash: this.shotgunMuzzleFlash,
-      shotgunMuzzleLight: this.shotgunMuzzleLight,
-      muzzleLight: this.shotgunMuzzleLight,
-      triggerBlade: this.shotgunTriggerBlade,
-    });
+    this.shotgunAnimator = new ShotgunAnimator(
+      {
+        root: dummyRoot,
+        shellTemplate: dummyShell,
+        worldShellParent: dummyWorld,
+        muzzleFlash: this.shotgunMuzzleFlash,
+        shotgunMuzzleLight: this.shotgunMuzzleLight,
+        muzzleLight: this.shotgunMuzzleLight,
+        triggerBlade: this.shotgunTriggerBlade,
+      },
+      {
+        onShellInserted: () => {
+          if (this.shotgunReserve > 0 && this.shotgunAmmoInMag < this.shotgunMagSize) {
+            this.shotgunAmmoInMag += 1;
+            this.shotgunReserve -= 1;
+            this.callbacks.onAmmoChanged?.();
+          }
+        },
+        onReloadComplete: () => {
+          this.reloading = false;
+          this.callbacks.onAmmoChanged?.();
+        },
+      }
+    );
   }
 
   getShotgunAnimState() {
@@ -440,8 +543,19 @@ export class WeaponSystem {
   }
 
   _playArmsClip(clipKey, { loop = true, fade = 0.19, timeScale = 1.0 } = {}) {
-    if (!this.armsMixer || !this.armsActions[clipKey]) return;
-    const next = this.armsActions[clipKey];
+    if (!this.armsMixer) return;
+    let resolvedKey = clipKey;
+    if (clipKey === 'idle' && this.activeWeapon === 'shotgun') {
+      if (this.armsActions.GA_Carry || this.armsActions.ga_carry) {
+        resolvedKey = this.armsActions.GA_Carry ? 'GA_Carry' : 'ga_carry';
+      }
+    }
+    const next =
+      this.armsActions[resolvedKey] ||
+      this.armsActions[resolvedKey.toLowerCase()] ||
+      this.armsActions['GA_' + resolvedKey.charAt(0).toUpperCase() + resolvedKey.slice(1)] ||
+      this.armsActions.idle;
+    if (!next) return;
     if (this.activeArmsAction === next && loop) return;
 
     next.reset();
@@ -462,14 +576,16 @@ export class WeaponSystem {
       return;
     }
 
-    // Find Hand.R.001 bone and existing Glock19 reference mesh inside fps_arms.glb
-    // GLTFLoader sanitizes node names (dots are stripped: 'Hand.R.001' loads as 'HandR001')
+    // Find Weapon bone or RightHand (was Hand.R.001) inside fps_arms_v8.glb
     let handBone = null;
+    let weaponBone = null;
     let refGlockMesh = null;
     this.armsRoot.traverse((obj) => {
       if (obj.isBone) {
         const clean = obj.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-        if (clean === 'handr001' || clean === 'handr') {
+        if (clean === 'weapon') {
+          weaponBone = obj;
+        } else if (clean === 'righthand' || clean === 'handr001' || clean === 'handr') {
           handBone = obj;
         }
       }
@@ -481,17 +597,15 @@ export class WeaponSystem {
       }
     });
 
-    // The rig's built-in Glock19 is a posing reference ONLY — never a visible
-    // weapon. Hide it unconditionally (before any early return) so it can never
-    // leak into a loadout next to the equipped weapon (Lotty, Nov 22, 2026).
     if (refGlockMesh) {
       refGlockMesh.visible = false;
       this._armsRefGlockMesh = refGlockMesh;
     }
 
-    if (!handBone) return;
+    const targetBone = weaponBone || handBone;
+    if (!targetBone) return;
 
-    // Compute exact world-space bounding box of the rigged reference Glock19 in bind/idle pose
+    // Compute exact world-space bounding box of reference or target bone
     this.armsRoot.updateMatrixWorld(true);
     let targetLen = 0.25;
     let refCenterWorld = new THREE.Vector3(0.0, 0.0, -0.05);
@@ -502,6 +616,8 @@ export class WeaponSystem {
       refBox.getCenter(refCenterWorld);
       targetLen = Math.max(refSize.x, refSize.y, refSize.z, 0.22);
       refGlockMesh.visible = false;
+    } else {
+      targetBone.getWorldPosition(refCenterWorld);
     }
 
     // Normalize hero glock.glb around its own center
@@ -513,41 +629,40 @@ export class WeaponSystem {
     gBox.getCenter(gCenter);
     glockModel.position.sub(gCenter);
 
-    // Orient hero glock.glb so its muzzle (-X in raw Tripo export) points straight downrange (-Z in glockGroup space)
+    // Orient hero glock.glb so its muzzle points straight downrange (-Z in glockGroup space)
     const glockAligned = new THREE.Group();
     glockAligned.add(glockModel);
     const maxDim = Math.max(gSize.x, gSize.y, gSize.z, 0.001);
     const desiredWorldScale = targetLen / maxDim;
-    glockAligned.rotation.y = -Math.PI * 0.5; // maps -X muzzle -> -Z downrange!
+    glockAligned.rotation.y = -Math.PI * 0.5;
 
-    // Convert world-aligned orientation & position into Hand.R.001 local bone space
-    const handWorldMat = new THREE.Matrix4().copy(handBone.matrixWorld);
-    const handInv = handWorldMat.clone().invert();
-    const handWorldScale = new THREE.Vector3();
-    const handWorldPos = new THREE.Vector3();
-    const handWorldQuat = new THREE.Quaternion();
-    handWorldMat.decompose(handWorldPos, handWorldQuat, handWorldScale);
+    // Convert world-aligned orientation & position into target bone local space
+    const boneWorldMat = new THREE.Matrix4().copy(targetBone.matrixWorld);
+    const boneInv = boneWorldMat.clone().invert();
+    const boneWorldScale = new THREE.Vector3();
+    const boneWorldPos = new THREE.Vector3();
+    const boneWorldQuat = new THREE.Quaternion();
+    boneWorldMat.decompose(boneWorldPos, boneWorldQuat, boneWorldScale);
 
-    // Build wrapper parented directly to Hand.R.001 bone
+    // Build wrapper parented directly to Weapon / RightHand bone
     const mount = new THREE.Group();
     mount.name = 'HeroGlockHandMount';
-    // Cancel out hand bone world rotation so glock stays aligned to -Z barrel-forward, then follow hand bone animation!
-    const invQuat = handWorldQuat.clone().invert();
-    const localCenter = refCenterWorld.clone().applyMatrix4(handInv);
+    const invQuat = boneWorldQuat.clone().invert();
+    const localCenter = refCenterWorld.clone().applyMatrix4(boneInv);
     mount.position.copy(localCenter);
     mount.quaternion.copy(invQuat);
-    const invBoneScale = 1 / Math.max(0.0001, handWorldScale.x);
+    const invBoneScale = 1 / Math.max(0.0001, boneWorldScale.x);
     mount.scale.setScalar(desiredWorldScale * invBoneScale);
     mount.add(glockAligned);
 
-    handBone.add(mount);
+    targetBone.add(mount);
     this._heroGlockHandMount = mount;
     this._mountedGlockOnArms = true;
     this._syncVisibility();
   }
 
   _loadHeroWeaponModels() {
-    // 1. Load rigged fps_arms.glb (clips: Armature|Grip, Armature|Idle, Armature|Reload, Armature|Shoot)
+    // 1. Load rigged fps_arms.glb (fps_arms_v8: 43 bones, RightHand/Weapon, LeftHand, 5 GA_* shotgun clips)
     tryLoadModel('heroes/fps_arms', { castShadow: false, receiveShadow: false }).then((gltf) => {
       if (!gltf) {
         console.warn('[FALLBACK] heroes/fps_arms failed to load; procedural fallback viewmodel retained');
@@ -560,9 +675,7 @@ export class WeaponSystem {
       armsScene.traverse((child) => {
         if (child.isMesh) {
           child.frustumCulled = false;
-          // Hide the rig's built-in Glock19 reference mesh the moment the arms
-          // load — it is a posing reference, never a visible weapon, and must
-          // not depend on the hero-Glock mount succeeding (Lotty, Nov 22).
+          // Hide Glock19 reference mesh if present (not present in v8)
           if (child.name && child.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === 'glock19') {
             child.visible = false;
             this._armsRefGlockMesh = child;
@@ -609,24 +722,37 @@ export class WeaponSystem {
 
       const armsPivot = new THREE.Group();
       armsPivot.name = 'FPSArmsRig';
-      // Measure arms bounding box in raw pose, then scale & frame cleanly in camera view
-      armsScene.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(armsScene);
-      const size = new THREE.Vector3();
-      const center = new THREE.Vector3();
-      box.getSize(size);
-      box.getCenter(center);
 
-      const maxSpan = Math.max(size.x, size.y, size.z, 0.001);
-      const targetSpan = 0.92; // Hands BIGGER on screen (Lotty, Nov 20, 2026; was 0.68)
-      const sc = targetSpan / maxSpan;
-      armsScene.scale.setScalar(sc);
-      armsScene.position.set(-center.x * sc, -center.y * sc, -center.z * sc);
+      const isV8Rig = Boolean(
+        armsScene.getObjectByName('RightHand') ||
+        armsScene.getObjectByName('Weapon') ||
+        armsScene.getObjectByName('LeftHand')
+      );
 
-      // fps_arms extends from shoulders (-X) to hands (+X): rotate +90° Y so arms aim straight downrange (-Z)
-      armsPivot.rotation.y = Math.PI * 0.5;
-      armsPivot.position.set(0.15, -0.26, -0.38);
-      armsPivot.add(armsScene);
+      if (isV8Rig) {
+        // v8 rig (bitkiln) is modeled in meters in viewmodel camera space (eye at origin, forward down -Z)
+        armsScene.scale.set(1, 1, 1);
+        armsScene.position.set(0, 0, 0);
+        armsPivot.rotation.set(0, 0, 0);
+        armsPivot.position.set(0, 0, 0);
+        armsPivot.add(armsScene);
+      } else {
+        armsScene.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(armsScene);
+        const size = new THREE.Vector3();
+        const center = new THREE.Vector3();
+        box.getSize(size);
+        box.getCenter(center);
+
+        const maxSpan = Math.max(size.x, size.y, size.z, 0.001);
+        const targetSpan = 0.92;
+        const sc = targetSpan / maxSpan;
+        armsScene.scale.setScalar(sc);
+        armsScene.position.set(-center.x * sc, -center.y * sc, -center.z * sc);
+        armsPivot.rotation.y = Math.PI * 0.5;
+        armsPivot.position.set(0.15, -0.26, -0.38);
+        armsPivot.add(armsScene);
+      }
 
       // Hide procedural fallback Glock meshes while keeping muzzle flash & muzzle light active
       for (const child of this.glockGroup.children) {
@@ -638,28 +764,49 @@ export class WeaponSystem {
         this._standaloneGlockPivot.visible = false;
       }
 
-      // Reparent arms OUT of glockGroup directly to the viewmodel root (weapons.root)
-      // so hands remain visible with every loadout (unarmed, shotgun, sword, glock, knife)
       this.root.add(armsPivot);
       this.armsRoot = armsPivot;
       this.armsLoaded = true;
       this._armsPivotBasePos = armsPivot.position.clone();
 
-      // Setup AnimationMixer with 150-250 ms crossfade actions
+      // Reparent flashlight hand-mount anchor to LeftHand bone
+      let leftHandBone = null;
+      armsScene.traverse((obj) => {
+        if (obj.isBone) {
+          const clean = obj.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+          if (clean === 'lefthand' || clean === 'handl') {
+            leftHandBone = obj;
+          }
+        }
+      });
+      if (leftHandBone) {
+        leftHandBone.add(this.handFlashlightAnchor);
+        this.handFlashlightAnchor.position.set(0, 0, 0);
+        this.handFlashlightAnchor.rotation.set(0, 0, 0);
+      }
+
+      // Setup AnimationMixer with all baked clips
       if (gltf.animations && gltf.animations.length > 0) {
         this.armsMixer = new THREE.AnimationMixer(armsScene);
         for (const clip of gltf.animations) {
-          const lower = clip.name.toLowerCase();
-          if (lower.includes('idle')) this.armsActions.idle = this.armsMixer.clipAction(clip);
-          else if (lower.includes('grip')) this.armsActions.grip = this.armsMixer.clipAction(clip);
-          else if (lower.includes('reload')) this.armsActions.reload = this.armsMixer.clipAction(clip);
-          else if (lower.includes('shoot')) this.armsActions.shoot = this.armsMixer.clipAction(clip);
+          const name = clip.name;
+          const lower = name.toLowerCase();
+          const action = this.armsMixer.clipAction(clip);
+          this.armsActions[name] = action;
+          this.armsActions[lower] = action;
         }
-        // Sample frame 0 of Idle before mounting glock.glb so bone matrices are in exact Idle pose
-        if (this.armsActions.idle) {
-          this._playArmsClip('idle', { loop: true, fade: 0.0 });
-          this.armsMixer.update(0.016);
+
+        // Swap placeholder draw/holster curves for real baked clips in Cycler
+        if (this.cycler) {
+          const gaHolsterClip = gltf.animations.find((c) => c.name === 'GA_Holster') || null;
+          const gaDrawClip = gltf.animations.find((c) => c.name === 'GA_Draw') || null;
+          if (gaHolsterClip) this.cycler.setClipSlot('holster', gaHolsterClip);
+          if (gaDrawClip) this.cycler.setClipSlot('draw', gaDrawClip);
         }
+
+        const initialKey = this.activeWeapon === 'shotgun' ? 'ga_carry' : 'idle';
+        this._playArmsClip(initialKey, { loop: true, fade: 0.0 });
+        this.armsMixer.update(0.016);
       }
 
       this._collectGrabBones();
@@ -932,7 +1079,7 @@ export class WeaponSystem {
   }
 
   triggerInspect() {
-    if (this.holstered || this.reloading || this.slashing || this.shoving || this.grabAnimator.active) return false;
+    if (this.holstered || this.reloading || this.slashing || this.shoving || this.grabAnimator.active || this.isCycleLocked) return false;
     this.inspecting = true;
     this.inspectTimer = 0;
     if (this.activeWeapon === 'glock') {
@@ -942,12 +1089,46 @@ export class WeaponSystem {
   }
 
   triggerShove() {
-    if (this.shoving || this.slashing || this.grabAnimator.active) return false;
+    if (this.shoving || this.slashing || this.grabAnimator.active || this.isCycleLocked) return false;
     this.cancelReload();
     this.inspecting = false;
     this.shoving = true;
     this.shoveTimer = 0;
     return true;
+  }
+
+  _playCyclerClip(slot, info) {
+    if (!this.armsMixer) return;
+    if (slot === 'carry') {
+      const carryClip = this.activeWeapon === 'shotgun' ? 'GA_Carry' : 'idle';
+      this._playArmsClip(carryClip, { loop: true, fade: 0.2 });
+      return;
+    }
+
+    let clipName = null;
+    if (slot === 'holster') {
+      clipName = this.activeWeapon === 'shotgun' ? 'GA_Holster' : 'Holster';
+    } else if (slot === 'draw') {
+      clipName = this.activeWeapon === 'shotgun' ? 'GA_Draw' : 'Draw';
+    }
+
+    if (clipName && (this.armsActions[clipName] || this.armsActions[clipName.toLowerCase()])) {
+      this._playArmsClip(clipName, { loop: false, fade: 0.1 });
+      return;
+    }
+
+    if (info?.clip) {
+      const action = this.armsMixer.clipAction(info.clip);
+      if (action) {
+        action.reset().setLoop(THREE.LoopOnce).play();
+        action.clampWhenFinished = true;
+      }
+      return;
+    }
+
+    if (this.armsActions && this.armsActions[slot]) {
+      this._playArmsClip(slot, { loop: false, fade: 0.1 });
+    }
   }
 
   cancelReload() {
@@ -957,7 +1138,8 @@ export class WeaponSystem {
     if (this.shotgunAnimator) {
       this.shotgunAnimator.interruptReload();
     }
-    this._playArmsClip('idle', { loop: true, fade: 0.18 });
+    const idleClip = this.activeWeapon === 'shotgun' ? 'GA_Carry' : 'idle';
+    this._playArmsClip(idleClip, { loop: true, fade: 0.18 });
   }
 
   equip(weapon) {
@@ -965,6 +1147,7 @@ export class WeaponSystem {
     if (weapon === 'unarmed') {
       this.activeWeapon = 'unarmed';
       this.holstered = true;
+      if (this.cycler) this.cycler.forceEquip('unarmed');
       this._syncVisibility();
       this._updateFlashlightMount();
       return true;
@@ -977,6 +1160,9 @@ export class WeaponSystem {
     }
     if (this.holstered) this.holstered = false;
     if (this.activeWeapon === weapon && !this.quickKnifeActive) {
+      if (this.cycler && this.cycler.state !== CYCLER_STATES.CARRY) {
+        this.cycler.forceEquip(weapon);
+      }
       this._updateFlashlightMount();
       return true;
     }
@@ -985,39 +1171,54 @@ export class WeaponSystem {
     this.quickKnifeActive = false;
     this.activeWeapon = weapon;
     this.swapAnim = 0.85;
+    if (this.cycler) {
+      this.cycler.forceEquip(weapon);
+    }
     this._syncVisibility();
     this._updateFlashlightMount();
     return true;
   }
 
-  swap() {
-    if (this.loadout === 'level1') {
-      if (this.activeWeapon === 'shotgun' && this.weaponsUnlocked.sword) {
-        return this.equip('sword');
+  swap({ instant = false } = {}) {
+    if (this.grabAnimator.active) return false;
+    if (this.holstered) this.holstered = false;
+    this.cancelReload();
+    this.inspecting = false;
+    this.quickKnifeActive = false;
+    if (instant) {
+      if (this.loadout === 'level1') {
+        if (this.activeWeapon === 'shotgun' && this.weaponsUnlocked.sword) {
+          return this.equip('sword');
+        }
+        if (this.activeWeapon === 'sword' && this.weaponsUnlocked.shotgun) {
+          return this.equip('shotgun');
+        }
+        if (this.activeWeapon === 'unarmed') {
+          if (this.weaponsUnlocked.shotgun) return this.equip('shotgun');
+          if (this.weaponsUnlocked.sword) return this.equip('sword');
+        }
+        return false;
       }
-      if (this.activeWeapon === 'sword' && this.weaponsUnlocked.shotgun) {
-        return this.equip('shotgun');
-      }
-      if (this.activeWeapon === 'unarmed') {
-        if (this.weaponsUnlocked.shotgun) return this.equip('shotgun');
-        if (this.weaponsUnlocked.sword) return this.equip('sword');
-      }
-      return false;
+      return this.equip(this.activeWeapon === 'glock' ? 'knife' : 'glock');
     }
-    return this.equip(this.activeWeapon === 'glock' ? 'knife' : 'glock');
+    if (this.cycler) {
+      return this.cycler.requestSwap();
+    }
+    return false;
   }
 
   _syncVisibility() {
-    const isUnarmed = this.activeWeapon === 'unarmed';
-    const isShotgun = !isUnarmed && this.activeWeapon === 'shotgun' && !this.quickKnifeActive;
-    const isSword = !isUnarmed && this.activeWeapon === 'sword' && !this.quickKnifeActive;
+    const visibleWeapon = this.cycler ? this.cycler.visibleWeapon : this.activeWeapon;
+    const isUnarmed = visibleWeapon === 'unarmed' || visibleWeapon === null;
+    const isShotgun = !isUnarmed && visibleWeapon === 'shotgun' && !this.quickKnifeActive;
+    const isSword = !isUnarmed && visibleWeapon === 'sword' && !this.quickKnifeActive;
     const showKnife =
       !isUnarmed &&
       this.loadout !== 'level1' &&
-      (this.activeWeapon === 'knife' || this.quickKnifeActive) &&
+      (visibleWeapon === 'knife' || this.quickKnifeActive) &&
       !isSword;
     const showGlock =
-      !isUnarmed && this.loadout !== 'level1' && this.activeWeapon === 'glock' && !showKnife;
+      !isUnarmed && this.loadout !== 'level1' && visibleWeapon === 'glock' && !showKnife;
 
     if (this.glockGroup) this.glockGroup.visible = showGlock;
     if (this.knifeGroup) this.knifeGroup.visible = showKnife;
@@ -1315,6 +1516,7 @@ export class WeaponSystem {
   }
 
   startReload() {
+    if (this.isCycleLocked) return false;
     if (this.holstered || this.activeWeapon === 'unarmed') return false;
     if (this.reloading || this.quickKnifeActive) return false;
 
@@ -1334,11 +1536,14 @@ export class WeaponSystem {
       if (this.shotgunAmmoInMag >= this.shotgunMagSize || this.shotgunReserve <= 0) return false;
       this.inspecting = false;
       this.reloading = true;
+      this.reloadTimer = 0;
+      this.reloadDuration = 40 / 30; // 1.333 s per GA_Reload (40 frames @ 30 fps)
       const shellsNeeded = Math.min(this.shotgunMagSize - this.shotgunAmmoInMag, this.shotgunReserve);
       const wasEmpty = this.shotgunAmmoInMag === 0;
       if (this.shotgunAnimator) {
         this.shotgunAnimator.startReload(shellsNeeded, wasEmpty);
       }
+      this._playArmsClip('GA_Reload', { loop: false, fade: 0.12 });
       this.callbacks.onReloadStarted?.();
       return true;
     }
@@ -1347,6 +1552,7 @@ export class WeaponSystem {
   }
 
   triggerPrimary(enemyManager, worldMeshes) {
+    if (this.isCycleLocked) return false;
     if (this.grabAnimator.active) return false; // hands are busy — unskippable grab
     if (this.activeWeapon === 'unarmed') return false;
     if (this.holstered) {
@@ -1370,7 +1576,7 @@ export class WeaponSystem {
   }
 
   triggerSwordSlash() {
-    if (this.swordSlashing || this.shoving) return false;
+    if (this.isCycleLocked || this.swordSlashing || this.shoving) return false;
     if (this.holstered) this.holstered = false;
     this.inspecting = false;
     this.swordSlashing = true;
@@ -1397,7 +1603,7 @@ export class WeaponSystem {
   }
 
   _fireShotgun(enemyManager, worldMeshes) {
-    if (this.shoving || this.fireCooldown > 0) return false;
+    if (this.isCycleLocked || this.shoving || this.fireCooldown > 0) return false;
     // Reload interrupt: if reloading and we have chambered shells, interrupt reload and fire immediately
     if (this.reloading) {
       if (this.shotgunAmmoInMag > 0) {
@@ -1430,6 +1636,7 @@ export class WeaponSystem {
     if (this.shotgunAnimator) {
       this.shotgunAnimator.playFireAndPump();
     }
+    this._playArmsClip('GA_Pump', { loop: false, fade: 0.05 });
 
     sfx.playGunshot();
     pulseRumble('shotgun_blast', this.callbacks.controls);
@@ -1492,6 +1699,7 @@ export class WeaponSystem {
   }
 
   triggerKnifeSlash(isQuick = false) {
+    if (this.isCycleLocked) return false;
     // §D: Knife is disabled in Level One (script arsenal is Balistucia + Sword).
     if (this.loadout === 'level1') {
       if (this.weaponsUnlocked.sword && this.activeWeapon === 'sword') {
@@ -1515,7 +1723,7 @@ export class WeaponSystem {
   }
 
   _fireGlock(enemyManager, worldMeshes) {
-    if (this.reloading || this.quickKnifeActive || this.shoving || this.fireCooldown > 0) return false;
+    if (this.isCycleLocked || this.reloading || this.quickKnifeActive || this.shoving || this.fireCooldown > 0) return false;
     if (this.ammoInMag <= 0) {
       sfx.playDryFire();
       this.fireCooldown = 0.2;
@@ -1593,6 +1801,14 @@ export class WeaponSystem {
   }
 
   update(dt, controls, enemyManager, playerHp = 100) {
+    if (this.cycler) {
+      this.cycler.update(dt);
+    }
+    this._syncVisibility();
+    const cyclerOffset = this.cycler
+      ? this.cycler.getSampledCurveOffset()
+      : { position: new THREE.Vector3(), rotation: new THREE.Euler() };
+
     if (this.fireCooldown > 0) this.fireCooldown = Math.max(0, this.fireCooldown - dt);
 
     // Toggle flashlight if LB / KeyF requested via controls
@@ -1613,9 +1829,13 @@ export class WeaponSystem {
         !this.inspecting &&
         this.fireCooldown <= 0 &&
         this.activeArmsAction &&
-        this.activeArmsAction !== this.armsActions.idle
+        this.activeArmsAction !== this.armsActions.idle &&
+        this.activeArmsAction !== this.armsActions.GA_Carry &&
+        this.activeArmsAction !== this.armsActions.ga_carry &&
+        (!this.cycler || !this.cycler.isLocked)
       ) {
-        this._playArmsClip('idle', { loop: true, fade: 0.22 });
+        const carryClip = this.activeWeapon === 'shotgun' ? 'GA_Carry' : 'idle';
+        this._playArmsClip(carryClip, { loop: true, fade: 0.22 });
       }
     }
 
@@ -1667,6 +1887,29 @@ export class WeaponSystem {
       }
     }
 
+    // Shotgun Reload cant & lift progress (driven by computeShotgunReloadCant synced with GA_Reload)
+    let shotgunReloadPitch = 0;
+    let shotgunReloadRoll = 0;
+    let shotgunReloadLiftY = 0;
+    if (this.reloading && this.activeWeapon === 'shotgun') {
+      this.reloadTimer += dt;
+      const p = this.reloadDuration > 0 ? Math.min(1, this.reloadTimer / this.reloadDuration) : 0;
+      const cant = computeShotgunReloadCant(p);
+      shotgunReloadPitch = cant.pitch;
+      shotgunReloadRoll = cant.roll;
+      shotgunReloadLiftY = cant.liftY;
+      if (this.reloadTimer >= this.reloadDuration) {
+        const needed = this.shotgunMagSize - this.shotgunAmmoInMag;
+        const load = Math.min(needed, this.shotgunReserve, 2);
+        this.shotgunAmmoInMag += load;
+        this.shotgunReserve -= load;
+        this.reloading = false;
+        this.reloadTimer = 0;
+        this.callbacks.onAmmoChanged?.();
+        this._playArmsClip('GA_Carry', { loop: true, fade: 0.2 });
+      }
+    }
+
     // Weapon Inspect flourish (D-pad Up / T)
     let inspectRotY = 0;
     let inspectRotZ = 0;
@@ -1704,7 +1947,7 @@ export class WeaponSystem {
     }
 
     // Layered organic non-repeating procedural idle (breathing + noise + 7-14 s weight shift + low HP tremor + post-sprint heave)
-    const aim = this.holstered || this.reloading || this.slashing ? 0 : controls.aimAmount || 0;
+    const aim = this.holstered || this.reloading || this.slashing || this.isCycleLocked ? 0 : controls.aimAmount || 0;
     const idle = stepViewmodelIdle(this.idleState, dt, {
       hp: playerHp,
       postSprintTimer: controls.staminaState ? controls.staminaState.postSprintTimer : 0,
@@ -1729,14 +1972,14 @@ export class WeaponSystem {
 
     // Glock + fps_arms transform
     this.glockGroup.position.set(
-      baseX + bobX + swayX + idle.posX + inspectPosX,
-      baseY + bobY + swayY + idle.posY + reloadDropY + inspectPosY - lowerY + this.recoilKick * 0.013,
-      baseZ + idle.posZ + shoveZ + this.recoilKick * (0.056 * (1 - aim * 0.35))
+      baseX + bobX + swayX + idle.posX + inspectPosX + cyclerOffset.position.x,
+      baseY + bobY + swayY + idle.posY + reloadDropY + inspectPosY - lowerY + this.recoilKick * 0.013 + cyclerOffset.position.y,
+      baseZ + idle.posZ + shoveZ + this.recoilKick * (0.056 * (1 - aim * 0.35)) + cyclerOffset.position.z
     );
     this.glockGroup.rotation.set(
-      this.recoilKick * (0.21 * (1 - aim * 0.35)) + idle.rotX + shoveRotX - (controls.isSprinting && !this.reloading ? 0.14 : 0) - this.holsterBlend * 0.55,
-      (controls.isSprinting && !this.reloading ? 0.18 : 0) + idle.rotY + inspectRotY,
-      reloadTiltZ + idle.rotZ + inspectRotZ
+      this.recoilKick * (0.21 * (1 - aim * 0.35)) + idle.rotX + shoveRotX - (controls.isSprinting && !this.reloading ? 0.14 : 0) - this.holsterBlend * 0.55 + cyclerOffset.rotation.x,
+      (controls.isSprinting && !this.reloading ? 0.18 : 0) + idle.rotY + inspectRotY + cyclerOffset.rotation.y,
+      reloadTiltZ + idle.rotZ + inspectRotZ + cyclerOffset.rotation.z
     );
     applyProceduralGlockKickback(this.glockSlide, this.slideBack, this.glockSlideRestZ, 0.052);
     this.glockMag.position.y = this.glockMagRestY + magDropY;
@@ -1744,14 +1987,14 @@ export class WeaponSystem {
     // fps_arms viewmodel transform (follows breathing idle, walk bob, sway across all loadouts)
     if (this.armsRoot && !this.grabAnimator.active && this._grabRelease === 0 && this._armsPivotBasePos) {
       this.armsRoot.position.set(
-        this._armsPivotBasePos.x + bobX * 0.7 + swayX * 0.5 + idle.posX,
-        this._armsPivotBasePos.y + bobY * 0.7 + swayY * 0.5 + idle.posY - lowerY * 0.4,
-        this._armsPivotBasePos.z + idle.posZ
+        this._armsPivotBasePos.x + bobX * 0.7 + swayX * 0.5 + idle.posX + cyclerOffset.position.x,
+        this._armsPivotBasePos.y + bobY * 0.7 + swayY * 0.5 + idle.posY - lowerY * 0.4 + cyclerOffset.position.y,
+        this._armsPivotBasePos.z + idle.posZ + cyclerOffset.position.z
       );
       this.armsRoot.rotation.set(
-        idle.rotX + (this.activeWeapon === 'glock' ? this.recoilKick * (0.21 * (1 - aim * 0.35)) : 0) - this.holsterBlend * 0.25,
-        idle.rotY,
-        idle.rotZ
+        idle.rotX + (this.activeWeapon === 'glock' ? this.recoilKick * (0.21 * (1 - aim * 0.35)) : 0) - this.holsterBlend * 0.25 + cyclerOffset.rotation.x,
+        idle.rotY + cyclerOffset.rotation.y,
+        idle.rotZ + cyclerOffset.rotation.z
       );
     }
 
@@ -1808,14 +2051,14 @@ export class WeaponSystem {
     }
 
     this.knifeGroup.position.set(
-      this.knifeRestPos.x + bobX + swayX + idle.posX + slashPosX + inspectPosX,
-      this.knifeRestPos.y + bobY + swayY + idle.posY + slashPosY + inspectPosY - lowerY,
-      this.knifeRestPos.z + idle.posZ + slashPosZ + shoveZ
+      this.knifeRestPos.x + bobX + swayX + idle.posX + slashPosX + inspectPosX + cyclerOffset.position.x,
+      this.knifeRestPos.y + bobY + swayY + idle.posY + slashPosY + inspectPosY - lowerY + cyclerOffset.position.y,
+      this.knifeRestPos.z + idle.posZ + slashPosZ + shoveZ + cyclerOffset.position.z
     );
     this.knifeGroup.rotation.set(
-      this.knifeRestRot.x + idle.rotX + slashRotX + shoveRotX - this.holsterBlend * 0.5,
-      this.knifeRestRot.y + idle.rotY + slashRotY + inspectRotY,
-      this.knifeRestRot.z + idle.rotZ + slashRotZ + inspectRotZ
+      this.knifeRestRot.x + idle.rotX + slashRotX + shoveRotX - this.holsterBlend * 0.5 + cyclerOffset.rotation.x,
+      this.knifeRestRot.y + idle.rotY + slashRotY + inspectRotY + cyclerOffset.rotation.y,
+      this.knifeRestRot.z + idle.rotZ + slashRotZ + inspectRotZ + cyclerOffset.rotation.z
     );
 
     // Balistucia Shotgun transform (pump animation driven by ShotgunAnimator — 0.09 m travel)
@@ -1826,14 +2069,14 @@ export class WeaponSystem {
       const shotgunBaseZ = THREE.MathUtils.lerp(this.shotgunRestPos.z, this.shotgunAdsPos.z, aim);
 
       this.shotgunGroup.position.set(
-        shotgunBaseX + bobX + swayX + idle.posX + inspectPosX,
-        shotgunBaseY + bobY + swayY + idle.posY + reloadDropY + inspectPosY - lowerY + this.recoilKick * 0.02,
-        shotgunBaseZ + idle.posZ + shoveZ + this.recoilKick * 0.08
+        shotgunBaseX + bobX + swayX + idle.posX + inspectPosX + cyclerOffset.position.x,
+        shotgunBaseY + bobY + swayY + idle.posY + shotgunReloadLiftY + inspectPosY - lowerY + this.recoilKick * 0.02 + cyclerOffset.position.y,
+        shotgunBaseZ + idle.posZ + shoveZ + this.recoilKick * 0.08 + cyclerOffset.position.z
       );
       this.shotgunGroup.rotation.set(
-        this.recoilKick * 0.35 + idle.rotX + shoveRotX - this.holsterBlend * 0.55,
-        idle.rotY + inspectRotY,
-        reloadTiltZ + idle.rotZ + inspectRotZ
+        shotgunReloadPitch + this.recoilKick * 0.35 + idle.rotX + shoveRotX - this.holsterBlend * 0.55 + cyclerOffset.rotation.x,
+        idle.rotY + inspectRotY + cyclerOffset.rotation.y,
+        shotgunReloadRoll + idle.rotZ + inspectRotZ + cyclerOffset.rotation.z
       );
     }
 
@@ -1883,14 +2126,14 @@ export class WeaponSystem {
 
     if (this.swordGroup) {
       this.swordGroup.position.set(
-        this.swordRestPos.x + bobX + swayX + idle.posX + swordSlashX + inspectPosX,
-        this.swordRestPos.y + bobY + swayY + idle.posY + swordSlashY + inspectPosY - lowerY,
-        this.swordRestPos.z + idle.posZ + swordSlashZ + shoveZ
+        this.swordRestPos.x + bobX + swayX + idle.posX + swordSlashX + inspectPosX + cyclerOffset.position.x,
+        this.swordRestPos.y + bobY + swayY + idle.posY + swordSlashY + inspectPosY - lowerY + cyclerOffset.position.y,
+        this.swordRestPos.z + idle.posZ + swordSlashZ + shoveZ + cyclerOffset.position.z
       );
       this.swordGroup.rotation.set(
-        this.swordRestRot.x + idle.rotX + swordRotX + shoveRotX - this.holsterBlend * 0.5,
-        this.swordRestRot.y + idle.rotY + swordRotY + inspectRotY,
-        this.swordRestRot.z + idle.rotZ + swordRotZ + inspectRotZ
+        this.swordRestRot.x + idle.rotX + swordRotX + shoveRotX - this.holsterBlend * 0.5 + cyclerOffset.rotation.x,
+        this.swordRestRot.y + idle.rotY + swordRotY + inspectRotY + cyclerOffset.rotation.y,
+        this.swordRestRot.z + idle.rotZ + swordRotZ + inspectRotZ + cyclerOffset.rotation.z
       );
     }
 

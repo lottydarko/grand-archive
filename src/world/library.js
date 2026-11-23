@@ -261,9 +261,12 @@ export function buildGrandLibrary(scene, renderer, tracks = [], isSoftwareGl = f
   eastWall.position.set(HALF_W + 0.3, HALL_H * 0.5, 0);
   wallGroup.add(westWall, eastWall);
 
-  // North wall (z = +7) split around the 6.4 m wide Portal Archway
-  const northLeft = new THREE.Mesh(new THREE.BoxGeometry(northSideSpan, HALL_H, 0.6), mats.stone);
-  northLeft.position.set(-(portalHalfW + northSideSpan * 0.5), HALL_H * 0.5, HALF_D + 0.3);
+  // North wall (z = +7) split around the 6.4 m wide Portal Archway and the NW Return Stair archway (x ∈ [-12, -10])
+  const nwMidSpan = 10.0 - portalHalfW; // 6.8 m between return stair opening and portal arch
+  const northLeft = new THREE.Mesh(new THREE.BoxGeometry(nwMidSpan, HALL_H, 0.6), mats.stone);
+  northLeft.position.set(-(portalHalfW + nwMidSpan * 0.5), HALL_H * 0.5, HALF_D + 0.3);
+  const nwStairLintel = new THREE.Mesh(new THREE.BoxGeometry(2.0, HALL_H - 3.6, 0.6), mats.stone);
+  nwStairLintel.position.set(-11.0, 3.6 + (HALL_H - 3.6) * 0.5, HALF_D + 0.3);
   const northRight = new THREE.Mesh(new THREE.BoxGeometry(northSideSpan, HALL_H, 0.6), mats.stone);
   northRight.position.set(portalHalfW + northSideSpan * 0.5, HALL_H * 0.5, HALF_D + 0.3);
   const northLintel = new THREE.Mesh(
@@ -271,7 +274,7 @@ export function buildGrandLibrary(scene, renderer, tracks = [], isSoftwareGl = f
     mats.stone
   );
   northLintel.position.set(0, portalH + (HALL_H - portalH) * 0.5, HALF_D + 0.3);
-  wallGroup.add(northLeft, northRight, northLintel);
+  wallGroup.add(northLeft, nwStairLintel, northRight, northLintel);
 
   // Carved brass/iron portal frame flanking the North Portal
   const portalPillarGeo = new THREE.BoxGeometry(0.42, portalH + 0.2, 0.82);
@@ -288,7 +291,8 @@ export function buildGrandLibrary(scene, renderer, tracks = [], isSoftwareGl = f
     { minX: -HALF_W - 0.6, maxX: HALF_W + 0.6, minZ: -HALF_D - 0.6, maxZ: -HALF_D + 0.05 }, // South
     { minX: -HALF_W - 0.6, maxX: -HALF_W + 0.05, minZ: -HALF_D - 0.6, maxZ: HALF_D + 0.6 }, // West
     { minX: HALF_W - 0.05, maxX: HALF_W + 0.6, minZ: -HALF_D - 0.6, maxZ: HALF_D + 0.6 }, // East
-    { minX: -HALF_W - 0.6, maxX: -portalHalfW, minZ: HALF_D - 0.05, maxZ: HALF_D + 0.6 }, // North-West
+    { minX: -10.0, maxX: -portalHalfW, minZ: HALF_D - 0.05, maxZ: HALF_D + 0.6 }, // North-West mid wall
+    { minX: -HALF_W - 0.6, maxX: -12.0, minZ: HALF_D - 0.05, maxZ: HALF_D + 0.6 }, // North-West corner post (opening x ∈ [-12, -10] clear for NW return stair)
     { minX: portalHalfW, maxX: HALF_W + 0.6, minZ: HALF_D - 0.05, maxZ: HALF_D + 0.6 } // North-East
   );
 

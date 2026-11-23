@@ -36,7 +36,7 @@ import { SatchelUI } from './ui/satchelUI.js';
 import { DriveVaultUI } from './ui/driveVaultUI.js';
 import { MapOverlay } from './ui/mapOverlay.js';
 import { createHorrorOverlay } from './shaders/horrorVignette.js';
-import { LEVEL_ONE_ZONES, LevelOneZoneController } from './world/levelOneZones.js';
+import { LEVEL_ONE_ZONES, LevelOneZoneController, DEFAULT_LEVEL_ONE_ZONE_BOUNDS } from './world/levelOneZones.js';
 import { triggerLevelOneRumble, pulseRumble } from './game/levelOneBindings.js';
 import { LionBoss, MazeOneGhoul, validateEnemyDamage, LION_STATES } from './entities/lionAndGhoulController.js';
 import { SHOTGUN_CONFIG, SWORD_CONFIG } from './player/levelOneWeapons.js';
@@ -68,6 +68,7 @@ import {
   buildLevelOneCorridor,
   LEVEL_ONE_SPAWNS,
   LEVEL_ONE_WORLD_BOUNDS,
+  COMPARTMENT_RESPAWNS,
 } from './world/levelOneSpiral.js';
 
 /**
@@ -492,6 +493,32 @@ const levelOneSpawnFlags = {
   mazeOnePopulated: false,
 };
 
+const voidFallState = {
+  active: false,
+  phase: 'idle', // 'idle' | 'plummet' | 'splat'
+  timer: 0,
+  respawnPoint: null,
+  overlayEl: null,
+  splatEl: null,
+};
+
+function getVoidFallOverlay() {
+  if (!voidFallState.overlayEl && typeof document !== 'undefined') {
+    const el = document.createElement('div');
+    el.id = 'void-fall-screen';
+    el.style.cssText =
+      'position:fixed;inset:0;pointer-events:none;z-index:99999;opacity:0;background:#000;display:flex;align-items:center;justify-content:center;transition:opacity 0.12s ease;';
+    const splat = document.createElement('div');
+    splat.style.cssText =
+      'width:100%;height:100%;background:radial-gradient(circle at center, rgba(160,10,10,0.92) 0%, rgba(30,0,0,0.98) 50%, #000 85%);opacity:0;transition:opacity 0.08s ease;';
+    el.appendChild(splat);
+    document.body.appendChild(el);
+    voidFallState.overlayEl = el;
+    voidFallState.splatEl = splat;
+  }
+  return voidFallState;
+}
+
 function playLevelOneEvents(events) {
   if (!Array.isArray(events)) return;
   for (const ev of events) {
@@ -526,7 +553,11 @@ function trySkipVillainCutscene() {
     if (enemies && enemies.lionBoss) {
       enemies.lionBoss.state = LION_STATES.IDLE;
       enemies.lionBoss.setCutsceneStalk(false);
-      enemies.lionBoss.group.position.set(0, 0, 150);
+      enemies.lionBoss.group.position.set(
+        LEVEL_ONE_SPAWNS.lionRoom.lionPos.x,
+        0,
+        LEVEL_ONE_SPAWNS.lionRoom.lionPos.z
+      );
     }
     return true;
   }
@@ -536,10 +567,17 @@ function trySkipVillainCutscene() {
 function startVillainCutscene() {
   if (!enemies) return;
   if (!enemies.lionBoss) {
-    enemies.spawnLionBoss(new THREE.Vector3(0, 0, 150), {
-      controls,
-      levelOneZones,
-    });
+    enemies.spawnLionBoss(
+      new THREE.Vector3(
+        LEVEL_ONE_SPAWNS.lionRoom.lionPos.x,
+        0,
+        LEVEL_ONE_SPAWNS.lionRoom.lionPos.z
+      ),
+      {
+        controls,
+        levelOneZones,
+      }
+    );
   }
   const { state: nextState, events } = advanceLevelOne(levelOneState, 'enter_aether_arena');
   levelOneState = nextState;
@@ -622,7 +660,15 @@ async function handleVinylCaseInteract(caseId) {
         if (library?.trapdoor?.group && canUnlockStairs(levelOneState)) {
           library.trapdoor.group.visible = true;
         }
-        showWhisper('level one complete — the way forward is open', 3.4);
+        cinemaLoader.play([
+          {
+            title: 'LEVEL ONE COMPLETE',
+            jp: '第一階層 踏破',
+            durationMs: 4500,
+            theme: 'obsidian',
+          },
+        ]);
+        showWhisper('LEVEL ONE COMPLETE — The Archive yields.', 5.0);
       }
 
       pendingCaseSlotId = entry.slotId;
@@ -1690,15 +1736,21 @@ async function bootstrap() {
 
   levelOneZones = new LevelOneZoneController({
     risingCaseMesh: levelOneCorridor.risingCaseMesh,
-    zoneBounds: {
-      [LEVEL_ONE_ZONES.MUSEUM_HALL]: { minX: -12.5, maxX: 12.5, minZ: -7.5, maxZ: 7.5 },
-      [LEVEL_ONE_ZONES.WHITE_AETHER]: { minX: -24, maxX: 24, minZ: 7.5, maxZ: 40 },
-      [LEVEL_ONE_ZONES.CASTLE_OF_THE_DEAD]: { minX: -32, maxX: 32, minZ: 40, maxZ: 80 },
-      [LEVEL_ONE_ZONES.MAZE_ONE]: { minX: -40, maxX: 40, minZ: 80, maxZ: 130 },
-      [LEVEL_ONE_ZONES.LION_ROOM]: { minX: -20, maxX: 20, minZ: 130, maxZ: 165 },
-    },
+    zoneBounds: { ...DEFAULT_LEVEL_ONE_ZONE_BOUNDS },
     onZoneEnter: (zoneId) => {
-      if (zoneId === LEVEL_ONE_ZONES.WHITE_AETHER) {
+      if (zoneId === LEVEL_ONE_ZONES.MUSEUM_HALL) {
+        if (
+          levelOneState &&
+          levelOneState.goldenVinylClaimed &&
+          levelOneState.step !== LEVEL_ONE_STEPS.RETURN_TO_HALL &&
+          levelOneState.step !== LEVEL_ONE_STEPS.LEVEL_ONE_COMPLETE
+        ) {
+          const res = advanceLevelOne(levelOneState, 'return_to_hall');
+          levelOneState = res.state;
+          playLevelOneEvents(res.events);
+          showWhisper('place the golden vinyl in the second display case', 3.6);
+        }
+      } else if (zoneId === LEVEL_ONE_ZONES.WHITE_AETHER) {
         const res = advanceLevelOne(levelOneState, 'enter_white_aether');
         levelOneState = res.state;
         playLevelOneEvents(res.events);
@@ -1745,7 +1797,7 @@ async function bootstrap() {
     },
     onCaseRiseComplete: () => {
       if (worldItems) {
-        worldItems.spawn('golden_vinyl', 0, 1.35, 150, 1);
+        worldItems.spawn('golden_vinyl', LEVEL_ONE_SPAWNS.lionRoom.risingCasePos.x, 1.35, LEVEL_ONE_SPAWNS.lionRoom.risingCasePos.z, 1);
         showWhisper('golden vinyl risen — claim it and return to the hall', 3.4);
       }
     },
@@ -1945,8 +1997,12 @@ function stepSimulation(dt) {
   transformer.update(simDt, elapsed);
 
   const portalOpen = Boolean(levelOneState && levelOneState.discInCase);
+  const room1NorthOpen = Boolean(
+    levelOneState &&
+      (levelOneState.weaponsUnlocked?.sword || levelOneState.swordPickedUp)
+  );
   const mazeExitOpen = Boolean(
-    levelOneState && levelOneState.mazeExitUnlocked && levelOneState.allLesserEnemiesDead
+    levelOneState && levelOneState.mazeExitUnlocked
   );
   const room2NorthLocked = Boolean(
     levelOneSpawnFlags.room2Triggered &&
@@ -1954,20 +2010,119 @@ function stepSimulation(dt) {
         levelOneState.step === LEVEL_ONE_STEPS.BRAIN_SPLATTED ||
         levelOneState.step === LEVEL_ONE_STEPS.BRAIN_WIPE)
   );
+  const returnStairOpen = Boolean(
+    levelOneState && !levelOneState.lionAlive
+  );
   if (levelOneCorridor) {
     levelOneCorridor.portalGateMesh.visible = !portalOpen;
+    if (levelOneCorridor.room1NorthGateMesh) {
+      levelOneCorridor.room1NorthGateMesh.visible = !room1NorthOpen;
+    }
+    if (levelOneCorridor.room2GateMesh) {
+      levelOneCorridor.room2GateMesh.visible = room2NorthLocked;
+    }
     levelOneCorridor.mazeExitGateMesh.visible = !mazeExitOpen;
+    if (levelOneCorridor.returnStairGateMesh) {
+      levelOneCorridor.returnStairGateMesh.visible = !returnStairOpen;
+    }
   }
   const allColliders = library.staticColliders.concat(
     transformer.getLiveShelfColliders(),
     levelOneCorridor ? levelOneCorridor.staticColliders : [],
-    levelOneCorridor ? levelOneCorridor.getGateColliders({ portalOpen, mazeExitOpen }) : [],
-    room2NorthLocked ? [{ minX: -12.5, maxX: 12.5, minZ: 79.2, maxZ: 80.5 }] : []
+    levelOneCorridor
+      ? levelOneCorridor.getGateColliders({
+          portalOpen,
+          room1NorthOpen,
+          room2Open: !room2NorthLocked,
+          mazeExitOpen,
+          returnStairOpen,
+        })
+      : []
   );
   const prevPosture = document.body.dataset.posture;
   const prevClimbing = controls.isClimbing;
 
+  if (controls && weapons) {
+    controls.aimLocked = weapons.isCycleLocked;
+  }
   controls.update(simDt, elapsed, allColliders, library.crawlUnderColliders, library.climbZones);
+
+  // VOID FALL: First-person plummet, SPLAT on the pure black bottom, then respawn at current compartment entrance
+  if (controls && controls.position) {
+    const p = controls.position;
+    const inHall = p.z <= 7.0 && Math.abs(p.x) <= 12.5;
+    const onReturnStair = (p.x >= -17.5 && p.x <= -6.5 && p.z >= 7.0 && p.z <= 65.5);
+    const isFalling = p.y < -1.8;
+    const outOfBounds = !inHall && !onReturnStair && (p.x > 16.5 || p.x < -17.5 || (p.z < 13.5 && p.x > 2.5));
+
+    if (!voidFallState.active && (isFalling || outOfBounds)) {
+      voidFallState.active = true;
+      voidFallState.phase = 'plummet';
+      voidFallState.timer = 0;
+      controls.movementLocked = true;
+      const cz = levelOneZones ? levelOneZones.currentZone : 'castle_of_the_dead';
+      voidFallState.respawnPoint = COMPARTMENT_RESPAWNS[cz] || COMPARTMENT_RESPAWNS.castle_of_the_dead;
+      const vf = getVoidFallOverlay();
+      if (vf.overlayEl) {
+        vf.overlayEl.style.opacity = '0.35';
+        if (vf.splatEl) vf.splatEl.style.opacity = '0';
+      }
+    }
+
+    if (voidFallState.active) {
+      voidFallState.timer += simDt;
+      const vf = getVoidFallOverlay();
+
+      if (voidFallState.phase === 'plummet') {
+        const fallSpeed = Math.min(-26.0, (controls.velocity?.y || -4.0) - 44.0 * simDt);
+        if (controls.velocity) controls.velocity.y = fallSpeed;
+        controls.position.y += fallSpeed * simDt;
+
+        if (camera) {
+          camera.rotation.x = THREE.MathUtils.lerp(camera.rotation.x, -Math.PI * 0.44, 0.1);
+        }
+
+        if (vf.overlayEl) {
+          const darkT = Math.min(0.95, voidFallState.timer / 1.0);
+          vf.overlayEl.style.opacity = String(darkT);
+        }
+
+        if (controls.position.y <= -20.0 || voidFallState.timer >= 1.25) {
+          voidFallState.phase = 'splat';
+          voidFallState.timer = 0;
+          controls.position.y = -22.0;
+          if (controls.velocity) controls.velocity.set(0, 0, 0);
+
+          try {
+            sfx.playBoneBreak?.();
+            sfx.playCinemaBoom?.();
+          } catch {}
+          controls.addTrauma?.(1.0);
+
+          if (vf.overlayEl && vf.splatEl) {
+            vf.overlayEl.style.opacity = '1.0';
+            vf.splatEl.style.opacity = '1.0';
+          }
+        }
+      } else if (voidFallState.phase === 'splat') {
+        if (voidFallState.timer >= 0.75) {
+          const respawn = voidFallState.respawnPoint;
+          controls.position.set(respawn.x, respawn.y, respawn.z);
+          controls.velocity?.set(0, 0, 0);
+          if (camera) camera.rotation.x = 0;
+          controls.movementLocked = false;
+          voidFallState.active = false;
+          voidFallState.phase = 'idle';
+
+          if (vf.overlayEl && vf.splatEl) {
+            vf.overlayEl.style.opacity = '0';
+            vf.splatEl.style.opacity = '0';
+          }
+          showWhisper('fallen into the void — respawned at entrance', 2.8);
+        }
+      }
+    }
+  }
 
   // §A.5 / P1: Castle Room 2 entry — spawn lone tutorial zombie + start diegetic LT->RT ADS tutorial
   if (
@@ -2027,7 +2182,13 @@ function stepSimulation(dt) {
       }
 
       const lion = enemies ? enemies.lionBoss : null;
-      const lionPos = lion ? lion.group.position : new THREE.Vector3(0, 0, 150);
+      const lionPos = lion
+        ? lion.group.position
+        : new THREE.Vector3(
+            LEVEL_ONE_SPAWNS.lionRoom.lionPos.x,
+            0,
+            LEVEL_ONE_SPAWNS.lionRoom.lionPos.z
+          );
 
       if (levelOneState.villainCutscenePhase === VILLAIN_CUTSCENE_PHASE.IDLE) {
         // Beat 1: Low-angle wide establishing shot framing archway and distant lion
@@ -2035,8 +2196,8 @@ function stepSimulation(dt) {
           lion.state = LION_STATES.IDLE;
           lion.setCutsceneStalk(false);
         }
-        camera.position.set(0, 1.2, 133);
-        camera.lookAt(0, 1.4, 150);
+        camera.position.set(0, 1.2, 53);
+        camera.lookAt(lionPos.x, 1.4, lionPos.z);
       } else if (levelOneState.villainCutscenePhase === VILLAIN_CUTSCENE_PHASE.APPROACH) {
         // Beat 2: Slow tracking shot, lion stalks forward under LUNGE flag
         if (lion) {
@@ -2044,7 +2205,7 @@ function stepSimulation(dt) {
           lion.setCutsceneStalk(true);
         }
         const t = levelOneState.villainCutsceneTimer - 2.2;
-        camera.position.set(Math.sin(t * 0.9) * 2.2, 1.35, 135 + t * 1.3);
+        camera.position.set(Math.sin(t * 0.9) * 1.5, 1.35, 54 + t * 0.8);
         camera.lookAt(lionPos.x, 1.3, lionPos.z);
       } else if (levelOneState.villainCutscenePhase === VILLAIN_CUTSCENE_PHASE.ROAR) {
         // Beat 3: Medium-close angle with micro-shake (<= 0.04) tied to roar peak
@@ -2053,7 +2214,7 @@ function stepSimulation(dt) {
           lion.setCutsceneStalk(false);
         }
         const shake = (Math.random() - 0.5) * 0.035;
-        camera.position.set(shake, 1.35 + shake, lionPos.z - 4.5);
+        camera.position.set(shake, 1.35 + shake, lionPos.z - 3.5);
         camera.lookAt(lionPos.x, 1.4, lionPos.z);
       } else if (levelOneState.villainCutscenePhase === VILLAIN_CUTSCENE_PHASE.LUNGE) {
         // Beat 4: Pullback tactical frame
@@ -2061,7 +2222,7 @@ function stepSimulation(dt) {
           lion.state = LION_STATES.LUNGE;
           lion.setCutsceneStalk(false);
         }
-        camera.position.set(0, 1.55, 137);
+        camera.position.set(0, 1.55, 54.5);
         camera.lookAt(lionPos.x, 1.35, lionPos.z);
       } else if (levelOneState.villainCutscenePhase === VILLAIN_CUTSCENE_PHASE.DONE) {
         if (lion) {
@@ -2213,7 +2374,7 @@ function stepSimulation(dt) {
       weapons.triggerKnifeSlash(true);
       hudDirty = true;
     }
-    if (act.fire && !tutorialBlockedFire) {
+    if (act.fire && !tutorialBlockedFire && !weapons.isCycleLocked) {
       if (weapons.triggerPrimary(enemies, worldRayMeshes)) hudDirty = true;
     }
   }
@@ -2370,8 +2531,10 @@ function stepSimulation(dt) {
   controls.resetFrameActions();
 
   const wasReloading = weapons.reloading;
+  const wasCycleLocked = weapons.isCycleLocked;
   weapons.update(simDt, controls, enemies, gameState.hp);
   if (wasReloading && !weapons.reloading) hudDirty = true;
+  if (wasCycleLocked !== weapons.isCycleLocked) hudDirty = true;
 
   const enemyTimeScale = levelOneState.adsPaused
     ? 0

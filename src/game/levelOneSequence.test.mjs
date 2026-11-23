@@ -15,7 +15,7 @@ import {
   canUnlockStairs,
 } from './levelOneSequence.js';
 import { LionBoss, LION_STATES, validateEnemyDamage } from '../entities/lionAndGhoulController.js';
-import { LEVEL_ONE_ZONES, LevelOneZoneController } from '../world/levelOneZones.js';
+import { LEVEL_ONE_ZONES, DEFAULT_LEVEL_ONE_ZONE_BOUNDS, LevelOneZoneController } from '../world/levelOneZones.js';
 import { getSpiralMazeLayout, LEVEL_ONE_SPAWNS } from '../world/levelOneSpiral.js';
 
 let passed = 0;
@@ -533,16 +533,8 @@ test('P1 verification: Room 2 and Maze One spawn triggers fire on zone entry wit
   let mazeOneSpawnCalls = 0;
   const placedPickups = [];
 
-  const zoneBounds = {
-    [LEVEL_ONE_ZONES.MUSEUM_HALL]: { minX: -12.5, maxX: 12.5, minZ: -7.5, maxZ: 7.5 },
-    [LEVEL_ONE_ZONES.WHITE_AETHER]: { minX: -24, maxX: 24, minZ: 7.5, maxZ: 40 },
-    [LEVEL_ONE_ZONES.CASTLE_OF_THE_DEAD]: { minX: -32, maxX: 32, minZ: 40, maxZ: 80 },
-    [LEVEL_ONE_ZONES.MAZE_ONE]: { minX: -40, maxX: 40, minZ: 80, maxZ: 130 },
-    [LEVEL_ONE_ZONES.LION_ROOM]: { minX: -20, maxX: 20, minZ: 130, maxZ: 165 },
-  };
-
   const zones = new LevelOneZoneController({
-    zoneBounds,
+    zoneBounds: DEFAULT_LEVEL_ONE_ZONE_BOUNDS,
     onZoneEnter: (zoneId) => {
       if (zoneId === LEVEL_ONE_ZONES.MAZE_ONE && mazeOneSpawnCalls === 0) {
         mazeOneSpawnCalls += 1;
@@ -552,15 +544,15 @@ test('P1 verification: Room 2 and Maze One spawn triggers fire on zone entry wit
     },
   });
 
-  // Walk Hall -> White Aether -> Castle Room 1: neither Room 2 nor Maze One has fired yet
-  zones.update(0.016, { x: 0, z: 0 });
-  zones.update(0.016, { x: 0, z: 22 });
-  zones.update(0.016, { x: 0, z: 48 });
+  // Walk Hall -> White Aether -> Castle Room 1 (Barrel Room): neither Room 2 nor Maze One has fired yet
+  zones.update(0.016, { x: 0, z: 0 });  // Inside Museum Hall (z: -7 to 7)
+  zones.update(0.016, { x: 0, z: 11 }); // Inside White Aether (z: 7 to 15)
+  zones.update(0.016, { x: 0, z: 19 }); // Inside Castle Room 1 / Barrel Room (z: 15 to 23)
   assert.equal(room2SpawnCalls, 0);
   assert.equal(mazeOneSpawnCalls, 0);
 
   // Enter Castle Room 2 (z >= LEVEL_ONE_SPAWNS.castleRoom2.bounds.minZ)
-  const room2Pos = { x: 0, z: 62 };
+  const room2Pos = { x: 0, z: 26 }; // Inside Room 2 (z: 23 to 29)
   zones.update(0.016, room2Pos);
   if (
     room2SpawnCalls === 0 &&
@@ -574,8 +566,8 @@ test('P1 verification: Room 2 and Maze One spawn triggers fire on zone entry wit
   assert.equal(mazeOneSpawnCalls, 0, 'Maze One population does not spawn while still in Castle Room 2');
 
   // Enter Maze One -> Maze One population + Spiral pickups fire once
-  zones.update(0.016, { x: 0, z: 86 });
-  zones.update(0.016, { x: 0, z: 94 }); // second tick inside Maze One must not duplicate spawns
+  zones.update(0.016, { x: 0, z: 32 }); // Inside Maze One (z: 29 to 51)
+  zones.update(0.016, { x: 0, z: 36 }); // second tick inside Maze One must not duplicate spawns
   assert.equal(mazeOneSpawnCalls, 1, 'Maze One spawnMazeOnePopulation fires once on MAZE_ONE entry');
   assert.equal(placedPickups.filter((p) => p.itemId === 'maze_disc').length, 3);
   assert.equal(placedPickups.filter((p) => p.itemId === 'red_shells').length, 2);

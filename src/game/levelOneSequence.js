@@ -562,7 +562,11 @@ export function advanceLevelOne(state, event, payload = {}) {
     }
 
     case 'place_disc_in_second_case': {
-      if (next.step === LEVEL_ONE_STEPS.RETURN_TO_HALL && next.goldenVinylClaimed) {
+      if (
+        (next.step === LEVEL_ONE_STEPS.RETURN_TO_HALL ||
+          next.step === LEVEL_ONE_STEPS.GOLDEN_VINYL_CLAIMED) &&
+        next.goldenVinylClaimed
+      ) {
         next.hallCasesLocked.case1 = false; // "a-thousand-ways" unlocked!
         next.step = LEVEL_ONE_STEPS.LEVEL_ONE_COMPLETE;
         next.levelCompleted = true;

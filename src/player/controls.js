@@ -45,6 +45,7 @@ export class PlayerControls {
     this.isLocked = false;
     this.worldBounds = null;
     this.movementLocked = false;
+    this.aimLocked = false;
 
     // Spatial & grounded physics state
     this.position = new THREE.Vector3(0, 1.72, -5.2);
@@ -239,6 +240,7 @@ export class PlayerControls {
     this.currentSpeed = 0;
     this.isAiming = false;
     this.aimAmount = 0;
+    this.aimLocked = false;
     this.leanTarget = 0;
     this.leanCurrent = 0;
     this.currentFov = this.baseFov;
@@ -740,7 +742,7 @@ export class PlayerControls {
     this.isCrawling = this.crouchToggled || holdCtrl || underLowBeam;
 
     // ADS (LT or RMB hold)
-    this.isAiming = gp.aiming || this.mouseButtons.has(2);
+    this.isAiming = !this.aimLocked && (gp.aiming || this.mouseButtons.has(2));
     this.aimAmount = THREE.MathUtils.damp(this.aimAmount, this.isAiming ? 1 : 0, 12, dt);
 
     // Lean L/R (D-pad L/R or Z/X)
