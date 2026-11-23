@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { checkHeroGlbInputs } from './heroGlbGuard.js';
 
 // The manifest is the source of truth: hero GLB paths are read from
@@ -28,19 +30,27 @@ test('hero-GLB guard: fails when a path in ASSET-PATHS.txt is missing from publi
     'ASSET-PATHS.txt must list public/models/heroes/lion.glb'
   );
 
-  // Hero GLBs join at build time and are not in the repo's public/, so the
-  // guard must fail loudly, naming the manifest-declared hero models.
-  assert.throws(
-    () => checkHeroGlbInputs(heroGlbsFromManifest, 'public'),
-    (err) => {
-      assert.ok(err instanceof Error);
-      assert.match(err.message, /\[HERO_GLB_GUARD\]/);
-      assert.match(err.message, /ghoul\.glb/);
-      assert.match(err.message, /lion\.glb/);
-      return true;
-    },
-    'The hero-GLB guard must fail when ghoul.glb and lion.glb are missing from public/'
-  );
+  // The guard must fail loudly, naming the manifest-declared hero models,
+  // whenever the build inputs are absent. Point it at a fresh empty temp
+  // dir so the assertion holds regardless of whether the real hero GLBs
+  // happen to be staged in this workspace's public/ — staged assets are
+  // the correct production state and must not break this test.
+  const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hero-glb-guard-'));
+  try {
+    assert.throws(
+      () => checkHeroGlbInputs(heroGlbsFromManifest, emptyDir),
+      (err) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /\[HERO_GLB_GUARD\]/);
+        assert.match(err.message, /ghoul\.glb/);
+        assert.match(err.message, /lion\.glb/);
+        return true;
+      },
+      'The hero-GLB guard must fail when ghoul.glb and lion.glb are missing from the build inputs'
+    );
+  } finally {
+    fs.rmSync(emptyDir, { recursive: true, force: true });
+  }
 });
 
 test('hero-GLB guard: passes when assets are present', () => {
