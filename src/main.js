@@ -255,6 +255,9 @@ hudRoot.innerHTML = `
       <span id="ads-tutorial-text" class="horror-text text-5xl text-[#efe7d8] drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)]"></span>
     </div>
 
+    <!-- White Aether crossing flash (one-shot white-out when the portal crossing first registers) -->
+    <div id="aether-flash" class="fixed inset-0 pointer-events-none opacity-0 z-30 bg-white"></div>
+
     <!-- Room 2 Visor Brain Splatter Overlay (fades via unskippable stepBrainWipe) -->
     <div id="brain-splatter-overlay" class="fixed inset-0 pointer-events-none opacity-0 z-30 bg-[radial-gradient(circle_at_52%_46%,rgba(122,14,18,0.92)_0%,rgba(78,8,12,0.85)_34%,rgba(44,4,8,0.58)_62%,transparent_88%)]"></div>
 
@@ -343,6 +346,7 @@ const dom = {
   dmgVig: document.getElementById('damage-vignette'),
   playingHud: document.getElementById('playing-hud'),
   crosshair: document.getElementById('crosshair'),
+  aetherFlash: document.getElementById('aether-flash'),
   floorWrap: document.getElementById('floor-wrap'),
   floorLabel: document.getElementById('floor-label'),
   discCounterWrap: document.getElementById('disc-counter-wrap'),
@@ -414,6 +418,8 @@ function formatPromptHtml(rawText, useXboxIcons) {
 
 let whisperTimer = 0;
 const gateSignpostAt = {};
+let aetherFlashLevel = 0;
+let aetherFlashFired = false;
 function showWhisper(text, duration = 2.4) {
   dom.whisperText.textContent = text;
   dom.whisperBanner.style.opacity = '1';
@@ -2021,6 +2027,14 @@ function stepSimulation(dt) {
   transformer.update(simDt, elapsed);
 
   const portalOpen = Boolean(levelOneState && levelOneState.discInCase);
+  // AETHER READ (Nov 23, 2026 — playtest: Lotty walked the White Aether
+  // without it registering; there was no visible portal moment). The first
+  // crossing through the opened gate fires a one-shot white-out so the
+  // passage reads as a place, not a corridor.
+  if (!aetherFlashFired && portalOpen && controls && controls.position && controls.position.z > 7.2) {
+    aetherFlashFired = true;
+    aetherFlashLevel = 0.95;
+  }
   const room1NorthOpen = Boolean(
     levelOneState &&
       (levelOneState.weaponsUnlocked?.sword || levelOneState.swordPickedUp)
@@ -2633,6 +2647,10 @@ function stepSimulation(dt) {
   if (gameState.damageFlash > 0) {
     gameState.damageFlash = Math.max(0, gameState.damageFlash - dt * 2.4);
     dom.dmgVig.style.opacity = String(gameState.damageFlash);
+  }
+  if (aetherFlashLevel > 0) {
+    aetherFlashLevel = Math.max(0, aetherFlashLevel - dt * 0.8);
+    if (dom.aetherFlash) dom.aetherFlash.style.opacity = String(aetherFlashLevel);
   }
   if (whisperTimer > 0) {
     whisperTimer -= dt;
