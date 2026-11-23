@@ -413,6 +413,7 @@ function formatPromptHtml(rawText, useXboxIcons) {
 }
 
 let whisperTimer = 0;
+const gateSignpostAt = {};
 function showWhisper(text, duration = 2.4) {
   dom.whisperText.textContent = text;
   dom.whisperBanner.style.opacity = '1';
@@ -2051,6 +2052,38 @@ function stepSimulation(dt) {
       levelOneCorridor.returnStairGateMesh.visible = !returnStairOpen;
     }
   }
+  // SIGNPOSTING (Nov 23, 2026 — playtest: Lotty stood at a locked door with no
+  // idea what it wanted). A closed gate states its price when the player is
+  // close enough to be pushing on it. One whisper at a time, per-gate
+  // cooldown so it reminds without nagging.
+  if (levelOneState && controls && controls.position && whisperTimer <= 0) {
+    const p = controls.position;
+    const gates = [
+      { id: 'portal', closed: !portalOpen, x: 0, z: 7.1, text: 'sealed — a disc in the hall case opens the way' },
+      { id: 'room1', closed: !room1NorthOpen, x: 0, z: 23.1, text: 'sealed — the sword first. shoot the barrel' },
+      { id: 'room2', closed: room2NorthLocked, x: 0, z: 29.0, text: 'sealed — finish what breathes in this room' },
+      {
+        id: 'maze',
+        closed: !mazeExitOpen,
+        x: 0,
+        z: 50.7,
+        text: `sealed — the door counts discs: ${levelOneState.mazeDiscsCollected || 0} of ${levelOneState.mazeDiscsRequired || 3}`,
+      },
+      { id: 'stair', closed: !returnStairOpen, x: -7.15, z: 63.5, text: 'sealed — the lion still lives' },
+    ];
+    for (const g of gates) {
+      if (!g.closed) continue;
+      const dx = p.x - g.x;
+      const dz = p.z - g.z;
+      if (dx * dx + dz * dz > 2.4 * 2.4) continue;
+      const last = gateSignpostAt[g.id] || -Infinity;
+      if (elapsed - last < 6) continue;
+      gateSignpostAt[g.id] = elapsed;
+      showWhisper(g.text, 2.6);
+      break;
+    }
+  }
+
   const allColliders = library.staticColliders.concat(
     transformer.getLiveShelfColliders(),
     levelOneCorridor ? levelOneCorridor.staticColliders : [],
