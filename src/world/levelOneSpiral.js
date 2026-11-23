@@ -216,7 +216,14 @@ export const LEVEL_ONE_SPAWNS = Object.freeze({
     bounds: { minX: -17.0, maxX: -15.0, minZ: 15.0, maxZ: 65.0 },
     width: 2.0,
     lionConnector: { minX: -17.0, maxX: -7.0, minZ: 62.0, maxZ: 65.0 },
-    aetherPassage: { minX: -14.0, maxX: -10.0, minZ: 7.0, maxZ: 15.0 },
+    // The built return route is a sealed DOGLEG (see buildLevelOneCorridor §6c),
+    // not a straight passage: corridor south to z 10, east jog z 10..12, then
+    // south x -12..-10 into the hall's NW corner. Three segments, in walk order.
+    aetherPassage: [
+      { minX: -17.0, maxX: -15.0, minZ: 10.0, maxZ: 15.0 }, // drop (corridor continues south)
+      { minX: -17.0, maxX: -10.0, minZ: 10.0, maxZ: 12.0 }, // east jog
+      { minX: -12.0, maxX: -10.0, minZ: 7.0, maxZ: 10.0 },  // entry into hall NW corner
+    ],
     hallEntrance: { minX: -12.0, maxX: -10.0, minZ: 6.8, maxZ: 7.2 },
   },
 
