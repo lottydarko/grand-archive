@@ -2613,6 +2613,9 @@ function stepSimulation(dt) {
       dom.crosshair.classList.remove('hit-zombie', 'hit-ghost');
     }
   }
+  // ADS crosshair ruling (Nov 23, 2026): hide the screen-center dot once the
+  // sights are mostly up; the sight picture is the reticle in ADS.
+  dom.crosshair.classList.toggle('ads-hidden', (controls.aimAmount || 0) > 0.5);
 
   const nextPosture = controls.shrinkTimer > 0 ? 'shrunk' : controls.isCrawling ? 'crawling' : 'standing';
   if (hudDirty || prevPosture !== nextPosture || gameState.timeSlowTimer > 0 || controls.shrinkTimer > 0) {

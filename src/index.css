@@ -110,7 +110,14 @@ body {
   background: rgba(238, 232, 220, 0.82);
   box-shadow: 0 0 4px rgba(0, 0, 0, 0.95);
   pointer-events: none;
-  transition: transform 90ms ease, background-color 90ms ease;
+  transition: transform 90ms ease, background-color 90ms ease, opacity 120ms ease;
+}
+
+/* ADS ruling (Nov 23, 2026): with real sights up, the screen-center dot is
+   hidden — it floated visibly above the front post and disagreed with the
+   sight picture. The sights are the reticle in ADS. */
+.crosshair-dot.ads-hidden {
+  opacity: 0;
 }
 
 .crosshair-dot.hit-zombie {
