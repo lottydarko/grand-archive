@@ -3,14 +3,16 @@ import * as THREE from 'three';
 /**
  * LEVEL ONE CANONICAL AUTHORED LAYOUT — NO PROCEDURAL OR SEED GENERATION, EVER.
  *
- * Screenplay sequence (§A):
- *   1. THE HALL (z: -18 .. +18) — DISC POINT hub; north portal opens on first disc insertion
- *   2. WHITE AETHER (z: 18 .. 40) — white light, shallow water, gated island doors
- *   3. CASTLE OF THE DEAD, ROOM 1 (z: 40 .. 60) — Balistucia shotgun + shootable barrel (-> DARKO + Sword)
- *   4. CASTLE OF THE DEAD, ROOM 2 (z: 60 .. 80) — ONE lone tutorial zombie, input-gated ADS tutorial
- *   5. MAZE ONE — DESIGN A "THE SPIRAL" (z: 80 .. 130) — fixed authored 15x11 map, 3 Zombies (Z),
+ * Screenplay sequence (§A) — BUILT coordinates (LEVEL_ONE_SPAWNS below is the
+ * geometry of record; an older draft of this header carried a superseded
+ * z-scale — corrected Nov 23, 2026 so builders do not "fix" code to a wrong map):
+ *   1. THE HALL (z: -7 .. +7) — DISC POINT hub; north portal opens on first disc insertion
+ *   2. WHITE AETHER (z: 7 .. 15) — white light, shallow water, gated island doors
+ *   3. CASTLE OF THE DEAD, ROOM 1 (z: 15 .. 23) — Balistucia shotgun + shootable barrel (-> DARKO + Sword)
+ *   4. CASTLE OF THE DEAD, ROOM 2 (z: 23 .. 29) — ONE lone tutorial zombie, input-gated ADS tutorial
+ *   5. MAZE ONE — DESIGN A "THE SPIRAL" (z: 29 .. 51) — fixed authored 15x11 map, 3 Zombies (Z),
  *      2 Ghouls (G), 3 Maze Discs (D — the discs ARE the keys), 2 Red Shell boxes (A), Entrance (E), Exit (X)
- *   6. THE LION ROOM / AETHER ARENA (z: 130 .. 165) — Boss Lion + rising post-boss plinth case
+ *   6. THE LION ROOM / AETHER ARENA (z: 51 .. 65) — Boss Lion + rising post-boss plinth case
  *
  * Chromebook performance budget:
  * - Zero new point lights added here (stays strictly within max 3 active point lights).
