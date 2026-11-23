@@ -189,6 +189,41 @@ class CathedralAudioBus {
     window.addEventListener('pointerdown', unlock, { passive: true });
     window.addEventListener('keydown', unlock, { passive: true });
     window.addEventListener('gamepadconnected', unlock, { passive: true });
+    this._bindWatchdog();
+  }
+
+  /**
+   * Watchdog (Nov 23, 2026 — playtest: a whole session ran silent). The DOM
+   * unlock listeners above only fire on mouse/keyboard events; a session
+   * played entirely on a gamepad produces none of them, so if Chrome drops
+   * the context to 'suspended' or 'interrupted' mid-session (tab switch,
+   * system sound, audio-device change on ChromeOS) nothing ever resumes it
+   * and the game stays mute while playing fine. The power-door click gives
+   * the document sticky user activation, so a timed resume retry is allowed
+   * to succeed. Poll slowly and also react to state changes directly.
+   */
+  _bindWatchdog() {
+    if (this._watchdogBound || typeof window === 'undefined') return;
+    this._watchdogBound = true;
+    const kick = () => {
+      if (this.ctx && this.ctx.state !== 'running') {
+        this.ctx.resume().catch(() => {});
+      }
+    };
+    window.setInterval(kick, 2000);
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) kick();
+      });
+    }
+    const bindState = () => {
+      if (this.ctx && !this._stateBound) {
+        this._stateBound = true;
+        this.ctx.onstatechange = kick;
+      }
+    };
+    bindState();
+    window.setInterval(bindState, 2000);
   }
 
   _buildGraph() {
