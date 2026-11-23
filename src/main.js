@@ -105,7 +105,7 @@ const camera = new THREE.PerspectiveCamera(
 );
 scene.add(camera);
 
-// Motivated Player Flashlight (SpotLight + subtle volumetric dust cone + floating beam motes)
+// Motivated Player Flashlight (SpotLight + floating beam motes)
 const playerAuraLight = new THREE.PointLight(0xdcc8ad, 0.0, 4.2, 2.0);
 playerAuraLight.position.set(0.1, -0.06, -0.18);
 camera.add(playerAuraLight);
@@ -127,27 +127,9 @@ flashlight.shadow.mapSize.set(512, 512);
 flashlight.shadow.camera.near = 0.1;
 flashlight.shadow.camera.far = 27;
 
-// Subtle volumetric beam haze (soft, zero circular rim artifact in center crosshair)
-const beamConeGeo = new THREE.ConeGeometry(2.6, 15.0, 16, 1, true);
-beamConeGeo.translate(0, -7.5, 0);
-beamConeGeo.rotateX(Math.PI / 2);
-const beamConeMat = new THREE.MeshBasicMaterial({
-  color: 0xcbd9ec,
-  transparent: true,
-  opacity: 0.012,
-  blending: THREE.AdditiveBlending,
-  depthWrite: false,
-  side: THREE.DoubleSide,
-});
-const flashlightCone = new THREE.Mesh(beamConeGeo, beamConeMat);
-flashlightCone.position.set(-0.2, -0.16, -0.45);
-flashlightCone.visible = false;
-camera.add(flashlightCone);
-// Temps for the per-frame cone-to-spotlight sync (one beam, see render loop)
-const _coneLightPos = new THREE.Vector3();
-const _coneTargetPos = new THREE.Vector3();
-const _coneDir = new THREE.Vector3();
-const _coneForward = new THREE.Vector3(0, 0, -1);
+// Volumetric beam cone REMOVED (Lotty, Nov 23, 2026): the fake cone mesh read
+// as a small cone light inside the bigger light. The SpotLight pool alone is
+// the beam now; the dust motes below stay.
 
 // Fine airborne dust motes drifting inside the flashlight beam
 const beamMoteCount = 64;
@@ -1965,7 +1947,7 @@ function stepSimulation(dt) {
     dt
   );
 
-  // Player Flashlight SpotLight + volumetric beam cone + drifting dust motes inside the cone
+  // Player Flashlight SpotLight + drifting dust motes inside the beam
   const flashActive = isPlayingActive && gameState.flashlightOn;
   const flashTargetIntensity = flashActive ? 28.0 : 0.0;
   flashlight.intensity = THREE.MathUtils.damp(flashlight.intensity, flashTargetIntensity, 16, dt);
@@ -1975,21 +1957,7 @@ function stepSimulation(dt) {
     5.0,
     dt
   );
-  flashlightCone.visible = flashActive && flashlight.intensity > 2.0;
-  if (flashlightCone.visible) {
-    // ONE beam (Lotty, Nov 22, 2026): the volumetric cone must emit from the
-    // spotlight's real position toward its real target. The light lives under
-    // the shotgun barrel / in the hand anchor — not at the camera — so a
-    // camera-fixed cone reads as a second light inside the light.
-    flashlight.getWorldPosition(_coneLightPos);
-    flashlight.target.getWorldPosition(_coneTargetPos);
-    camera.worldToLocal(_coneLightPos);
-    camera.worldToLocal(_coneTargetPos);
-    _coneDir.copy(_coneTargetPos).sub(_coneLightPos).normalize();
-    flashlightCone.position.copy(_coneLightPos);
-    flashlightCone.quaternion.setFromUnitVectors(_coneForward, _coneDir);
-  }
-  beamDustPoints.visible = flashlightCone.visible;
+  beamDustPoints.visible = flashActive && flashlight.intensity > 2.0;
   if (beamDustPoints.visible) {
     const posAttr = beamMoteGeo.attributes.position;
     for (let i = 0; i < beamMoteCount; i++) {
