@@ -229,6 +229,8 @@ public/models/heroes/zombie.glb
 public/models/heroes/glock_slide.glb
 public/models/heroes/glock_frame.glb
 public/models/heroes/ghost.glb
+public/models/heroes/ghoul.glb
+public/models/heroes/lion.glb
 public/models/heroes/glock.glb
 public/models/heroes/fps_arms.glb
 public/models/heroes/glock_magprop.glb
