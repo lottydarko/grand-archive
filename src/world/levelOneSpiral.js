@@ -166,6 +166,27 @@ export const LEVEL_ONE_SPAWNS = Object.freeze({
   firstDisc: { x: 0, y: 1.05, z: 0 },
   hallPortalGate: { minX: -2.2, maxX: 2.2, minZ: 6.8, maxZ: 7.4 },
 
+  // Portal guards (Lotty, Nov 23, 2026): a zombie pack stands in front of
+  // every portal and the portal stays SEALED until its guards are defeated;
+  // the guard condition ADDS to each gate's own condition. G4's guard is
+  // castleRoom2.loneZombie, G5's guards are the maze horde, G6's guard is
+  // the lion — those already exist as data, so only G1/G2/G3 packs are
+  // declared here. Positions are the drawn defaults from the level map.
+  portalGuards: {
+    G1: [
+      { id: 'guard_g1_a', x: -1.3, z: 5.4 },
+      { id: 'guard_g1_b', x: 1.3, z: 5.4 },
+    ],
+    G2: [
+      { id: 'guard_g2_a', x: -0.9, z: 13.4 },
+      { id: 'guard_g2_b', x: 0.9, z: 13.4 },
+    ],
+    G3: [
+      { id: 'guard_g3_a', x: -1.0, z: 21.9 },
+      { id: 'guard_g3_b', x: 1.2, z: 21.9 },
+    ],
+  },
+
   // White Aether Passage 4x8 (X ∈ [-2, +2], Z ∈ [7, 15])
   whiteAether: {
     bounds: { minX: -2.0, maxX: 2.0, minZ: 7.0, maxZ: 15.0 },
@@ -614,10 +635,13 @@ export function buildLevelOneCorridor(scene) {
     mazeExitGateMesh,
     returnStairGateMesh,
     risingCaseMesh,
-    getGateColliders({ portalOpen, room1NorthOpen = true, room2Open = true, mazeExitOpen, returnStairOpen }) {
+    getGateColliders({ portalOpen, aetherGateOpen = true, room1NorthOpen = true, room2Open = true, mazeExitOpen, returnStairOpen }) {
       const gates = [];
       if (!portalOpen) {
         gates.push({ ...LEVEL_ONE_SPAWNS.hallPortalGate });
+      }
+      if (!aetherGateOpen) {
+        gates.push({ ...LEVEL_ONE_SPAWNS.whiteAether.passageGate });
       }
       if (!room1NorthOpen) {
         gates.push({ ...LEVEL_ONE_SPAWNS.castleRoom1.northGateCollider });
