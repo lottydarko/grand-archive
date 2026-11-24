@@ -11,6 +11,21 @@ import {
   suspendBackgroundMenuVideo,
 } from './utils/chromebookOptimizer.js';
 import { generateSeedString } from './world/mazeLogic.js';
+import {
+  EXPOSURE_MENU,
+  EXPOSURE_PLAYING,
+  EXPOSURE_SURVIVAL,
+  ENV_MENU,
+  ENV_PLAYING,
+  ENV_SURVIVAL,
+  FLASHLIGHT_INTENSITY,
+  FLASHLIGHT_DECAY,
+  FLASHLIGHT_DISTANCE,
+  FLASHLIGHT_ANGLE,
+  FLASHLIGHT_PENUMBRA,
+  AURA_FLASHLIGHT_ON,
+  AURA_FLASHLIGHT_OFF,
+} from './world/lightingConfig.js';
 import { WorldItemManager } from './world/pickups.js';
 import { createSoftRadialTexture } from './world/textures.js';
 import { PlayerControls } from './player/controls.js';
@@ -110,7 +125,7 @@ const playerAuraLight = new THREE.PointLight(0xdcc8ad, 0.0, 4.2, 2.0);
 playerAuraLight.position.set(0.1, -0.06, -0.18);
 camera.add(playerAuraLight);
 
-const flashlight = new THREE.SpotLight(0xeef3fa, 0, 27, Math.PI / 6.0, 0.64, 1.48);
+const flashlight = new THREE.SpotLight(0xeef3fa, 0, FLASHLIGHT_DISTANCE, FLASHLIGHT_ANGLE, FLASHLIGHT_PENUMBRA, FLASHLIGHT_DECAY);
 flashlight.position.set(-0.14, -0.1, -0.18);
 const flashlightTarget = new THREE.Object3D();
 flashlightTarget.position.set(0, -0.08, -10);
@@ -125,7 +140,7 @@ camera.add(flashlight);
 flashlight.castShadow = true;
 flashlight.shadow.mapSize.set(512, 512);
 flashlight.shadow.camera.near = 0.1;
-flashlight.shadow.camera.far = 27;
+flashlight.shadow.camera.far = FLASHLIGHT_DISTANCE;
 
 // Volumetric beam cone REMOVED (Lotty, Nov 23, 2026): the fake cone mesh read
 // as a small cone light inside the bigger light. The SpotLight pool alone is
@@ -1981,10 +1996,10 @@ function stepSimulation(dt) {
 
   // Motivated lighting: low HDRI PBR fill + player Flashlight leads in the darkened archive
   const targetExposure = !isPlayingActive
-    ? 0.96
+    ? EXPOSURE_MENU
     : transformer && transformer.mode === 'survival'
-      ? 0.72
-      : 0.78;
+      ? EXPOSURE_SURVIVAL
+      : EXPOSURE_PLAYING;
   renderer.toneMappingExposure = THREE.MathUtils.damp(
     renderer.toneMappingExposure,
     targetExposure,
@@ -1992,10 +2007,10 @@ function stepSimulation(dt) {
     dt
   );
   const targetEnvInt = !isPlayingActive
-    ? 0.34
+    ? ENV_MENU
     : transformer && transformer.mode === 'survival'
-      ? 0.2
-      : 0.3;
+      ? ENV_SURVIVAL
+      : ENV_PLAYING;
   scene.environmentIntensity = THREE.MathUtils.damp(
     scene.environmentIntensity,
     targetEnvInt,
@@ -2008,11 +2023,11 @@ function stepSimulation(dt) {
   // range): flashlight target 28 -> 40 and aura 0.9 -> 1.15. Conservative,
   // single-number changes, flagged for Lotty's verdict at the next playtest.
   const flashActive = isPlayingActive && gameState.flashlightOn;
-  const flashTargetIntensity = flashActive ? 40.0 : 0.0;
+  const flashTargetIntensity = flashActive ? FLASHLIGHT_INTENSITY : 0.0;
   flashlight.intensity = THREE.MathUtils.damp(flashlight.intensity, flashTargetIntensity, 16, dt);
   playerAuraLight.intensity = THREE.MathUtils.damp(
     playerAuraLight.intensity,
-    isPlayingActive ? (gameState.flashlightOn ? 1.15 : 0.32) : 0.0,
+    isPlayingActive ? (gameState.flashlightOn ? AURA_FLASHLIGHT_ON : AURA_FLASHLIGHT_OFF) : 0.0,
     5.0,
     dt
   );

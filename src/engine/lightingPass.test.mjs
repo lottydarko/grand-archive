@@ -25,12 +25,16 @@ test('lighting pass: flashlight is the shadow-casting light (512 PCFSoft map)', 
   assert.match(mainSrc, /flashlight\.castShadow = true/);
   assert.match(mainSrc, /flashlight\.shadow\.mapSize\.set\(512, 512\)/);
   assert.match(mainSrc, /flashlight\.shadow\.camera\.near = 0\.1/);
-  // Shadow camera far matches the spotlight's 27m distance.
-  assert.match(mainSrc, /flashlight\.shadow\.camera\.far = 27/);
+  // Shadow camera far matches the spotlight's distance (lightingConfig).
+  assert.match(mainSrc, /flashlight\.shadow\.camera\.far = FLASHLIGHT_DISTANCE/);
 });
 
-test('lighting pass: environment fill raised (gameplay 0.30, survival 0.20)', () => {
-  assert.match(mainSrc, /mode === 'survival'\s*\?\s*0\.2\s*:\s*0\.3\s*;/);
+test('lighting pass: environment fill targets come from lightingConfig', () => {
+  // Nov 24, 2026: the damp targets moved into src/world/lightingConfig.js
+  // (the literal 0.30/0.20 values this test used to pin were the numbers
+  // that shipped the game dark). The config values themselves are guarded
+  // by lightingConfig.test.mjs floors.
+  assert.match(mainSrc, /mode === 'survival'\s*\?\s*ENV_SURVIVAL\s*:\s*ENV_PLAYING/);
 });
 
 test('lighting pass: zombie, ghoul and lion cast shadows; ghost stays unlit by design', () => {

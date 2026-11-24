@@ -8,6 +8,7 @@ import {
 } from '../entities/clipAnimator.js';
 import { pulseRumble } from '../game/levelOneBindings.js';
 import { ShellCasingSystem } from './shellCasings.js';
+import { FLASHLIGHT_DECAY } from '../world/lightingConfig.js';
 import { GrabAnimator } from './grabAnimator.js';
 import { GRAB_POSES, lerpPose, clonePose } from './grabPoses.js';
 import { ShotgunAnimator } from '../weapons/shotgunAnimator.js';
@@ -176,7 +177,7 @@ export class WeaponSystem {
       this.camera.children.find((c) => c.isSpotLight) ||
       null;
     if (!this.flashlight) {
-      this.flashlight = new THREE.SpotLight(0xeef3fa, 28, 27, Math.PI / 6.0, 0.64, 1.48);
+      this.flashlight = new THREE.SpotLight(0xeef3fa, 28, 27, Math.PI / 6.0, 0.64, FLASHLIGHT_DECAY);
       this.flashlight.name = 'PlayerFlashlight';
     }
     this.flashlightTarget =
