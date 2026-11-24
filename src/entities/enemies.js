@@ -19,6 +19,7 @@ import {
   shouldThrottleEnemyMixer,
 } from './clipAnimator.js';
 import { LionBoss, MazeOneGhoul, validateEnemyDamage } from './lionAndGhoulController.js';
+import { ZOMBIE_PARAMS } from './enemySchedules.js';
 import { getSpiralMazeLayout, LEVEL_ONE_SPAWNS } from '../world/levelOneSpiral.js';
 
 // Zero-404 auto-discovery of Mixamo FBX animation clips dropped into public/animations/
@@ -34,6 +35,18 @@ const DISCOVERED_FBX_MODULES =
  * Enemy AI, Rigged 3D Models, 5-State Zombie Animation Machine, Pooled Blood FX,
  * Persistent Growing Floor Blood Pools & Unkillable Phase-Ripple Ghosts.
  */
+/**
+ * Per-spawn speed roll (CoD Zombies transfer, Nov 24, 2026): a
+ * deterministic hash of the spawn sequence gives each zombie a speed
+ * in [0.85x, 1.15x] of its variant base — no two shamblers move at
+ * exactly the same pace, and the roll is reproducible run to run.
+ */
+export function rollZombieSpeed(base, seed) {
+  const s = Math.sin(seed * 127.1 + 311.7) * 43758.5453123;
+  const frac = s - Math.floor(s);
+  return base * (0.85 + frac * 0.3);
+}
+
 export class EnemyManager {
   constructor(scene, callbacks = {}) {
     this.scene = scene;
@@ -98,6 +111,7 @@ export class EnemyManager {
     const entry = {
       id: lion.id,
       kind: 'lion',
+      tags: ['boss'],
       hp: lion.hp,
       maxHp: lion.maxHp,
       alive: true,
@@ -108,6 +122,29 @@ export class EnemyManager {
     this.enemies.push(entry);
     this.hitboxes.push(lion.hitboxMesh, lion.headHitboxMesh);
     return lion;
+  }
+
+  /**
+   * Reset the lion to its pre-fight state (director's ruling, Nov 24,
+   * 2026: a mid-fight void fall resets the fight). Full HP, IDLE, back
+   * on its spawn point, cutscene stalk off; the roster entry is synced.
+   * Returns false when no lion exists.
+   */
+  resetLionBoss() {
+    const lion = this.lionBoss;
+    if (!lion) return false;
+    lion.hp = lion.maxHp;
+    lion.state = 'idle';
+    lion.stateTimer = 0;
+    if (typeof lion.setCutsceneStalk === 'function') lion.setCutsceneStalk(false);
+    const pos = LEVEL_ONE_SPAWNS.lionRoom.lionPos;
+    lion.group.position.set(pos.x, 0, pos.z);
+    const entry = this.enemies.find((e) => e.kind === 'lion');
+    if (entry) {
+      entry.hp = lion.maxHp;
+      entry.alive = true;
+    }
+    return true;
   }
 
   spawnGhoul(x, z, options = {}) {
@@ -148,12 +185,19 @@ export class EnemyManager {
    */
   spawnZombieAt(x, z, options = {}) {
     const isSprinter = options.variant === 'sprinter';
+    // CoD Zombies pattern (Nov 24, 2026): an un-authored zombie's speed
+    // is a per-spawn ROLL around the variant base (0.85x–1.15x), seeded
+    // by spawn order so runs are reproducible. An authored speed
+    // (options.speed — the brute's 0.97, scripted beats) stays exact.
+    this._spawnSeq = (this._spawnSeq || 0) + 1;
     const diff = {
-      zombieSpeed: options.speed ?? (isSprinter ? 3.55 : 2.15),
+      zombieSpeed:
+        options.speed ?? rollZombieSpeed(isSprinter ? 3.55 : 2.15, this._spawnSeq),
       sprinterSpeed: options.sprinterSpeed ?? 3.55,
     };
     const zObj = this._spawnZombie(x, z, isSprinter, diff);
     if (options.idTag) zObj.scriptId = options.idTag;
+    zObj.tags = Array.isArray(options.tags) ? [...options.tags] : [];
     if (options.isTutorialZombie) zObj.isTutorialZombie = true;
     if (options.alerted !== undefined) zObj.alerted = Boolean(options.alerted);
     if (typeof options.hp === 'number') {
@@ -195,6 +239,7 @@ export class EnemyManager {
         variant: zSpec.variant,
         idTag: zSpec.id,
         alerted: false,
+        tags: zSpec.tags,
       });
       spawnedZombies.push(z);
     }
@@ -1211,7 +1256,12 @@ export class EnemyManager {
       for (const spec of packs[gateId]) {
         if (this.enemies.some((e) => e.scriptId === spec.id && e.alive)) continue;
         spawned.push(
-          this.spawnZombieAt(spec.x, spec.z, { idTag: spec.id, alerted: false, hp: 80 })
+          this.spawnZombieAt(spec.x, spec.z, {
+            idTag: spec.id,
+            alerted: false,
+            hp: 80,
+            tags: spec.tags,
+          })
         );
       }
     }
@@ -1288,6 +1338,7 @@ export class EnemyManager {
       alerted: true,
       hp: 360,
       speed: 0.97,
+      tags: ['brute', 'finale'],
     });
     if (brute && brute.group) brute.group.scale.setScalar(1.18);
     return brute;
@@ -1567,7 +1618,7 @@ export class EnemyManager {
     }
 
     // 4. Update Zombies & Ghosts
-    const detectRadius = stealth ? stealth.zombieDetectRadius : 13.5;
+    const detectRadius = stealth ? stealth.zombieDetectRadius : ZOMBIE_PARAMS.detectRadiusM;
     const aiDt = dt * enemyTimeScale;
     this._animFrame = (this._animFrame || 0) + 1;
     for (let i = this.enemies.length - 1; i >= 0; i--) {
@@ -1709,11 +1760,21 @@ export class EnemyManager {
       z.rightArm.rotation.x = -0.75;
       this._animateZombieMixamoBones(z, elapsed, dt);
       if (z.attackTimer <= 0) {
-        if (dist < 1.95) {
-          this._dealPlayerDamage(z, z.scriptId === 'hall_brute' ? 30 : z.variant === 'sprinter' ? 14 : 18, 'zombie', playerPos, colliders);
+        if (dist < ZOMBIE_PARAMS.strikeRangeM) {
+          this._dealPlayerDamage(
+            z,
+            z.scriptId === 'hall_brute'
+              ? ZOMBIE_PARAMS.damage.brute
+              : z.variant === 'sprinter'
+                ? ZOMBIE_PARAMS.damage.sprinter
+                : ZOMBIE_PARAMS.damage.shambler,
+            'zombie',
+            playerPos,
+            colliders
+          );
         }
         z.attackState = 'recover';
-        z.attackTimer = 0.78;
+        z.attackTimer = ZOMBIE_PARAMS.recoverSec;
         if (z.hasToken) {
           this.activeAttackTokens = Math.max(0, this.activeAttackTokens - 1);
           z.hasToken = false;
@@ -1730,9 +1791,9 @@ export class EnemyManager {
       return;
     }
 
-    if (dist < 1.68 && this.activeAttackTokens < this.maxAttackTokens) {
+    if (dist < ZOMBIE_PARAMS.meleeEnterRangeM && this.activeAttackTokens < this.maxAttackTokens) {
       z.attackState = 'windup';
-      z.attackTimer = 0.36;
+      z.attackTimer = ZOMBIE_PARAMS.windupSec;
       z.hasToken = true;
       this.activeAttackTokens += 1;
       sfx.playZombieTelegraph();

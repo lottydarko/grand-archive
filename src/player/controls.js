@@ -6,6 +6,7 @@ import {
   resolveCircleAABB,
   computeGamepadLookDelta,
 } from '../world/mazeLogic.js';
+import { PLAYER_CONFIG } from './playerConfig.js';
 import {
   createStaminaState,
   updateStaminaState,
@@ -49,9 +50,9 @@ export class PlayerControls {
 
     // Spatial & grounded physics state
     this.position = new THREE.Vector3(0, 1.72, -5.2);
-    this.standEyeHeight = 1.72;
-    this.crawlEyeHeight = 0.82;
-    this.shrinkEyeHeight = 0.62;
+    this.standEyeHeight = PLAYER_CONFIG.standEyeHeight;
+    this.crawlEyeHeight = PLAYER_CONFIG.crawlEyeHeight;
+    this.shrinkEyeHeight = PLAYER_CONFIG.shrinkEyeHeight;
     this.eyeHeight = this.standEyeHeight;
     this.groundY = 0;
     this.verticalVel = 0;
@@ -72,8 +73,8 @@ export class PlayerControls {
     this.aimAmount = 0; // smooth 0..1 ADS blend
     this.leanTarget = 0; // -1 left, 0 center, +1 right
     this.leanCurrent = 0;
-    this.baseFov = 72;
-    this.currentFov = 72;
+    this.baseFov = PLAYER_CONFIG.baseFov;
+    this.currentFov = PLAYER_CONFIG.baseFov;
 
     this.stealth = computeStealthProfile({
       isCrouching: false,
@@ -89,7 +90,7 @@ export class PlayerControls {
     // First-person climbing / mantle animation state
     this.isClimbing = false;
     this.climbProgress = 0;
-    this.climbDuration = 1.05;
+    this.climbDuration = PLAYER_CONFIG.climbDuration;
     this.climbStartPos = new THREE.Vector3();
     this.climbEndPos = new THREE.Vector3();
     this.climbGruntStages = [false, false];
@@ -97,11 +98,11 @@ export class PlayerControls {
     this.climbCameraRoll = 0;
     this.climbCameraPitch = 0;
 
-    // Movement tuning
-    this.walkSpeed = 4.65;
-    this.sprintSpeed = 7.65;
-    this.crawlSpeed = 2.45;
-    this.adsSpeed = 2.95;
+    // Movement tuning (PLAYER_CONFIG owns the values)
+    this.walkSpeed = PLAYER_CONFIG.walkSpeed;
+    this.sprintSpeed = PLAYER_CONFIG.sprintSpeed;
+    this.crawlSpeed = PLAYER_CONFIG.crawlSpeed;
+    this.adsSpeed = PLAYER_CONFIG.adsSpeed;
     this.walkBobDist = 0;
     this.isMoving = false;
     this.isSprinting = false;

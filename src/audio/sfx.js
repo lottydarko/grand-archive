@@ -228,10 +228,14 @@ class SoundEffects {
     if (!this.ctx || !this._ambienceActive) return;
     const now = this.ctx.currentTime;
     const isSurv = mode === 'survival';
+    // 'combat' (GTA IV stage-transition pattern, Nov 24, 2026): the
+    // ambience mix rides the stage — boss fight raises the basement
+    // layer, kills the clock, and pushes the room tone.
+    const isCombat = mode === 'combat';
     const targets = {
-      roomtone: isSurv ? 0.22 : 0.16,
-      clock: isSurv ? 0.0001 : 0.08,
-      basement: isSurv ? 0.18 : 0.0001,
+      roomtone: isSurv || isCombat ? 0.22 : 0.16,
+      clock: isSurv || isCombat ? 0.0001 : 0.08,
+      basement: isCombat ? 0.22 : isSurv ? 0.18 : 0.0001,
     };
     for (const [id, targetVol] of Object.entries(targets)) {
       const layer = this._ambLayers[id];

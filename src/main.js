@@ -240,6 +240,16 @@ hudRoot.innerHTML = `
       <div id="disc-counter-label" class="horror-text text-3xl text-[#e4d5b9] leading-none">discs 0 / 3</div>
     </div>
 
+    <!-- Hall Brute health readout: NON-BOSS (director's ruling, Nov 24, 2026).
+         PLACEHOLDER visual on purpose — dashed frame, flat fill; the real
+         art direction comes later. Label echoes the shipped whisper. -->
+    <div id="brute-readout" class="fixed top-24 left-1/2 -translate-x-1/2 w-64 hidden" style="border:1px dashed rgba(231,220,200,0.45); padding:5px 7px;">
+      <div class="horror-text text-xl text-[#d7cbb6] leading-none text-center">something strong</div>
+      <div class="w-full mt-1" style="height:8px; background:rgba(255,255,255,0.14);">
+        <div id="brute-readout-fill" class="h-full" style="width:100%; background:#a33b32;"></div>
+      </div>
+    </div>
+
     <!-- Center-Lower Contextual Interact / Climb / Crawl Prompt -->
     <div id="interact-prompt" class="fixed bottom-28 left-1/2 -translate-x-1/2 text-center opacity-0 transition-opacity duration-150">
       <span id="interact-text" class="horror-text text-4xl text-[#efe7d8]"></span>
@@ -365,6 +375,8 @@ const dom = {
   floorWrap: document.getElementById('floor-wrap'),
   floorLabel: document.getElementById('floor-label'),
   discCounterWrap: document.getElementById('disc-counter-wrap'),
+  bruteReadout: document.getElementById('brute-readout'),
+  bruteReadoutFill: document.getElementById('brute-readout-fill'),
   discCounterLabel: document.getElementById('disc-counter-label'),
   interactPrompt: document.getElementById('interact-prompt'),
   interactText: document.getElementById('interact-text'),
@@ -519,6 +531,7 @@ const voidFallState = {
   phase: 'idle', // 'idle' | 'plummet' | 'splat'
   timer: 0,
   respawnPoint: null,
+  resetLionFight: false,
   overlayEl: null,
   splatEl: null,
 };
@@ -1000,6 +1013,20 @@ function updateHudReadouts() {
     } else {
       dom.ammoMain.textContent = 'blade';
       dom.weaponLabel.textContent = 'knife';
+    }
+  }
+
+  if (dom.bruteReadout) {
+    // Non-boss readout for the hall brute: appears once it has taken
+    // damage, gone when it falls. Placeholder visual (Nov 24, 2026).
+    const brute = enemies
+      ? enemies.enemies.find((e) => e.scriptId === 'hall_brute')
+      : null;
+    const showBrute = Boolean(brute && brute.alive && brute.hp < brute.maxHp);
+    dom.bruteReadout.classList.toggle('hidden', !showBrute);
+    if (showBrute && dom.bruteReadoutFill) {
+      const pct = Math.max(0, Math.min(100, Math.round((brute.hp / brute.maxHp) * 100)));
+      dom.bruteReadoutFill.style.width = `${pct}%`;
     }
   }
 
@@ -1914,12 +1941,20 @@ async function bootstrap() {
       sfx.playTrapdoorMechanism();
     },
     onCaseRiseComplete: () => {
+      // Boss down: the ambience stage drops back to exploration.
+      try {
+        sfx.setAmbienceMode('exploration');
+      } catch {}
       if (worldItems) {
         worldItems.spawn('golden_vinyl', LEVEL_ONE_SPAWNS.lionRoom.risingCasePos.x, 1.35, LEVEL_ONE_SPAWNS.lionRoom.risingCasePos.z, 1);
         showWhisper('golden vinyl risen — claim it and return to the hall', 3.4);
       }
     },
     onLionBossStart: () => {
+      // Ambience rides the stage transition (IV pattern, Nov 24, 2026).
+      try {
+        sfx.setAmbienceMode('combat');
+      } catch {}
       startVillainCutscene();
     },
   });
@@ -2266,6 +2301,14 @@ function stepSimulation(dt) {
       voidFallState.active = true;
       voidFallState.phase = 'plummet';
       voidFallState.timer = 0;
+      // Director's ruling (Nov 24, 2026): falling out of the Lion Room
+      // mid-fight resets the fight. Captured here, applied at respawn.
+      voidFallState.resetLionFight = Boolean(
+        levelOneZones &&
+          levelOneZones.currentZone === LEVEL_ONE_ZONES.LION_ROOM &&
+          levelOneZones.lionBossStarted &&
+          !levelOneZones.lionBossDefeated
+      );
       controls.movementLocked = true;
       const cz = levelOneZones ? levelOneZones.currentZone : 'castle_of_the_dead';
       voidFallState.respawnPoint = COMPARTMENT_RESPAWNS[cz] || COMPARTMENT_RESPAWNS.castle_of_the_dead;
@@ -2320,6 +2363,17 @@ function stepSimulation(dt) {
           controls.movementLocked = false;
           voidFallState.active = false;
           voidFallState.phase = 'idle';
+          if (voidFallState.resetLionFight) {
+            voidFallState.resetLionFight = false;
+            if (enemies) enemies.resetLionBoss();
+            if (levelOneZones) levelOneZones.lionBossStarted = false;
+            if (levelOneState) {
+              levelOneState = advanceLevelOne(levelOneState, 'reset_lion_fight').state;
+            }
+            try {
+              sfx.setAmbienceMode('exploration');
+            } catch {}
+          }
 
           if (vf.overlayEl && vf.splatEl) {
             vf.overlayEl.style.opacity = '0';

@@ -38,3 +38,10 @@ test('O12: weapons fallback spotlight is created from lightingConfig values', ()
   assert.ok(creation.includes('FLASHLIGHT_INTENSITY'), 'fallback spotlight must use FLASHLIGHT_INTENSITY, not a private literal');
   assert.ok(creation.includes('FLASHLIGHT_DISTANCE'), 'fallback spotlight must use FLASHLIGHT_DISTANCE');
 });
+
+test('brute readout: placeholder non-boss health readout exists and is driven by brute HP', () => {
+  assert.ok(main.includes('id="brute-readout"'), 'brute readout element exists in the HUD');
+  assert.ok(main.includes('PLACEHOLDER visual on purpose'), 'readout is marked as a placeholder pending art direction');
+  assert.ok(main.includes("e.scriptId === 'hall_brute'"), 'readout reads the hall brute from the roster');
+  assert.ok(main.includes('brute.hp < brute.maxHp'), 'readout appears once the brute has taken damage');
+});

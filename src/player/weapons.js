@@ -8,6 +8,7 @@ import {
 } from '../entities/clipAnimator.js';
 import { pulseRumble } from '../game/levelOneBindings.js';
 import { ShellCasingSystem } from './shellCasings.js';
+import { WEAPON_DATA } from './weaponData.js';
 import {
   FLASHLIGHT_INTENSITY,
   FLASHLIGHT_DISTANCE,
@@ -102,14 +103,14 @@ export class WeaponSystem {
       glock: false,
       knife: false,
     };
-    this.magSize = 15;
-    this._ammoInMag = 15;
+    this.magSize = WEAPON_DATA.glock.magSize;
+    this._ammoInMag = WEAPON_DATA.glock.magSize;
     this._reserveAmmo = 60;
 
     // Level One Arsenal (Balistucia Shotgun + Sword)
-    this.shotgunMagSize = 6;
-    this.shotgunAmmoInMag = 6;
-    this.shotgunReserve = 12;
+    this.shotgunMagSize = WEAPON_DATA.shotgun.magSize;
+    this.shotgunAmmoInMag = WEAPON_DATA.shotgun.magSize;
+    this.shotgunReserve = WEAPON_DATA.shotgun.startingReserve;
     this.shotgunPump = 0;
     this.swordSlashing = false;
     this.swordSlashTimer = 0;
@@ -123,7 +124,7 @@ export class WeaponSystem {
     this.muzzleFlashTimer = 0;
     this.reloading = false;
     this.reloadTimer = 0;
-    this.reloadDuration = 1.55;
+    this.reloadDuration = WEAPON_DATA.glock.reloadDurationSec;
 
     // Knife slash animation (also supports instant quick-knife while holding Glock)
     this.slashing = false;
@@ -1162,7 +1163,7 @@ export class WeaponSystem {
     this._ammoInMag = this.magSize;
     this._reserveAmmo = 60;
     this.shotgunAmmoInMag = this.shotgunMagSize;
-    this.shotgunReserve = 12;
+    this.shotgunReserve = WEAPON_DATA.shotgun.startingReserve;
     this.fireCooldown = 0;
     this.recoilKick = 0;
     this.slideBack = 0;
@@ -1669,7 +1670,7 @@ export class WeaponSystem {
       this.inspecting = false;
       this.reloading = true;
       this.reloadTimer = 0;
-      this.reloadDuration = 40 / 30; // 1.333 s per GA_Reload (40 frames @ 30 fps)
+      this.reloadDuration = WEAPON_DATA.shotgun.reloadDurationSec; // GA_Reload (40 frames @ 30 fps)
       const shellsNeeded = Math.min(this.shotgunMagSize - this.shotgunAmmoInMag, this.shotgunReserve);
       const wasEmpty = this.shotgunAmmoInMag === 0;
       if (this.shotgunAnimator) {
@@ -1757,15 +1758,15 @@ export class WeaponSystem {
 
     if (this.shotgunAmmoInMag <= 0) {
       sfx.playDryFire();
-      this.fireCooldown = 0.25;
+      this.fireCooldown = WEAPON_DATA.shotgun.dryFireCooldownSec;
       if (this.shotgunReserve > 0) this.startReload();
       else this.callbacks.onOutOfAmmo?.();
       return false;
     }
 
     this.shotgunAmmoInMag -= 1;
-    this.fireCooldown = 0.55;
-    this.recoilKick = 1.6;
+    this.fireCooldown = WEAPON_DATA.shotgun.fireCooldownSec;
+    this.recoilKick = WEAPON_DATA.shotgun.recoilKick;
     this.shotgunPump = 1.0;
     this.muzzleFlashTimer = 0.055;
     this.shotgunMuzzleFlash.visible = true;
@@ -1784,9 +1785,9 @@ export class WeaponSystem {
     this.callbacks.onShake?.(0.48);
     this.callbacks.onGunshotNoise?.();
 
-    // 8-pellet shotgun spread raycasts
-    const pelletCount = 8;
-    const spreadRad = 0.045;
+    // Pellet spread raycasts — count and cone from WEAPON_DATA
+    const pelletCount = WEAPON_DATA.shotgun.pelletsPerShot;
+    const spreadRad = WEAPON_DATA.shotgun.spreadConeRad;
     const isNowOutOfAmmo = this.shotgunAmmoInMag === 0 && this.shotgunReserve === 0;
     let barrelHitFired = false;
 
@@ -1794,9 +1795,9 @@ export class WeaponSystem {
       const ndcX = (Math.random() - 0.5) * spreadRad;
       const ndcY = (Math.random() - 0.5) * spreadRad;
       this._raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
-      this._raycaster.far = 38;
+      this._raycaster.far = WEAPON_DATA.shotgun.rangeM;
 
-      let maxDist = 38;
+      let maxDist = WEAPON_DATA.shotgun.rangeM;
       if (worldMeshes && worldMeshes.length > 0) {
         const wallHits = this._raycaster.intersectObjects(worldMeshes, true);
         if (wallHits.length > 0) {
@@ -1866,14 +1867,14 @@ export class WeaponSystem {
     if (this.isCycleLocked || this.reloading || this.quickKnifeActive || this.shoving || this.fireCooldown > 0) return false;
     if (this.ammoInMag <= 0) {
       sfx.playDryFire();
-      this.fireCooldown = 0.2;
+      this.fireCooldown = WEAPON_DATA.glock.dryFireCooldownSec;
       if (this.reserveAmmo > 0) this.startReload();
       return false;
     }
 
     this.ammoInMag -= 1;
-    this.fireCooldown = 0.145;
-    this.recoilKick = 1.0;
+    this.fireCooldown = WEAPON_DATA.glock.fireCooldownSec;
+    this.recoilKick = WEAPON_DATA.glock.recoilKick;
     this.slideBack = 1.0;
     this.muzzleFlashTimer = 0.048;
     this.muzzleFlashMesh.visible = true;

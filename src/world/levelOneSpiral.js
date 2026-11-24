@@ -107,6 +107,7 @@ export function getSpiralMazeLayout() {
           z,
           variant: zombies.length === 1 ? 'sprinter' : 'shambler',
           trigger: 'enter_maze_one',
+          tags: ['horde', 'maze'],
         });
       } else if (ch === 'G') {
         ghouls.push({
@@ -116,6 +117,7 @@ export function getSpiralMazeLayout() {
           x,
           z,
           trigger: 'enter_maze_one',
+          tags: ['horde', 'maze'],
         });
       } else if (ch === 'D') {
         discs.push({
@@ -174,16 +176,16 @@ export const LEVEL_ONE_SPAWNS = Object.freeze({
   // declared here. Positions are the drawn defaults from the level map.
   portalGuards: {
     G1: [
-      { id: 'guard_g1_a', x: -1.3, z: 5.4 },
-      { id: 'guard_g1_b', x: 1.3, z: 5.4 },
+      { id: 'guard_g1_a', x: -1.3, z: 5.4, tags: ['guard', 'portal'] },
+      { id: 'guard_g1_b', x: 1.3, z: 5.4, tags: ['guard', 'portal'] },
     ],
     G2: [
-      { id: 'guard_g2_a', x: -0.9, z: 13.4 },
-      { id: 'guard_g2_b', x: 0.9, z: 13.4 },
+      { id: 'guard_g2_a', x: -0.9, z: 13.4, tags: ['guard', 'portal'] },
+      { id: 'guard_g2_b', x: 0.9, z: 13.4, tags: ['guard', 'portal'] },
     ],
     G3: [
-      { id: 'guard_g3_a', x: -1.0, z: 21.9 },
-      { id: 'guard_g3_b', x: 1.2, z: 21.9 },
+      { id: 'guard_g3_a', x: -1.0, z: 21.9, tags: ['guard', 'portal'] },
+      { id: 'guard_g3_b', x: 1.2, z: 21.9, tags: ['guard', 'portal'] },
     ],
   },
 
@@ -256,16 +258,16 @@ export const LEVEL_ONE_SPAWNS = Object.freeze({
 });
 
 export const COMPARTMENT_RESPAWNS = Object.freeze({
-  museum_hall: { x: 0, y: 1.72, z: -5.2 },
-  white_aether: { x: 0, y: 1.72, z: 8.5 },
-  castle_of_the_dead: { x: 0, y: 1.72, z: 16.5 },
-  castleRoom1: { x: 0, y: 1.72, z: 16.5 },
-  barrel_room: { x: 0, y: 1.72, z: 16.5 },
-  castleRoom2: { x: 0, y: 1.72, z: 24.5 },
-  room_2: { x: 0, y: 1.72, z: 24.5 },
-  maze_one: { x: 0, y: 1.72, z: 30.5 },
-  lion_room: { x: 0, y: 1.72, z: 52.5 },
-  return_stair: { x: -16.0, y: 1.72, z: 62.0 },
+  museum_hall: { x: 0, y: 1.72, z: -5.2 , lightZone: 'hall' },
+  white_aether: { x: 0, y: 1.72, z: 8.5 , lightZone: 'hall' },
+  castle_of_the_dead: { x: 0, y: 1.72, z: 16.5 , lightZone: 'basement' },
+  castleRoom1: { x: 0, y: 1.72, z: 16.5 , lightZone: 'basement' },
+  barrel_room: { x: 0, y: 1.72, z: 16.5 , lightZone: 'basement' },
+  castleRoom2: { x: 0, y: 1.72, z: 24.5 , lightZone: 'basement' },
+  room_2: { x: 0, y: 1.72, z: 24.5 , lightZone: 'basement' },
+  maze_one: { x: 0, y: 1.72, z: 30.5 , lightZone: 'basement' },
+  lion_room: { x: 0, y: 1.72, z: 52.5 , lightZone: 'basement' },
+  return_stair: { x: -16.0, y: 1.72, z: 62.0 , lightZone: 'basement' },
 });
 
 /**

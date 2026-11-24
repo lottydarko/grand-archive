@@ -537,6 +537,25 @@ export function advanceLevelOne(state, event, payload = {}) {
       break;
     }
 
+    case 'reset_lion_fight': {
+      // Director's ruling (Nov 24, 2026): void-falling out of the Lion
+      // Room mid-fight RESETS the fight — no keeping your damage. The
+      // sequence returns to the discs-acquired step so re-entry runs
+      // the arena entry again (the cutscene is skippable on repeat
+      // viewings via villainCutsceneSeenCount, which is preserved).
+      if (next.step !== LEVEL_ONE_STEPS.AETHER_LION_ENCOUNTER) break;
+      if (next.lionDefeated) break;
+      next.step = LEVEL_ONE_STEPS.MAZE_ONE_DISCS_ACQUIRED;
+      next.bossFightStarted = false;
+      next.villainCutsceneTriggered = false;
+      next.villainCutsceneActive = false;
+      next.villainCutsceneBeat = 0;
+      next.villainCutscenePhase = VILLAIN_CUTSCENE_PHASE.IDLE;
+      next.villainCutsceneTimer = 0.0;
+      events.push({ type: 'lion_fight_reset' });
+      break;
+    }
+
     case 'lion_gunfire_hit': {
       if (next.step === LEVEL_ONE_STEPS.AETHER_LION_ENCOUNTER && next.lionAlive) {
         // Lion is immune to dying from gunfire: clamped at >= 1 HP
