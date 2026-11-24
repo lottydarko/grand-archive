@@ -478,17 +478,21 @@ body {
 }
 
 /* ============================================================================
-   PASS 1 — NON-NEGOTIABLE STARK BRIGHT-WHITE TITLE MENU
-   - BRIGHT WHITE (#ffffff), barebones, stark, almost empty
-   - White text in chalky, freaky handwriting
+   PASS 1 — NON-NEGOTIABLE STARK BLACK TITLE MENU
+   - PURE BLACK (#000000), barebones, stark, almost empty
+     (Lotty, Nov 23, 2026: "the main menu needs to be black not white" —
+     supersedes the Nov 20 bright-white law)
+   - White chalk text in chalky, freaky handwriting, chalk on a blackboard
    - Highlighted option turns BLOOD RED (red ONLY for the highlight)
+   - The blood text DRIPS: the title and the highlighted option shed slow
+     blood drips (Lotty, Nov 23, 2026: "the text doesn't drop blood yet")
    - Alive, breathing, never static; ZERO on-screen control hints anywhere
    ============================================================================ */
 .stark-title-root {
   position: fixed;
   inset: 0;
   z-index: 55;
-  background-color: #ffffff;
+  background-color: #000000;
   pointer-events: auto;
   overflow: hidden;
   display: flex;
@@ -512,7 +516,8 @@ body {
   inset: -6%;
   pointer-events: none;
   background:
-    radial-gradient(circle at 50% 44%, rgba(255, 255, 255, 1) 42%, rgba(242, 242, 244, 0.55) 100%);
+    radial-gradient(circle at 50% 62%, rgba(122, 5, 10, 0.10) 0%, rgba(0, 0, 0, 0) 55%),
+    radial-gradient(circle at 50% 44%, rgba(26, 22, 26, 0.85) 42%, rgba(0, 0, 0, 1) 100%);
   will-change: opacity;
 }
 
@@ -532,17 +537,17 @@ body {
   display: none;
 }
 
-/* White chalky freaky handwriting carved out of blinding white space */
+/* White chalky freaky handwriting — chalk dust on a blackboard */
 .chalk-white-text {
   font-family: "Rock Salt", "Reenie Beanie", cursive;
   color: #ffffff;
-  -webkit-text-stroke: 1.55px rgba(22, 22, 26, 0.78);
+  -webkit-text-stroke: 1.1px rgba(255, 255, 255, 0.22);
   paint-order: stroke fill;
   text-shadow:
-    0 0 1px rgba(18, 18, 22, 0.85),
-    1px 2px 0 rgba(28, 28, 32, 0.42),
-    -1px -1px 0 rgba(28, 28, 32, 0.34),
-    0 3px 9px rgba(16, 16, 20, 0.22);
+    0 0 2px rgba(255, 255, 255, 0.38),
+    1px 2px 0 rgba(0, 0, 0, 0.55),
+    -1px -1px 0 rgba(255, 255, 255, 0.14),
+    0 3px 12px rgba(0, 0, 0, 0.65);
   filter: url(#chalk-freak);
   user-select: none;
 }
@@ -602,6 +607,59 @@ body {
     0 4px 16px rgba(164, 8, 14, 0.28);
 }
 
+/* BLOOD DRIPS (Lotty, Nov 23, 2026 — "the text doesn't drop blood yet"):
+   the title and the blood-red highlighted option shed slow drips. A drip
+   grows from the text's lower edge, holds, detaches and falls. Two drips
+   per element, offset phases so it never ticks like a machine. */
+.stark-main-title {
+  position: relative;
+}
+.stark-menu-item.is-highlighted .stark-glyph-span {
+  position: relative;
+}
+.stark-menu-item.is-highlighted .stark-glyph-span::before,
+.stark-menu-item.is-highlighted .stark-glyph-span::after,
+.stark-main-title::before,
+.stark-main-title::after {
+  content: '';
+  position: absolute;
+  top: 92%;
+  width: 0.085em;
+  height: 0;
+  border-radius: 0 0 0.09em 0.09em;
+  background: linear-gradient(to bottom, #c00d14 0%, #7a050a 100%);
+  opacity: 0;
+  pointer-events: none;
+  animation: blood-drip 4.6s ease-in infinite;
+}
+.stark-menu-item.is-highlighted .stark-glyph-span::before {
+  left: 18%;
+  animation-delay: 0.7s;
+}
+.stark-menu-item.is-highlighted .stark-glyph-span::after {
+  left: 71%;
+  animation-delay: 2.6s;
+}
+.stark-main-title::before {
+  left: 23%;
+  animation-duration: 8.5s;
+  animation-delay: 1.9s;
+}
+.stark-main-title::after {
+  left: 76%;
+  animation-duration: 8.5s;
+  animation-delay: 5.4s;
+}
+@keyframes blood-drip {
+  0% { height: 0; opacity: 0; transform: translateY(0); }
+  10% { opacity: 1; }
+  42% { height: 0.52em; opacity: 1; transform: translateY(0); }
+  58% { height: 0.52em; opacity: 1; transform: translateY(0); }
+  76% { height: 0.3em; opacity: 1; transform: translateY(0.55em); }
+  92% { height: 0.16em; opacity: 0; transform: translateY(1.05em); }
+  100% { height: 0; opacity: 0; transform: translateY(1.05em); }
+}
+
 .stark-subview-heading {
   margin: 0;
   font-weight: 400;
@@ -634,7 +692,7 @@ body {
   font-size: clamp(1.15rem, 2.05vw, 1.65rem);
   line-height: 1.6;
   letter-spacing: 0.05em;
-  -webkit-text-stroke: 1.35px rgba(22, 22, 26, 0.8);
+  -webkit-text-stroke: 1px rgba(255, 255, 255, 0.2);
 }
 
 .stark-credit-studio {
@@ -646,6 +704,12 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .chalk-white-text {
     filter: none;
+  }
+  .stark-menu-item.is-highlighted .stark-glyph-span::before,
+  .stark-menu-item.is-highlighted .stark-glyph-span::after,
+  .stark-main-title::before,
+  .stark-main-title::after {
+    animation: none;
   }
 }
 

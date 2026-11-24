@@ -42,12 +42,14 @@ export function detectConnectedController() {
 }
 
 /**
- * Stark Bright-White Title Menu + Xbox Controller Gate + Narrator Taunts.
+ * Stark Black Title Menu + Xbox Controller Gate + Narrator Taunts.
  *
  * Non-negotiable visual law:
- * - BRIGHT WHITE (#ffffff), barebones, stark, almost empty.
- * - White text in chalky, freaky handwriting.
+ * - PURE BLACK (#000000), barebones, stark, almost empty.
+ *   (Lotty, Nov 23, 2026 — supersedes the Nov 20 bright-white law.)
+ * - White chalk text in chalky, freaky handwriting.
  * - Highlighted option turns BLOOD RED — red ONLY for the highlight.
+ * - The title and the highlighted option DRIP BLOOD (CSS, index.css).
  * - Very few options: ENTER, SETTINGS, CREDITS.
  * - Animated — alive, breathing, never static.
  * - ZERO on-screen control hints anywhere, ever.
@@ -128,7 +130,7 @@ export class TitleMenu {
         </defs>
       </svg>
 
-      <!-- Subtle living white breathing haze (still stark pure #ffffff) -->
+      <!-- Subtle living dark breathing haze over pure black, a whisper of blood at the base -->
       <div class="stark-breath-field" aria-hidden="true"></div>
 
       <!-- Main Stark Title View -->
