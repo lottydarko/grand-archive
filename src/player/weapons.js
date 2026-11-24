@@ -254,7 +254,7 @@ export class WeaponSystem {
     if (weapon === 'glock') return Boolean(this.pistolOwned && this.weaponsUnlocked.glock);
     if (weapon === 'sword') return Boolean(this.swordOwned && this.weaponsUnlocked.sword);
     if (weapon === 'shotgun') return Boolean(this.weaponsUnlocked.shotgun);
-    if (weapon === 'knife') return Boolean(this.loadout !== 'level1' && this.weaponsUnlocked.knife);
+    if (weapon === 'knife') return Boolean(this.weaponsUnlocked.knife);
     return false;
   }
 
@@ -265,7 +265,10 @@ export class WeaponSystem {
     this.weaponsUnlocked.glock = Boolean(this.pistolOwned);
     this.weaponsUnlocked.sword = Boolean(this.swordOwned);
     if (loadout === 'level1') {
-      this.weaponsUnlocked.knife = false;
+      // Knife is owned from the start in Level One (Lotty, Nov 23, 2026):
+      // the portal guard packs must be killable on a first pass even with
+      // no ammo — the sword stays the upgrade, the knife is the floor.
+      this.weaponsUnlocked.knife = true;
       const ownedOrder = ['shotgun', 'sword', 'glock'].filter((w) => this._isWeaponOwned(w));
       if (unarmed || ownedOrder.length === 0) {
         this.activeWeapon = 'unarmed';
@@ -1107,7 +1110,8 @@ export class WeaponSystem {
       shotgun: false,
       sword: false,
       glock: false,
-      knife: !levelOne,
+      // Knife owned in every loadout (Lotty, Nov 23, 2026 — see setLoadout).
+      knife: true,
     };
     this.activeWeapon = 'unarmed';
     // Unmount hero Glock if it was mounted during a previous run

@@ -184,6 +184,7 @@ export class EnemyManager {
    * Deterministic authored coordinates — zero procedural or seed generation.
    */
   spawnMazeOnePopulation() {
+    this._mazePopulationSpawned = true;
     const spiral = getSpiralMazeLayout();
     const spawnedZombies = [];
     const spawnedGhouls = [];
@@ -1194,6 +1195,72 @@ export class EnemyManager {
   }
 
   /**
+   * Portal guards (Lotty, Nov 23, 2026): one zombie pack per portal gate
+   * G1/G2/G3, declared in LEVEL_ONE_SPAWNS.portalGuards. A portal stays
+   * sealed until its guards are defeated — the guard condition ADDS to
+   * each gate's own condition. Idempotent: a living guard with the same
+   * scriptId is never duplicated. Guards carry the standard 80 HP.
+   */
+  spawnPortalGuards() {
+    const packs = LEVEL_ONE_SPAWNS.portalGuards || {};
+    const spawned = [];
+    for (const gateId of Object.keys(packs)) {
+      for (const spec of packs[gateId]) {
+        if (this.enemies.some((e) => e.scriptId === spec.id && e.alive)) continue;
+        spawned.push(
+          this.spawnZombieAt(spec.x, spec.z, { idTag: spec.id, alerted: false, hp: 80 })
+        );
+      }
+    }
+    return spawned;
+  }
+
+  /** Living guards remaining for a gate ('G1' | 'G2' | 'G3'). */
+  portalGuardsAlive(gateId) {
+    const specs = (LEVEL_ONE_SPAWNS.portalGuards || {})[gateId] || [];
+    const ids = new Set(specs.map((s) => s.id));
+    return this.enemies.reduce((n, e) => n + (e.alive && ids.has(e.scriptId) ? 1 : 0), 0);
+  }
+
+  /**
+   * The maze horde is G5's guard pack (Lotty, Nov 23, 2026): the trap
+   * door's condition is discs AND horde. Cleared only counts once the
+   * population has actually spawned — an unspawned maze is not a
+   * cleared maze.
+   */
+  mazeHordeCleared() {
+    if (!this._mazePopulationSpawned) return false;
+    const spiral = getSpiralMazeLayout();
+    const ids = new Set([...spiral.zombies, ...spiral.ghouls].map((s) => s.id));
+    return !this.enemies.some((e) => e.alive && ids.has(e.scriptId));
+  }
+
+  /**
+   * The hall brute (Lotty, Nov 23, 2026): "we can have a strong zombie
+   * in the hall, strong but slow." NOT a boss — no cutscene, no boss
+   * card; the lion stays Level One's only boss. It spawns on the
+   * player's return to the hall and guards the final case delivery.
+   * Muse defaults (director-vetoable): HP 360, speed 0.97 (~45% of the
+   * 2.15 shambler), scale 1.18.
+   */
+  spawnHallBrute() {
+    const existing = this.enemies.find((e) => e.scriptId === 'hall_brute');
+    if (existing) return existing;
+    const brute = this.spawnZombieAt(0, 3.2, {
+      idTag: 'hall_brute',
+      alerted: true,
+      hp: 360,
+      speed: 0.97,
+    });
+    if (brute && brute.group) brute.group.scale.setScalar(1.18);
+    return brute;
+  }
+
+  hallBruteAlive() {
+    return this.enemies.some((e) => e.alive && e.scriptId === 'hall_brute');
+  }
+
+  /**
    * Item B: In Level One mode, the level disc NEVER drops from the last lesser enemy —
    * it rises from the post-boss plinth ONLY after the Lion boss is defeated.
    */
@@ -1606,7 +1673,7 @@ export class EnemyManager {
       this._animateZombieMixamoBones(z, elapsed, dt);
       if (z.attackTimer <= 0) {
         if (dist < 1.95) {
-          this._dealPlayerDamage(z, z.variant === 'sprinter' ? 14 : 18, 'zombie', playerPos, colliders);
+          this._dealPlayerDamage(z, z.scriptId === 'hall_brute' ? 30 : z.variant === 'sprinter' ? 14 : 18, 'zombie', playerPos, colliders);
         }
         z.attackState = 'recover';
         z.attackTimer = 0.78;
