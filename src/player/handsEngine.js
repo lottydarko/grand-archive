@@ -14,6 +14,23 @@
  * 7. setCurlCapRad: single-knob curl cap, default null (uncapped); caps into 1.35-1.75 rad if set.
  * 8. ?handcheck=1 HUD telemetry measuring DRIFT OK/FAIL and contact distances
  *    (RightHand <= 20 mm, LeftHand <= 3 mm).
+ *
+ * Draft-3 seal (Patch 2, host-reconciled): measureHandContact now measures
+ * the LIVE rig — drift is each hand bone's live local quaternion against its
+ * frozen bind-rest quaternion, contact is the live Box3 clamp distance from
+ * the bone's world position to the actual gun meshes, roundtrip is the live
+ * world-position error against the frozen bind position. Studio's draft was
+ * a wholesale file replacement written against her app-side copy: it changed
+ * the calibrated sword/flashlight constants, dropped exports the repo's
+ * tests import (FINGERS_AXIS, HAND_IN_GUN_TARGETS, CONTACT_TOLERANCES_MM,
+ * HANDCHECK_DRIFT_THRESHOLD_RAD), dropped the shotgun mount orientation in
+ * attachShotgun, and changed measureHandContact's return shape. The seal's
+ * own rule — calibration and canon win — keeps this module's API and
+ * constants; only the measurement core was replaced, and the report now
+ * carries BOTH shapes (the repo shape and Studio's drift/roundtrip/contact
+ * sub-objects). When no rig/mesh is bound there is nothing live to measure:
+ * the calibration baseline is reported with live:false and is never
+ * presented as a live reading.
  */
 import * as THREE from 'three';
 
@@ -48,6 +65,14 @@ export const CONTACT_TOLERANCES_MM = Object.freeze({
 
 export const PUMP_TRAVEL_M = 0.09;
 export const HANDCHECK_DRIFT_THRESHOLD_RAD = 0.01;
+// Draft-3 seal aliases/additions (Studio's Patch 2/6 naming) — same values,
+// no second source of truth.
+export const HANDCHECK_DRIFT_TOLERANCE_RAD = HANDCHECK_DRIFT_THRESHOLD_RAD;
+export const GRAB_CURL_TOLERANCE_RAD = HANDCHECK_DRIFT_THRESHOLD_RAD;
+export const CONTACT_TOLERANCE_MM = CONTACT_TOLERANCES_MM.LeftHand_max;
+export const WRIST_TOLERANCE_MM = CONTACT_TOLERANCES_MM.RightHand_max;
+export const ROUNDTRIP_TOLERANCE_MM = 0.04;
+export const FLASHLIGHT_FORWARD_TARGET = Object.freeze({ x: 0, y: 0, z: -2 });
 export const SWORD_HAND_LOCAL_POS = Object.freeze([0, 0.165, 0.025]);
 export const FLASHLIGHT_PALM_OFFSET = Object.freeze([0.025, 0.035, -0.045]);
 export const ADS_DELTA_TRANSLATION = Object.freeze([-0.17, -0.09, 0.04]);
@@ -78,12 +103,20 @@ export class HandsEngine {
       rightHand: null,
       leftHand: null,
       weapon: null,
+      wrist: null,
       chains: {
         R: {},
         L: {},
       },
     };
     this.restQuats = new Map();
+
+    // Draft-3 seal: ShotgunAnimator link for pump coupling (Patch 2), and
+    // the frozen bind-pose world positions used as the roundtrip baseline.
+    this.animator = null;
+    this.bindWorldPos = { R: null, L: null, W: null };
+    this._boxTmp = null;
+    this._closestTmp = null;
 
     // Scene attachment tracking
     this.shotgunRoot = null;
@@ -144,6 +177,8 @@ export class HandsEngine {
       if (clean === 'weapon') {
         this.bones.weapon = obj;
         this.weaponBone = obj;
+      } else if (clean === 'leftwrist' || clean === 'wrist') {
+        this.bones.wrist = obj;
       } else if (clean === 'righthand' || clean === 'handr001' || clean === 'handr') {
         this.bones.rightHand = obj;
         this.rightHandBone = obj;
@@ -169,6 +204,40 @@ export class HandsEngine {
         }
       }
     });
+
+    // Draft-3 seal: fallback for non-bone stand-in rigs (the integrated
+    // weapons.update() tests build the same named graph from Object3D
+    // groups). Accept named nodes for any slot no Bone claimed, and record
+    // their rest quaternions so live drift measurement works there too.
+    if (!this.bones.rightHand || !this.bones.leftHand || !this.bones.weapon || !this.bones.wrist) {
+      const wanted = [
+        ['rightHand', ['righthand', 'handr001', 'handr']],
+        ['leftHand', ['lefthand', 'handl001', 'handl']],
+        ['weapon', ['weapon']],
+        ['wrist', ['leftwrist', 'wrist']],
+      ];
+      this.armsRoot.traverse((obj) => {
+        if (obj.isBone) return;
+        const clean = obj.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        for (const [slot, names] of wanted) {
+          if (!this.bones[slot] && names.includes(clean)) {
+            this.bones[slot] = obj;
+            if (!this.restQuats.has(obj)) this.restQuats.set(obj, obj.quaternion.clone());
+          }
+        }
+      });
+    }
+    if (!this.bones.wrist) this.bones.wrist = this.bones.leftHand;
+    if (this.bones.rightHand && !this.rightHandBone) this.rightHandBone = this.bones.rightHand;
+    if (this.bones.leftHand && !this.leftHandBone) this.leftHandBone = this.bones.leftHand;
+    if (this.bones.weapon && !this.weaponBone) this.weaponBone = this.bones.weapon;
+
+    // Frozen bind-pose world positions — the roundtrip baseline (D2).
+    this.armsRoot.updateWorldMatrix(true, true);
+    const slots = { R: this.bones.rightHand, L: this.bones.leftHand, W: this.bones.wrist };
+    for (const [key, bone] of Object.entries(slots)) {
+      this.bindWorldPos[key] = bone ? bone.getWorldPosition(new THREE.Vector3()) : null;
+    }
 
     return {
       hasRightHand: Boolean(this.bones.rightHand),
@@ -214,13 +283,24 @@ export class HandsEngine {
    * Flashlight anchor configuration.
    * Given anchor group, sets palm offset and ensures forward aim is maintained.
    */
-  configureFlashlightAnchor(anchor, parentBone = null) {
+  configureFlashlightAnchor(anchor, parentBone = null, root = null, target = null) {
     if (!anchor) return;
     if (parentBone) {
       parentBone.add(anchor);
     }
     anchor.position.set(...this.flashlightPalmOffset);
     anchor.rotation.set(0, 0, 0);
+    // Draft-3 seal (Patch 2/3): the aim target lives in camera space under
+    // the viewmodel root — NOT under the wrist-driven anchor — so flashlight
+    // aim is wrist-independent.
+    if (target && root) {
+      root.add(target);
+      target.position.set(
+        FLASHLIGHT_FORWARD_TARGET.x,
+        FLASHLIGHT_FORWARD_TARGET.y,
+        FLASHLIGHT_FORWARD_TARGET.z
+      );
+    }
   }
 
   /**
@@ -243,6 +323,31 @@ export class HandsEngine {
   computePumpTravelOffset(pumpTravel01) {
     const p = Math.max(0, Math.min(1, pumpTravel01));
     return p * this.pumpTravelM;
+  }
+
+  /**
+   * Draft-3 seal (Patch 2): ShotgunAnimator link. weapons.js sets this at
+   * load (both load orders) so update() can keep the animator's pump phase
+   * the single source of truth. Guarded: production update() runs from
+   * frame 1 with the fallback animator present but no animator linked yet.
+   */
+  setAnimator(animator) {
+    this.animator = animator || null;
+    return this.animator;
+  }
+
+  setPumpTravel(travel01) {
+    if (!this.animator) return;
+    this.animator.setPumpTravel(travel01);
+  }
+
+  syncShotgunPose() {
+    if (!this.animator) return;
+    if (this.animator.debugHoldPump01 != null) {
+      this.setPumpTravel(this.animator.debugHoldPump01);
+    } else {
+      this.setPumpTravel(THREE.MathUtils.clamp(this.animator.pumpTravel01 ?? 0, 0, 1));
+    }
   }
 
   /**
@@ -293,61 +398,160 @@ export class HandsEngine {
   }
 
   /**
+   * Gun meshes for live contact measurement: the Balistucia's meshes (the
+   * shotgunRoot subtree), falling back to the sword's. Empty when no weapon
+   * model is attached — then there is nothing live to measure against.
+   */
+  _gunMeshes() {
+    const meshes = [];
+    const collect = (root) => {
+      if (!root) return;
+      root.traverse((obj) => {
+        if (obj.isMesh) meshes.push(obj);
+      });
+    };
+    collect(this.shotgunRoot);
+    if (meshes.length === 0) collect(this.swordRoot);
+    return meshes;
+  }
+
+  /**
+   * Live Box3 clamp distance (mm) from a bone's world position to the
+   * nearest point of any gun mesh. null when either side is missing.
+   */
+  _liveDistanceMm(bone, meshes) {
+    if (!bone || !meshes || meshes.length === 0) return null;
+    if (!this._boxTmp) {
+      this._boxTmp = new THREE.Box3();
+      this._closestTmp = new THREE.Vector3();
+    }
+    const wp = bone.getWorldPosition(new THREE.Vector3());
+    let min = Infinity;
+    for (const mesh of meshes) {
+      this._boxTmp.setFromObject(mesh);
+      if (this._boxTmp.isEmpty()) continue;
+      const d = this._boxTmp.clampPoint(wp, this._closestTmp).distanceTo(wp) * 1000;
+      if (d < min) min = d;
+    }
+    return Number.isFinite(min) ? Number(min.toFixed(4)) : null;
+  }
+
+  /**
    * In-build contact and drift measurement for ?handcheck=1.
-   * Computes per-hand contact distances and verifies zero angular drift between hip and ADS.
+   *
+   * Draft-3 seal (D2): LIVE measurement only — drift is each hand bone's
+   * live local quaternion against its frozen bind-rest quaternion (so a
+   * 0.05 rad perturbation flips DRIFT to FAIL), contact is the live Box3
+   * distance to the real gun meshes, roundtrip is the live world-position
+   * error against the frozen bind position. No target is ever compared to
+   * its own clone. When no rig/mesh is bound, the calibration baseline
+   * (this.contactDistances, measured Nov 23) is reported with live:false.
    */
   measureHandContact(mode = 'hip') {
-    const isAds = mode === 'ads';
     const isPump = mode === 'pump';
     const isSword = mode === 'sword';
 
-    // ADS is a pure translation; rotations are strictly identical across hip and ADS
-    const hipQuat = new THREE.Quaternion(
-      HAND_IN_GUN_TARGETS.RightHand.quat_wxyz[1],
-      HAND_IN_GUN_TARGETS.RightHand.quat_wxyz[2],
-      HAND_IN_GUN_TARGETS.RightHand.quat_wxyz[3],
-      HAND_IN_GUN_TARGETS.RightHand.quat_wxyz[0]
-    );
-    const adsQuat = hipQuat.clone(); // Identical orientation
-    const angularDriftRad = hipQuat.angleTo(adsQuat); // 0.000 rad
+    const rig = {
+      R: this.bones.rightHand,
+      L: this.bones.leftHand,
+      W: this.bones.wrist || this.bones.leftHand,
+    };
 
+    // Drift — live local quaternion vs frozen bind-rest quaternion.
+    const drift = {};
+    let maxDrift = 0;
+    for (const key of ['R', 'L', 'W']) {
+      const bone = rig[key];
+      if (!bone) continue;
+      const rest = this.restQuats.get(bone);
+      if (!rest) continue;
+      const d = bone.quaternion.angleTo(rest);
+      drift[key] = Number(d.toFixed(6));
+      if (d > maxDrift) maxDrift = d;
+    }
+    const angularDriftRad = Number(maxDrift.toFixed(6));
     const driftOk = angularDriftRad <= this.handcheckDriftThresholdRad;
 
-    // Contact distances in mm (derived from authored & measured trailer calibration)
-    let leftHandMm = this.contactDistances.LeftHand;
-    let rightHandMm = this.contactDistances.RightHand;
+    // Roundtrip — live world position vs frozen bind world position (mm).
+    const roundtrip = {};
+    if (this.armsRoot) {
+      this.armsRoot.updateWorldMatrix(true, true);
+      for (const key of ['R', 'L', 'W']) {
+        const bone = rig[key];
+        const base = this.bindWorldPos[key];
+        if (!bone || !base) continue;
+        const wp = bone.getWorldPosition(new THREE.Vector3());
+        roundtrip[key] = Number((wp.distanceTo(base) * 1000).toFixed(4));
+      }
+    }
 
-    if (isPump) {
-      // Left hand stays glued to forend throughout the 0.09m rack
-      leftHandMm = 0.2;
-    } else if (isSword) {
-      // Fist wraps hilt base; RightHand sits ~14.5 mm off weapon anchor
-      rightHandMm = 14.5;
-      leftHandMm = 0.0; // Left hand free
+    // Contact — live Box3 distance to the gun meshes when they exist.
+    const meshes = this._gunMeshes();
+    const contact = {};
+    const tolerances = {
+      R: CONTACT_TOLERANCES_MM.RightHand_max,
+      L: CONTACT_TOLERANCES_MM.LeftHand_max,
+      W: WRIST_TOLERANCE_MM,
+    };
+    for (const key of ['R', 'L', 'W']) {
+      const d = this._liveDistanceMm(rig[key], meshes);
+      contact[key] =
+        d === null
+          ? { minDistMm: null, status: 'NO_MESH' }
+          : { minDistMm: d, status: d <= tolerances[key] ? 'OK' : 'FAIL' };
+    }
+    const live = contact.R.minDistMm !== null || contact.L.minDistMm !== null;
+
+    const chainDist = (chain) => {
+      const bones = this.bones.chains.L ? this.bones.chains.L[chain] : null;
+      if (!bones) return null;
+      for (let i = bones.length - 1; i >= 0; i--) {
+        if (bones[i]) return this._liveDistanceMm(bones[i], meshes);
+      }
+      return null;
+    };
+
+    // Repo-shape contact fields: live values when measured, otherwise the
+    // calibration baseline (with the authored per-mode values, unchanged).
+    let rightHandMm = live && contact.R.minDistMm !== null ? contact.R.minDistMm : this.contactDistances.RightHand;
+    let leftHandMm = live && contact.L.minDistMm !== null ? contact.L.minDistMm : this.contactDistances.LeftHand;
+    let leftIndexMm = chainDist('index') ?? this.contactDistances.LeftIndex;
+    let leftMiddleMm = chainDist('middle') ?? this.contactDistances.LeftMiddle;
+    if (!live) {
+      if (isPump) {
+        leftHandMm = 0.2;
+      } else if (isSword) {
+        rightHandMm = 14.5;
+        leftHandMm = 0.0;
+      }
     }
 
     const rightHandOk = rightHandMm <= CONTACT_TOLERANCES_MM.RightHand_max;
     const leftHandOk = leftHandMm <= CONTACT_TOLERANCES_MM.LeftHand_max;
-    const leftIndexOk = this.contactDistances.LeftIndex <= CONTACT_TOLERANCES_MM.LeftIndex_max;
-    const leftMiddleOk = this.contactDistances.LeftMiddle <= CONTACT_TOLERANCES_MM.LeftMiddle_max;
+    const leftIndexOk = leftIndexMm <= CONTACT_TOLERANCES_MM.LeftIndex_max;
+    const leftMiddleOk = leftMiddleMm <= CONTACT_TOLERANCES_MM.LeftMiddle_max;
 
     const allPassed = driftOk && rightHandOk && leftHandOk && leftIndexOk && leftMiddleOk;
 
     return {
       mode,
+      live,
       driftStatus: driftOk ? 'DRIFT OK' : 'DRIFT FAIL',
       angularDriftRad,
       driftThresholdRad: this.handcheckDriftThresholdRad,
+      drift,
+      roundtrip,
+      contact,
       RightHand_mm: rightHandMm,
       RightHand_max_mm: CONTACT_TOLERANCES_MM.RightHand_max,
       RightHand_ok: rightHandOk,
       LeftHand_mm: leftHandMm,
       LeftHand_max_mm: CONTACT_TOLERANCES_MM.LeftHand_max,
       LeftHand_ok: leftHandOk,
-      LeftIndex_mm: this.contactDistances.LeftIndex,
+      LeftIndex_mm: leftIndexMm,
       LeftIndex_max_mm: CONTACT_TOLERANCES_MM.LeftIndex_max,
       LeftIndex_ok: leftIndexOk,
-      LeftMiddle_mm: this.contactDistances.LeftMiddle,
+      LeftMiddle_mm: leftMiddleMm,
       LeftMiddle_max_mm: CONTACT_TOLERANCES_MM.LeftMiddle_max,
       LeftMiddle_ok: leftMiddleOk,
       allPassed,
