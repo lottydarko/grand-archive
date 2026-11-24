@@ -487,7 +487,17 @@ const levelOneSpawnFlags = {
   room2Triggered: false,
   room2TutorialZombie: null,
   mazeOnePopulated: false,
+  portalGuardsSpawned: false,
+  hallBruteSpawned: false,
 };
+
+// Portal entry latches (Lotty, Nov 23, 2026 — "press X to enter"): a
+// portal whose full condition is met (its own condition AND its guards
+// dead) shows an [x] enter prompt; pressing X sets the latch and the
+// gate opens. G4 stays tutorial-event-driven, G5's trap door and G6's
+// stair door stay automatic — only G1/G2/G3 are press-X portals.
+const portalEntered = { G1: false, G2: false, G3: false };
+const portalInteractables = [];
 
 const voidFallState = {
   active: false,
@@ -627,7 +637,13 @@ async function handleVinylCaseInteract(caseId) {
       return;
     }
   } else if (isSecondCaseRitual) {
-    // Carrying the post-boss golden vinyl unlocks and seats case 1.
+    // Carrying the post-boss golden vinyl unlocks and seats case 1 —
+    // but the hall brute guards the delivery (Lotty, Nov 23, 2026): the
+    // case refuses the disc while it still stands.
+    if (enemies && enemies.hallBruteAlive()) {
+      showWhisper('something strong still stands guard in the hall', 2.6);
+      return;
+    }
   } else if (isLocked) {
     showWhisper('this case is sealed', 2.2);
     return;
@@ -1078,6 +1094,11 @@ function startNewRun(lockPointer = true, cinemaReel = null) {
   levelOneSpawnFlags.room2Triggered = false;
   levelOneSpawnFlags.room2TutorialZombie = null;
   levelOneSpawnFlags.mazeOnePopulated = false;
+  levelOneSpawnFlags.portalGuardsSpawned = false;
+  levelOneSpawnFlags.hallBruteSpawned = false;
+  portalEntered.G1 = false;
+  portalEntered.G2 = false;
+  portalEntered.G3 = false;
   if (dom.brainSplatterOverlay) dom.brainSplatterOverlay.style.opacity = '0';
   if (dom.adsTutorialBanner) dom.adsTutorialBanner.style.opacity = '0';
   if (levelOneZones) {
@@ -1090,6 +1111,7 @@ function startNewRun(lockPointer = true, cinemaReel = null) {
   }
   if (levelOneCorridor) {
     levelOneCorridor.portalGateMesh.visible = true;
+    if (levelOneCorridor.aetherGateMesh) levelOneCorridor.aetherGateMesh.visible = true;
     levelOneCorridor.mazeExitGateMesh.visible = true;
     levelOneCorridor.risingCaseMesh.visible = false;
     levelOneCorridor.risingCaseMesh.position.y = -2.2;
@@ -1106,6 +1128,9 @@ function startNewRun(lockPointer = true, cinemaReel = null) {
   if (enemies) {
     enemies.levelOneMode = true;
     enemies.resetStats();
+    // Portal guard packs stand from the start of the run (Lotty, Nov 23).
+    enemies.spawnPortalGuards();
+    levelOneSpawnFlags.portalGuardsSpawned = true;
   }
   if (worldItems) {
     worldItems.spawnArchiveStashes();
@@ -1326,7 +1351,7 @@ function findActiveInteractable() {
   let bestScore = Infinity;
 
   const candidates = worldItems
-    ? library.interactables.concat(worldItems.items)
+    ? library.interactables.concat(worldItems.items, portalInteractables)
     : library.interactables;
 
   for (let i = 0; i < candidates.length; i++) {
@@ -1569,6 +1594,29 @@ async function bootstrap() {
   library = buildGrandLibrary(scene, renderer, tracks, isSoftwareGl);
   levelOneCorridor = buildLevelOneCorridor(scene);
 
+  // Press-X portal interactables for G1/G2/G3 (Lotty, Nov 23, 2026).
+  // `active` is recomputed every frame in the gate block: a portal is
+  // offered only when its full condition is met and it has not yet been
+  // entered. Positions sit at the gate centres, at chest height.
+  portalInteractables.length = 0;
+  portalInteractables.push(
+    {
+      id: 'portal_G1', type: 'portal', gate: 'G1', active: false,
+      position: new THREE.Vector3(0, 1.2, 7.15), radius: 2.6,
+      getPrompt: () => '[x] enter',
+    },
+    {
+      id: 'portal_G2', type: 'portal', gate: 'G2', active: false,
+      position: new THREE.Vector3(0, 1.2, 15.0), radius: 2.6,
+      getPrompt: () => '[x] enter',
+    },
+    {
+      id: 'portal_G3', type: 'portal', gate: 'G3', active: false,
+      position: new THREE.Vector3(0, 1.2, 23.1), radius: 2.6,
+      getPrompt: () => '[x] enter',
+    }
+  );
+
   // Chromebook scene optimization (brief, Nov 20, 2026): freeze static
   // hall transforms + strip mipmap/anisotropy cost from the 2K prop
   // textures. Anything that MOVES is flagged dynamic first (trapdoor
@@ -1586,6 +1634,7 @@ async function bootstrap() {
   (library.movableShelves || []).forEach((shelf) => flagDynamic(shelf && shelf.group));
   (library.vinylCases || []).forEach((vc) => flagDynamic(vc && (vc.group || vc.mesh || vc)));
   flagDynamic(levelOneCorridor.portalGateMesh);
+  flagDynamic(levelOneCorridor.aetherGateMesh);
   flagDynamic(levelOneCorridor.mazeExitGateMesh);
   flagDynamic(levelOneCorridor.risingCaseMesh);
   flagDynamic(levelOneCorridor.barrelMesh);
@@ -2029,7 +2078,16 @@ function stepSimulation(dt) {
 
   transformer.update(simDt, elapsed);
 
-  const portalOpen = Boolean(levelOneState && levelOneState.discInCase);
+  // PORTAL CONDITIONS (Lotty, Nov 23, 2026): every gate's full condition
+  // is its OWN condition AND its guards dead — the guard rule adds to the
+  // gate, never replaces it. G1/G2/G3 also need the press-X entry latch.
+  const guardsAlive = (g) => (enemies ? enemies.portalGuardsAlive(g) : 99);
+  const guardsSpawned = levelOneSpawnFlags.portalGuardsSpawned;
+  const g1Ready =
+    Boolean(levelOneState && levelOneState.discInCase) &&
+    guardsSpawned &&
+    guardsAlive('G1') === 0;
+  const portalOpen = g1Ready && portalEntered.G1;
   // AETHER READ (Nov 23, 2026 — playtest: Lotty walked the White Aether
   // without it registering; there was no visible portal moment). The first
   // crossing through the opened gate fires a one-shot white-out so the
@@ -2038,15 +2096,42 @@ function stepSimulation(dt) {
     aetherFlashFired = true;
     aetherFlashLevel = 0.95;
   }
-  const room1NorthOpen = Boolean(
+  const g2Ready = guardsSpawned && guardsAlive('G2') === 0;
+  const aetherGateOpen = g2Ready && portalEntered.G2;
+  const swordHeld = Boolean(
     levelOneState &&
       (levelOneState.weaponsUnlocked?.sword || levelOneState.swordPickedUp)
   );
+  const g3Ready = swordHeld && guardsSpawned && guardsAlive('G3') === 0;
+  const room1NorthOpen = g3Ready && portalEntered.G3;
   const mazeExitOpen = Boolean(
     levelOneState &&
       levelOneState.mazeExitUnlocked &&
-      levelOneState.mazeDiscsCollected >= levelOneState.mazeDiscsRequired
+      levelOneState.mazeDiscsCollected >= levelOneState.mazeDiscsRequired &&
+      enemies &&
+      enemies.mazeHordeCleared()
   );
+  // HALL BRUTE (Lotty, Nov 23, 2026): on the return to the hall with the
+  // golden vinyl, a strong, slow zombie stands guard over the final
+  // delivery. Spawns once, when the player physically re-enters the hall.
+  if (
+    levelOneState &&
+    !levelOneSpawnFlags.hallBruteSpawned &&
+    levelOneState.goldenVinylClaimed &&
+    !levelOneState.lionAlive &&
+    controls &&
+    controls.position &&
+    controls.position.z < 7.0 &&
+    Math.abs(controls.position.x) <= 12.0
+  ) {
+    levelOneSpawnFlags.hallBruteSpawned = true;
+    if (enemies) enemies.spawnHallBrute();
+  }
+  for (const it of portalInteractables) {
+    if (it.gate === 'G1') it.active = g1Ready && !portalEntered.G1;
+    else if (it.gate === 'G2') it.active = g2Ready && !portalEntered.G2;
+    else if (it.gate === 'G3') it.active = g3Ready && !portalEntered.G3;
+  }
   const room2NorthLocked = Boolean(
     levelOneSpawnFlags.room2Triggered &&
       (levelOneState.step === LEVEL_ONE_STEPS.ROOM_2_ADS_TUTORIAL ||
@@ -2058,6 +2143,9 @@ function stepSimulation(dt) {
   );
   if (levelOneCorridor) {
     levelOneCorridor.portalGateMesh.visible = !portalOpen;
+    if (levelOneCorridor.aetherGateMesh) {
+      levelOneCorridor.aetherGateMesh.visible = !aetherGateOpen;
+    }
     if (levelOneCorridor.room1NorthGateMesh) {
       levelOneCorridor.room1NorthGateMesh.visible = !room1NorthOpen;
     }
@@ -2076,15 +2164,33 @@ function stepSimulation(dt) {
   if (levelOneState && controls && controls.position && whisperTimer <= 0) {
     const p = controls.position;
     const gates = [
-      { id: 'portal', closed: !portalOpen, x: 0, z: 7.1, text: 'sealed — a disc in the hall case opens the way' },
-      { id: 'room1', closed: !room1NorthOpen, x: 0, z: 23.1, text: 'sealed — the sword first. shoot the barrel' },
+      {
+        id: 'portal',
+        closed: !g1Ready,
+        x: 0,
+        z: 7.1,
+        text: levelOneState.discInCase
+          ? 'sealed — its guards still stand'
+          : 'sealed — a disc in the hall case opens the way',
+      },
+      { id: 'aether', closed: !g2Ready, x: 0, z: 14.9, text: 'sealed — its guards still stand' },
+      {
+        id: 'room1',
+        closed: !g3Ready,
+        x: 0,
+        z: 23.1,
+        text: swordHeld ? 'sealed — its guards still stand' : 'sealed — the sword first. shoot the barrel',
+      },
       { id: 'room2', closed: room2NorthLocked, x: 0, z: 29.0, text: 'sealed — finish what breathes in this room' },
       {
         id: 'maze',
         closed: !mazeExitOpen,
         x: 0,
         z: 50.7,
-        text: `sealed — the door counts discs: ${levelOneState.mazeDiscsCollected || 0} of ${levelOneState.mazeDiscsRequired || 3}`,
+        text:
+          (levelOneState.mazeDiscsCollected || 0) >= (levelOneState.mazeDiscsRequired || 3)
+            ? 'sealed — what breathes in the maze still stands'
+            : `sealed — the door counts discs: ${levelOneState.mazeDiscsCollected || 0} of ${levelOneState.mazeDiscsRequired || 3}`,
       },
       { id: 'stair', closed: !returnStairOpen, x: -7.15, z: 63.5, text: 'sealed — the lion still lives' },
     ];
@@ -2107,6 +2213,7 @@ function stepSimulation(dt) {
     levelOneCorridor
       ? levelOneCorridor.getGateColliders({
           portalOpen,
+          aetherGateOpen,
           room1NorthOpen,
           room2Open: !room2NorthLocked,
           mazeExitOpen,
@@ -2484,7 +2591,13 @@ function stepSimulation(dt) {
   }
 
   if (act.interact && interactable && !controls.isClimbing) {
-    if (interactable.type === 'pickup') {
+    if (interactable.type === 'portal') {
+      // Press-X portal entry (Lotty, Nov 23, 2026): the latch opens the
+      // gate — mesh and collider follow in the gate block next frame.
+      portalEntered[interactable.gate] = true;
+      interactable.active = false;
+      sfx.playTrapdoorMechanism();
+    } else if (interactable.type === 'pickup') {
       const applyPickupEffect = () => {
         if (interactable.itemId === 'first_disc') {
           worldItems.removeById(interactable.id);

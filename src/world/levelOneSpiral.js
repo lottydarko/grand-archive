@@ -586,6 +586,15 @@ export function buildLevelOneCorridor(scene) {
   portalGateMesh.userData = { dynamic: true };
   root.add(portalGateMesh);
 
+  // White Aether North Gate G2 (Z = 15.0) — Lotty, Nov 23, 2026: a portal
+  // between EVERY room. Until now the aether passage existed only as a
+  // spawns-table box (whiteAether.passageGate) with no mesh and no
+  // collider; this is its visible gate. Sealed until its guards fall.
+  const aetherGateMesh = new THREE.Mesh(new THREE.BoxGeometry(4.4, 4.4, 0.45), ironGateMat);
+  aetherGateMesh.position.set(0, 2.2, 15.0);
+  aetherGateMesh.userData = { dynamic: true };
+  root.add(aetherGateMesh);
+
   // Trap-Door Exit from Maze One (Z = 50.8, opens ONLY with all 3 discs)
   const mazeExitGateMesh = new THREE.Mesh(new THREE.BoxGeometry(2.4, 4.6, 0.5), ironGateMat);
   mazeExitGateMesh.position.set(0, 2.3, 50.8);
@@ -630,6 +639,7 @@ export function buildLevelOneCorridor(scene) {
     barrelMesh,
     shotgunStandMesh,
     portalGateMesh,
+    aetherGateMesh,
     room1NorthGateMesh,
     room2GateMesh,
     mazeExitGateMesh,
