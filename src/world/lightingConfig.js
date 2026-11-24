@@ -34,6 +34,15 @@ export const FLASHLIGHT_PENUMBRA = 0.64;
 export const AURA_FLASHLIGHT_ON = 1.15;
 export const AURA_FLASHLIGHT_OFF = 0.32;
 
+// Viewmodel fill (Quake transfer, Nov 24, 2026): Quake floored its gun
+// lighting (ambient >= 24) so the weapon never rendered black. Ours is a
+// small camera-mounted point light that only reaches the arms/gun:
+// intensity is a FLOOR, not a lamp — at the gun's ~0.4 m it contributes
+// ~0.75, and the 1.6 m cutoff keeps it off the world.
+export const VIEWMODEL_FILL_INTENSITY = 0.12;
+export const VIEWMODEL_FILL_DISTANCE = 1.6;
+export const VIEWMODEL_FILL_DECAY = 2.0;
+
 /** Physical spotlight falloff: intensity / distance^decay. */
 export function spotlightFalloff(intensity, decay, distance) {
   return intensity / Math.pow(distance, decay);

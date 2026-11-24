@@ -8,7 +8,12 @@ import {
 } from '../entities/clipAnimator.js';
 import { pulseRumble } from '../game/levelOneBindings.js';
 import { ShellCasingSystem } from './shellCasings.js';
-import { FLASHLIGHT_DECAY } from '../world/lightingConfig.js';
+import {
+  FLASHLIGHT_DECAY,
+  VIEWMODEL_FILL_INTENSITY,
+  VIEWMODEL_FILL_DISTANCE,
+  VIEWMODEL_FILL_DECAY,
+} from '../world/lightingConfig.js';
 import { GrabAnimator } from './grabAnimator.js';
 import { GRAB_POSES, lerpPose, clonePose } from './grabPoses.js';
 import { ShotgunAnimator } from '../weapons/shotgunAnimator.js';
@@ -187,6 +192,20 @@ export class WeaponSystem {
     this.flashlight.target = this.flashlightTarget;
     this.flashlightOn = true;
     this._flashlightIntensity = 28.0;
+
+    // Viewmodel fill light (Quake's gun-lighting floor, Nov 24, 2026):
+    // a camera-mounted point light with a 1.6 m cutoff, so the arms and
+    // gun keep a minimum readable light in dark rooms and never render
+    // black, without lighting the world. Values live in lightingConfig.
+    this.viewmodelFill = new THREE.PointLight(
+      0xfff1dd,
+      VIEWMODEL_FILL_INTENSITY,
+      VIEWMODEL_FILL_DISTANCE,
+      VIEWMODEL_FILL_DECAY
+    );
+    this.viewmodelFill.name = 'ViewmodelFill';
+    this.viewmodelFill.position.set(0.1, 0.02, -0.15);
+    this.camera.add(this.viewmodelFill);
 
     // Hand Flashlight Anchor (viewmodel/arms side, left-hand position held like a carried torch)
     this.handFlashlightAnchor = new THREE.Group();

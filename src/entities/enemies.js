@@ -1227,6 +1227,40 @@ export class EnemyManager {
   }
 
   /**
+   * Last-stand press (CoD Zombies transfer, Nov 24, 2026): when a guard
+   * pack — or the maze horde — is down to its final living member, that
+   * member stops waiting and presses the player (alerted, plus a speed
+   * boost in the zombie step). CoD forces its last zombie to sprint so
+   * the round can end; this ends our "hunt the last guard" dead spot
+   * the same way. Runs once per update; groups are tiny.
+   */
+  pressLastGuard() {
+    const groups = [];
+    const packs = LEVEL_ONE_SPAWNS.portalGuards || {};
+    for (const gateId of Object.keys(packs)) {
+      groups.push(new Set(packs[gateId].map((s) => s.id)));
+    }
+    if (this._mazePopulationSpawned) {
+      const spiral = getSpiralMazeLayout();
+      groups.push(new Set([...spiral.zombies, ...spiral.ghouls].map((s) => s.id)));
+    }
+    for (const ids of groups) {
+      let survivor = null;
+      let living = 0;
+      for (const e of this.enemies) {
+        if (e.alive && ids.has(e.scriptId)) {
+          living += 1;
+          survivor = e;
+        }
+      }
+      if (living === 1 && survivor) {
+        survivor.alerted = true;
+        survivor.lastStand = true;
+      }
+    }
+  }
+
+  /**
    * The maze horde is G5's guard pack (Lotty, Nov 23, 2026): the trap
    * door's condition is discs AND horde. Cleared only counts once the
    * population has actually spawned — an unspawned maze is not a
@@ -1469,6 +1503,7 @@ export class EnemyManager {
   update(dt, elapsed, playerPos, colliders, enemyTimeScale = 1.0, stealth = null, playerYaw = null, worldBounds = null) {
     this._playerYaw = playerYaw;
     this._worldBounds = worldBounds;
+    this.pressLastGuard();
     // 1. Update pooled blood & dust particles
     let particlesDirty = false;
     for (let i = 0; i < this.maxParticles; i++) {
@@ -1719,7 +1754,8 @@ export class EnemyManager {
 
     const cadenceSurge = 0.76 + Math.abs(Math.sin(z.gaitPhase)) * 0.44; // weighted step surge
     const runBoost = z.animState === ZOMBIE_STATES.RUN ? 1.15 : 1.0;
-    const step = z.speed * runBoost * cadenceSurge * dt;
+    const lastStandBoost = z.lastStand ? 1.3 : 1.0; // last-guard press (see pressLastGuard)
+    const step = z.speed * runBoost * cadenceSurge * lastStandBoost * dt;
     const tryMove = resolveCircleAABB(pos.x + vx * step, pos.z + vz * step, 0.45, colliders, this._worldBounds);
 
     let moved = Math.hypot(tryMove.x - pos.x, tryMove.z - pos.z);

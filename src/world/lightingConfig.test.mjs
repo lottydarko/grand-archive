@@ -9,6 +9,9 @@ import {
   ENV_PLAYING,
   FLASHLIGHT_INTENSITY,
   FLASHLIGHT_DECAY,
+  VIEWMODEL_FILL_INTENSITY,
+  VIEWMODEL_FILL_DISTANCE,
+  VIEWMODEL_FILL_DECAY,
   spotlightFalloff,
 } from './lightingConfig.js';
 
@@ -27,4 +30,17 @@ test('flashlight decay ceiling (lighting slice, Nov 23)', () => {
 test('flashlight pool survives to 6 m', () => {
   const at6 = spotlightFalloff(FLASHLIGHT_INTENSITY, FLASHLIGHT_DECAY, 6);
   assert.ok(at6 >= 4.0, `falloff at 6 m = ${at6.toFixed(2)} < 4.0`);
+});
+
+test('viewmodel fill exists (Quake gun-lighting floor, Nov 24)', () => {
+  assert.ok(VIEWMODEL_FILL_INTENSITY > 0, `VIEWMODEL_FILL_INTENSITY=${VIEWMODEL_FILL_INTENSITY} must be > 0`);
+});
+
+test('viewmodel fill stays a viewmodel light (cutoff <= 2 m)', () => {
+  assert.ok(VIEWMODEL_FILL_DISTANCE <= 2, `VIEWMODEL_FILL_DISTANCE=${VIEWMODEL_FILL_DISTANCE} > 2 — it would light the room`);
+});
+
+test('viewmodel fill gives a readable floor at gun distance (0.4 m)', () => {
+  const atGun = spotlightFalloff(VIEWMODEL_FILL_INTENSITY, VIEWMODEL_FILL_DECAY, 0.4);
+  assert.ok(atGun >= 0.3 && atGun <= 1.5, `fill at 0.4 m = ${atGun.toFixed(2)}, want a floor band 0.3–1.5`);
 });
