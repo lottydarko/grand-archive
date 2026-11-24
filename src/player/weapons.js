@@ -1781,7 +1781,9 @@ export class WeaponSystem {
     sfx.playGunshot();
     pulseRumble('shotgun_blast', this.callbacks.controls);
     if (this.shellCasings) this.shellCasings.eject('shotgun');
-    this.callbacks.onRecoil?.(0.082);
+    // Camera punch: HL value from WEAPON_DATA (5.0 deg), applied by
+    // controls as a separate view offset — see cameraPunchLogic.js.
+    this.callbacks.onRecoil?.(THREE.MathUtils.degToRad(WEAPON_DATA.shotgun.punchDeg));
     this.callbacks.onShake?.(0.48);
     this.callbacks.onGunshotNoise?.();
 
@@ -1884,7 +1886,8 @@ export class WeaponSystem {
     sfx.playGunshot();
     if (this.shellCasings) this.shellCasings.eject('glock');
     this._playArmsClip('shoot', { loop: false, fade: 0.08, timeScale: 1.35 });
-    this.callbacks.onRecoil?.(0.036);
+    // Camera punch: HL value from WEAPON_DATA (2.0 deg).
+    this.callbacks.onRecoil?.(THREE.MathUtils.degToRad(WEAPON_DATA.glock.punchDeg));
     this.callbacks.onShake?.(0.24);
     this.callbacks.onGunshotNoise?.();
 

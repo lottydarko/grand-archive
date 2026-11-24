@@ -7,6 +7,7 @@ import {
   computeGamepadLookDelta,
 } from '../world/mazeLogic.js';
 import { PLAYER_CONFIG } from './playerConfig.js';
+import { dropCameraPunchRad, appliedCameraPunchRad } from './cameraPunchLogic.js';
 import {
   createStaminaState,
   updateStaminaState,
@@ -109,7 +110,10 @@ export class PlayerControls {
     this.lookDeltaX = 0;
     this.lookDeltaY = 0;
     this.trauma = 0;
-    this.recoilPitch = 0;
+    // Camera punch (HL, Nov 24, 2026): a SEPARATE pitch offset set by
+    // weapon fire, decayed by dropCameraPunchRad and composed into the
+    // camera in applyCameraTransform. Never written into yaw/pitch.
+    this.cameraPunchRad = 0;
     this.externalShake = { x: 0, y: 0, roll: 0 };
 
     // Keyboard & mouse state
@@ -232,7 +236,7 @@ export class PlayerControls {
     this.yaw = 0;
     this.pitch = -0.02;
     this.trauma = 0;
-    this.recoilPitch = 0;
+    this.cameraPunchRad = 0;
     this.walkBobDist = 0;
     this.stepDist = 0;
     this.crawlGruntDist = 0;
@@ -293,8 +297,15 @@ export class PlayerControls {
     this.trauma = Math.min(1.0, this.trauma + amount);
   }
 
-  addRecoilPitch(rad) {
-    this.recoilPitch = Math.min(0.16, this.recoilPitch + rad);
+  // Weapon fire adds punch here (radians, positive = view kicks up).
+  // HL accumulates punchangle uncapped — V_DropPunchAngle's
+  // proportional decay is the limiter (between Balistucia shots at
+  // 0.55 s cooldown the 5-degree punch fully settles; sustained Glock
+  // fire equilibrates in the single digits). The pre-punch build
+  // capped this channel at 0.16 rad; the HL curve supersedes the cap.
+  addCameraPunch(rad) {
+    if (!Number.isFinite(rad)) return;
+    this.cameraPunchRad += rad;
   }
 
   setExternalShake(vec) {
@@ -670,6 +681,7 @@ export class PlayerControls {
     }
 
     this.trauma = Math.max(0, this.trauma - dt * 1.45);
+    this.cameraPunchRad = dropCameraPunchRad(this.cameraPunchRad, dt);
     this.applyCameraTransform(elapsed);
   }
 
@@ -894,7 +906,7 @@ export class PlayerControls {
       this.isGrounded = true;
     }
 
-    this.recoilPitch = THREE.MathUtils.damp(this.recoilPitch, 0, 14, dt);
+    this.cameraPunchRad = dropCameraPunchRad(this.cameraPunchRad, dt);
     this.trauma = Math.max(0, this.trauma - dt * 1.45);
     this.climbCameraRoll = THREE.MathUtils.damp(this.climbCameraRoll, 0, 10, dt);
     this.climbCameraPitch = THREE.MathUtils.damp(this.climbCameraPitch, 0, 10, dt);
@@ -935,8 +947,15 @@ export class PlayerControls {
       this.position.z + rightZ * (leanMeters + bobSide)
     );
 
+    // Camera punch composes HERE, as an offset on top of the stored
+    // pitch (ADS-scaled via appliedCameraPunchRad) — this.pitch itself
+    // is never touched, so player aim cannot accumulate or drift.
     const clampedPitch = THREE.MathUtils.clamp(
-      this.pitch + this.recoilPitch + this.climbCameraPitch + shakePitch + driftPitch,
+      this.pitch +
+        appliedCameraPunchRad(this.cameraPunchRad, this.aimAmount) +
+        this.climbCameraPitch +
+        shakePitch +
+        driftPitch,
       -MAX_PITCH_RAD,
       MAX_PITCH_RAD
     );

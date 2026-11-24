@@ -16,6 +16,10 @@ export const WEAPON_DATA = Object.freeze({
     dryFireCooldownSec: 0.25,
     reloadDurationSec: 40 / 30, // GA_Reload: 40 frames @ 30 fps
     recoilKick: 1.6,
+    // Camera punch (HL trace, director ruling Nov 24, 2026): HL's
+    // single-barrel shotgun V_PunchAxis value is 5.0 degrees of view
+    // pitch per shot, decayed by V_DropPunchAngle. See cameraPunchLogic.js.
+    punchDeg: 5.0,
     pumpTravelM: 0.09, // canon: exactly 0.09 m (see hands calibration)
   }),
   glock: Object.freeze({
@@ -25,5 +29,8 @@ export const WEAPON_DATA = Object.freeze({
     dryFireCooldownSec: 0.2,
     reloadDurationSec: 1.55,
     recoilKick: 1.0,
+    // Camera punch (HL trace, director ruling Nov 24, 2026): HL's Glock
+    // V_PunchAxis value is 2.0 degrees of view pitch per shot.
+    punchDeg: 2.0,
   }),
 });
