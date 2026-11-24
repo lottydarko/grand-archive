@@ -2461,6 +2461,12 @@ function stepSimulation(dt) {
   }
 
   if (act.flashlight) {
+    // Flashlight owner (overlap O1, Nov 24, 2026): main toggles the
+    // state and the frame loop damps the shared light's intensity.
+    // weapons.js has a dormant second consumer of this same flag —
+    // it stays inert ONLY because resetFrameActions() runs before
+    // weapons.update() in the frame loop. That order is pinned by
+    // loopFixes.test.mjs; do not reorder without retiring a consumer.
     gameState.flashlightOn = !gameState.flashlightOn;
     sfx.playFlashlightClick();
     hudDirty = true;

@@ -690,6 +690,10 @@ export class EnemyManager {
     this.bloodPools.length = 0;
     this.hitboxes.length = 0;
     this.activeAttackTokens = 0;
+    // A wiped run must not remember a populated maze: with the flag left
+    // set, mazeHordeCleared() would report the horde cleared in a fresh
+    // run before the maze ever spawns (respawn audit, Nov 24, 2026).
+    this._mazePopulationSpawned = false;
   }
 
   /**

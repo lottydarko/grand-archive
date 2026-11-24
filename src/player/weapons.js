@@ -1919,7 +1919,14 @@ export class WeaponSystem {
 
     if (this.fireCooldown > 0) this.fireCooldown = Math.max(0, this.fireCooldown - dt);
 
-    // Toggle flashlight if LB / KeyF requested via controls
+    // Toggle flashlight if LB / KeyF requested via controls.
+    // ORDERING CONTRACT (overlap O1, Nov 24, 2026): in the integrated
+    // game main.js consumes this same flag first and calls
+    // controls.resetFrameActions() BEFORE weapons.update() runs, so
+    // this branch is inert in-game — main owns the toggle and damps
+    // the shared light. This branch is the class's standalone/unit
+    // behavior (weaponsFlashlight.test.mjs). Do not reorder the frame
+    // loop without retiring one of the two consumers.
     if (controls?.actions?.flashlight) {
       this.toggleFlashlight();
     }
