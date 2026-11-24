@@ -1782,7 +1782,7 @@ async function bootstrap() {
 
   weapons = new WeaponSystem(camera, {
     controls,
-    onRecoil: (pitch) => controls.addRecoilPitch(pitch),
+    onRecoil: (pitch) => controls.addCameraPunch(pitch),
     onShake: (trauma) => controls.addTrauma(trauma),
     onGunshotNoise: () => {
       if (enemies && controls) {
