@@ -165,6 +165,18 @@ export class HandsEngine {
   bindArms(armsRoot) {
     this.armsRoot = armsRoot;
     this.restQuats.clear();
+    // Re-bind is idempotent: the load flow binds twice (_collectGrabBones
+    // binds, then bindArmsRig binds again), so slots reset before the
+    // traverse — otherwise the second pass would clear the rest quats the
+    // first pass recorded for non-bone stand-in rigs and skip re-recording.
+    this.bones.rightHand = null;
+    this.bones.leftHand = null;
+    this.bones.weapon = null;
+    this.bones.wrist = null;
+    this.bones.chains = { R: {}, L: {} };
+    this.rightHandBone = null;
+    this.leftHandBone = null;
+    this.weaponBone = null;
 
     const chainNames = ['Index', 'Middle', 'Ring', 'Pinky', 'Thumb'];
     const segmentNames = ['Proximal', 'Intermediate', 'Distal'];
