@@ -975,6 +975,15 @@ function syncBodyDataset() {
     : 'standing';
 }
 
+function updateHandcheckHud() {
+  if (!dom.handcheckHud || !weapons || !weapons.handsEngine || dom.handcheckHud.classList.contains('hidden')) return;
+  let mode = 'hip';
+  if (weapons.activeWeapon === 'sword') mode = 'sword';
+  else if (controls && controls.isAiming) mode = 'ads';
+  else if (weapons.shotgunAnimator && weapons.shotgunAnimator.pumpTravel01 > 0.05) mode = 'pump';
+  dom.handcheckHud.textContent = weapons.handsEngine.formatTelemetry(mode);
+}
+
 function updateHudReadouts() {
   renderHealthScratches(gameState.hp);
   dom.lowHpVig.style.opacity = gameState.hp <= 35 ? String((35 - gameState.hp) / 35) : '0';
@@ -1034,13 +1043,7 @@ function updateHudReadouts() {
     }
   }
 
-  if (dom.handcheckHud && weapons && weapons.handsEngine && !dom.handcheckHud.classList.contains('hidden')) {
-    let mode = 'hip';
-    if (weapons.activeWeapon === 'sword') mode = 'sword';
-    else if (controls && controls.isAiming) mode = 'ads';
-    else if (weapons.shotgunAnimator && weapons.shotgunAnimator.pumpTravel01 > 0.05) mode = 'pump';
-    dom.handcheckHud.textContent = weapons.handsEngine.formatTelemetry(mode);
-  }
+  updateHandcheckHud();
 
   if (dom.discCounterWrap && dom.discCounterLabel) {
     const inMaze =
@@ -1504,6 +1507,24 @@ window.__archiveTest = {
   getGrabState: () => (weapons ? weapons.getGrabState() : null),
   startGrab: (opts) => (weapons ? weapons.startGrab(opts) : false),
   getShotgunAnimState: () => (weapons ? weapons.getShotgunAnimState() : null),
+  getHandCheck: () => {
+    if (!weapons || !weapons.handsEngine) return null;
+    const pumpTravel01 = weapons.shotgunAnimator ? weapons.shotgunAnimator.pumpTravel01 : 0;
+    const mode = weapons.activeWeapon === 'sword' ? 'sword' : controls && controls.isAiming ? 'ads' : pumpTravel01 > 0.05 ? 'pump' : 'hip';
+    return weapons.handsEngine.measureHandContact(mode);
+  },
+  setHandCheckPose: (pose) => {
+    if (!weapons || !weapons.handsEngine) return false;
+    const { aim = 0, pumpTravel01 = 0 } = pose || {};
+    if (weapons.shotgunAnimator && weapons.shotgunAnimator.debugHoldPump01 !== undefined) {
+      weapons.shotgunAnimator.debugHoldPump01 = pumpTravel01;
+    }
+    if (weapons.handsEngine) {
+      weapons.handsEngine.syncShotgunPose();
+    }
+    weapons._aimAmount = aim;
+    return true;
+  },
   triggerPrimary: () => (weapons ? weapons.triggerPrimary(enemies, null) : false),
   jumpToStartupStage: (stage) => {
     setPhase('startup');
@@ -2838,6 +2859,7 @@ function stepSimulation(dt) {
   const wasReloading = weapons.reloading;
   const wasCycleLocked = weapons.isCycleLocked;
   weapons.update(simDt, controls, enemies, gameState.hp);
+  updateHandcheckHud();
   if (wasReloading && !weapons.reloading) hudDirty = true;
   if (wasCycleLocked !== weapons.isCycleLocked) hudDirty = true;
 
