@@ -1,10 +1,60 @@
 import * as THREE from 'three';
 
 /**
+ * The authored hip height of a raw Mixamo clip: the median Y of its hips
+ * position track after the cm -> m conversion the normalizer applies.
+ * Returns null when the clip has no hips position track. This is the
+ * baseline the three.ws retarget pattern (Apache-2.0, src/animation-manager.js)
+ * calls clipHipBaselineY: root motion is authored around the SOURCE rig's
+ * hip height, so it must be re-based onto the TARGET rig's hip height or
+ * the character rides at the wrong height for the whole clip.
+ */
+export function clipHipBaselineY(clip) {
+  if (!clip || !clip.tracks) return null;
+  for (const track of clip.tracks) {
+    const dotIdx = track.name.indexOf('.');
+    if (dotIdx <= 0) continue;
+    const rawBone = track.name.slice(0, dotIdx);
+    const prop = track.name.slice(dotIdx);
+    if (prop !== '.position' || !/hips/i.test(rawBone)) continue;
+    const ys = [];
+    for (let v = 1; v < track.values.length; v += 3) ys.push(track.values[v] * 0.01);
+    if (ys.length === 0) return null;
+    ys.sort((a, b) => a - b);
+    return ys[Math.floor(ys.length / 2)];
+  }
+  return null;
+}
+
+/**
+ * The single hip scale for a whole clip set, derived from a NEUTRAL
+ * reference clip (idle preferred): targetHipsY is the target rig's own
+ * hips rest height in hips-parent units (for zombie.glb, 0.5411 — its
+ * bind pose is origin-centered, feet at -1.0). Per-clip baselines are
+ * NOT used: a crawl or death clip's authored height is intentionally
+ * low, and a uniform scale preserves each clip's character while mapping
+ * the standing baseline exactly onto the rig. Guards and clamp mirror
+ * three.ws (target and baseline must exceed 0.05; scale clamped 0.2-200
+ * for cm-unit rigs). Returns null when no safe scale exists.
+ */
+export function computeHipScale(targetHipsY, referenceClip) {
+  const baseline = clipHipBaselineY(referenceClip);
+  if (typeof targetHipsY !== 'number' || !(targetHipsY > 0.05)) return null;
+  if (baseline === null || !(baseline > 0.05)) return null;
+  return Math.min(200, Math.max(0.2, targetHipsY / baseline));
+}
+
+/**
  * Normalizes Mixamo FBX animation track names to match zombie.glb's `mixamorig:*` bone names
  * (direct bone-name binding, zero retargeting).
+ *
+ * The hips position track is additionally re-based by hipScale (see
+ * computeHipScale). Without it, the clip's authored hip height (~0.92 m
+ * for the Mixamo character) overwrote zombie.glb's own hips rest height
+ * (0.5411 local units) every frame, floating every animated zombie
+ * ~0.35 m above the floor its attach-time grounding had placed it on.
  */
-export function normalizeMixamoClipForRig(clip, boneNameSet) {
+export function normalizeMixamoClipForRig(clip, boneNameSet, hipScale = null) {
   if (!clip || !boneNameSet) return clip;
   const cloned = clip.clone();
   for (let i = 0; i < cloned.tracks.length; i++) {
@@ -15,10 +65,12 @@ export function normalizeMixamoClipForRig(clip, boneNameSet) {
     const prop = track.name.slice(dotIdx);
 
     // Scale root hips translation track values by 0.01 (cm -> meters)
-    // so root translation lands in meters and prevents launching zombies ~93m
+    // so root translation lands in meters and prevents launching zombies ~93m.
+    // Then re-base the whole track onto the target rig's hip height.
     if (prop === '.position' && /hips/i.test(rawBone)) {
+      const rebase = typeof hipScale === 'number' && hipScale > 0 ? hipScale : 1;
       for (let v = 0; v < track.values.length; v++) {
-        track.values[v] *= 0.01;
+        track.values[v] *= 0.01 * rebase;
       }
     }
 

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
   normalizeMixamoClipForRig,
+  clipHipBaselineY,
+  computeHipScale,
   shouldThrottleEnemyMixer,
   updateEnemyMixerLean,
   applyProceduralGlockKickback,
@@ -131,6 +133,52 @@ test('normalizeMixamoClipForRig renames tracks and scales hips position by 0.01 
 
   const normSpine = normalized.tracks.find((t) => t.name === 'mixamorig:Spine.quaternion');
   assert.ok(normSpine, 'mixamorigSpine.quaternion must be normalized to mixamorig:Spine.quaternion');
+});
+
+test('hip rebase: clipHipBaselineY reads the authored hip height from a raw Mixamo track', () => {
+  // Real zombie-idle.fbx hips Y values measure 91.4-93.5 (cm-scale units).
+  const hipsTrack = new THREE.VectorKeyframeTrack(
+    'mixamorigHips.position', [0, 0.5, 1], [0, 91.4, 0, 0, 93.5, 0, 0, 92.5, 0]
+  );
+  const clip = new THREE.AnimationClip('zombie_idle', 1, [hipsTrack]);
+  const baseline = clipHipBaselineY(clip);
+  assert.ok(Math.abs(baseline - 0.925) < 0.001, `baseline ${baseline} must be ~0.925 m`);
+  // No hips track -> null
+  const empty = new THREE.AnimationClip('empty', 1, []);
+  assert.equal(clipHipBaselineY(empty), null);
+});
+
+test('hip rebase: computeHipScale maps the clip baseline onto the rig hips rest height', () => {
+  const hipsTrack = new THREE.VectorKeyframeTrack(
+    'mixamorigHips.position', [0, 0.5, 1], [0, 91.4, 0, 0, 93.5, 0, 0, 92.5, 0]
+  );
+  const clip = new THREE.AnimationClip('zombie_idle', 1, [hipsTrack]);
+  // zombie.glb's own hips rest height is 0.5411 local units (origin-centered bind).
+  const scale = computeHipScale(0.5411, clip);
+  assert.ok(Math.abs(scale - 0.5411 / 0.925) < 0.001, `scale ${scale}`);
+  // Guards: unusable target or baseline -> null (no rebase, old behavior)
+  assert.equal(computeHipScale(0, clip), null);
+  assert.equal(computeHipScale(null, clip), null);
+  assert.equal(computeHipScale(0.5411, new THREE.AnimationClip('x', 1, [])), null);
+});
+
+test('hip rebase: normalized hips land on the rig height; without the scale they float (the bug)', () => {
+  const boneNameSet = new Set(['mixamorig:Hips']);
+  const mk = () => new THREE.AnimationClip('zombie_idle', 1, [
+    new THREE.VectorKeyframeTrack('mixamorigHips.position', [0, 1], [0, 92.5, 0, 0, 92.5, 0]),
+  ]);
+  // The bug: cm->m only leaves the hips at the Mixamo character's 0.925,
+  // while the rig's hips rest at 0.5411 — a ~0.38 local-unit ride height,
+  // ~0.35 m in world space after the attach scale. This assertion is the
+  // teeth: it documents the float the rebase removes.
+  const buggy = normalizeMixamoClipForRig(mk(), boneNameSet);
+  assert.ok(Math.abs(buggy.tracks[0].values[1] - 0.925) < 1e-4);
+  // The fix: with the set-wide hip scale the standing baseline lands
+  // exactly on the rig's own hips rest height.
+  const scale = computeHipScale(0.5411, mk());
+  const fixed = normalizeMixamoClipForRig(mk(), boneNameSet, scale);
+  assert.ok(Math.abs(fixed.tracks[0].values[1] - 0.5411) < 1e-4,
+    `rebased hips Y ${fixed.tracks[0].values[1]} must equal the rig rest 0.5411`);
 });
 
 console.log(`All ${passed} clipAnimator unit tests passed!`);

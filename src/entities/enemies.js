@@ -14,6 +14,7 @@ import {
 import { sfx } from '../audio/sfx.js';
 import {
   normalizeMixamoClipForRig,
+  computeHipScale,
   updateEnemyMixerLean,
   shouldThrottleEnemyMixer,
 } from './clipAnimator.js';
@@ -326,9 +327,18 @@ export class EnemyManager {
       enemy.mixer = new THREE.AnimationMixer(enemy.glbRoot);
     }
     enemy.mixerActions = enemy.mixerActions || {};
+    // One hip scale for the whole clip set, from the neutral reference
+    // clip (idle, else walk, else the first loaded) and this rig's own
+    // hips rest height — rebases Mixamo root motion onto zombie.glb so
+    // animated zombies stop floating ~0.35 m (see clipAnimator.js).
+    if (enemy._hipScale === undefined) {
+      const refClip =
+        this._mixamoClips.idle || this._mixamoClips.walk || this._mixamoClips[clipKeys[0]];
+      enemy._hipScale = computeHipScale(enemy.boneRest?.Hips?.py, refClip);
+    }
     for (const k of clipKeys) {
       if (enemy.mixerActions[k]) continue;
-      const normClip = normalizeMixamoClipForRig(this._mixamoClips[k], enemy.boneNameSet);
+      const normClip = normalizeMixamoClipForRig(this._mixamoClips[k], enemy.boneNameSet, enemy._hipScale);
       enemy.mixerActions[k] = enemy.mixer.clipAction(normClip);
     }
     enemy.hasMixamoClips = Object.keys(enemy.mixerActions).length > 0;
