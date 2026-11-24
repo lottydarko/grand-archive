@@ -25,7 +25,7 @@ import { sfx } from '../audio/sfx.js';
  * - LT (6): Aim / ADS | RT (7): Fire
  * - LB (4): Flashlight toggle | RB (5): Shove (knockback, zero damage, costs stamina)
  * - A (0): Jump / Climb ledge | B (1): Crouch / Quiet Sneak toggle
- * - X (2): Tap (<0.35s) = Reload | Hold (>=0.35s) = Interact
+ * - X (2): Halo context rule — Interact when an interactable is in range, Reload otherwise
  * - Y (3): Swap Glock <-> Knife
  * - D-pad L/R (14/15): Lean L/R | D-pad Up (12): Inspect | D-pad Down (13): Holster
  * - View (8): Map overlay | Menu (9): Pause
@@ -136,9 +136,9 @@ export class PlayerControls {
 
     this.gamepadConnected = false;
 
-    // Gamepad edge-trigger & X tap-vs-hold tracking
-    this._xHoldTimer = 0;
-    this._xHoldFired = false;
+    // Set by main.js every frame: is an interactable in range right now?
+    // The X button reads this to decide interact vs reload (Halo rule).
+    this.interactContextAvailable = false;
     this._prevGp = {
       rt: false,
       rb: false,
@@ -247,8 +247,7 @@ export class PlayerControls {
     this.camera.fov = this.baseFov;
     this.camera.updateProjectionMatrix();
     this.staminaState = createStaminaState();
-    this._xHoldTimer = 0;
-    this._xHoldFired = false;
+    this.interactContextAvailable = false;
     this.clearInputs();
     this.applyCameraTransform(0);
   }
@@ -577,24 +576,16 @@ export class PlayerControls {
     if (view && !this._prevGp.view) this.actions.toggleMap = true;
     if (menu && !this._prevGp.menu) this.actions.togglePause = true;
 
-    // X button: tap (< 0.35s) = reload, hold (>= 0.35s) = interact
-    if (x) {
-      if (!this._prevGp.x) {
-        this._xHoldTimer = 0;
-        this._xHoldFired = false;
+    // X button: Halo context rule — the world decides, not a timer.
+    // An interactable in range (flag set by main.js from the active
+    // prompt) makes X = interact; anywhere else X = reload. Both fire
+    // on the press, matching the keyboard's separate E and R keys.
+    if (x && !this._prevGp.x) {
+      if (this.interactContextAvailable) {
+        this.actions.interact = true;
       } else {
-        this._xHoldTimer += dt;
-        if (this._xHoldTimer >= 0.35 && !this._xHoldFired) {
-          this._xHoldFired = true;
-          this.actions.interact = true;
-        }
-      }
-    } else if (this._prevGp.x) {
-      if (!this._xHoldFired) {
         this.actions.reload = true;
       }
-      this._xHoldTimer = 0;
-      this._xHoldFired = false;
     }
 
     this._prevGp.rt = rt;

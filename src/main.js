@@ -2564,6 +2564,7 @@ function stepSimulation(dt) {
   const interactable = findActiveInteractable();
   const climbCandidate = controls.findClimbableLedge(library.climbZones);
   gameState.currentInteractable = interactable;
+  controls.interactContextAvailable = Boolean(interactable);
 
   if (interactable) {
     dom.interactText.innerHTML = formatPromptHtml(interactable.getPrompt(), useXboxIcons);
