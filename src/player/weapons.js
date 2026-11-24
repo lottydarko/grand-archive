@@ -31,11 +31,19 @@ import {
   DRAW_SEC_DEFAULT,
   createPlaceholderCurve,
 } from './weaponCycler.js';
+import {
+  HandsEngine,
+  GRAB_CURL_SIGN as HANDS_CURL_SIGN,
+  PUMP_TRAVEL_M,
+  SWORD_HAND_LOCAL_POS,
+  FLASHLIGHT_PALM_OFFSET,
+  ADS_DELTA_TRANSLATION,
+} from './handsEngine.js';
 
 // Grab pose layer constants: per-joint share of a chain's total curl, and
-// the curl direction sign for this rig's finger bones (verified by render).
+// the curl direction sign for this rig's finger bones (Hands Engine: sign -1, local X).
 const GRAB_JOINT_WEIGHTS = [0.45, 0.33, 0.22];
-const GRAB_CURL_SIGN = 1;
+const GRAB_CURL_SIGN = HANDS_CURL_SIGN;
 
 /**
  * Computes the exact weapon cant and shell-push lift for GA_Reload (40 frames @ 30 fps).
@@ -163,6 +171,7 @@ export class WeaponSystem {
     // Grab system (Stage 4 Slot 2): procedural finger-pose layer over the
     // arms mixer + reach motion on the arms pivot. See grabAnimator.js.
     this.grabAnimator = new GrabAnimator();
+    this.handsEngine = new HandsEngine();
     this._grabBones = null; // { R: {index:[..3 bones], thumb:[..], doubles:[..]}, L: {...} }
     this._grabRest = new Map(); // bone -> rest quaternion
     this._grabFromPose = clonePose(GRAB_POSES.open);
@@ -430,6 +439,17 @@ export class WeaponSystem {
     }
     this._grabBones = out;
     this._armsPivotBasePos = this.armsRoot.position.clone();
+    if (this.handsEngine) {
+      this.handsEngine.bindArms(this.armsRoot);
+    }
+  }
+
+  setCurlCapRad(rad) {
+    return this.handsEngine ? this.handsEngine.setCurlCapRad(rad) : null;
+  }
+
+  getCurlCapRad() {
+    return this.handsEngine ? this.handsEngine.getCurlCapRad() : null;
   }
 
   _applyGrabPose(pose) {
@@ -444,12 +464,16 @@ export class WeaponSystem {
         const rawCurl = pHand[chain] ?? (chain === 'middle' || chain === 'ring' || chain === 'pinky' ? pHand.doubles : 0);
         const curl = THREE.MathUtils.clamp(rawCurl ?? 0, 0, 1);
         const max = CHAIN_MAX[chain] ?? 2.0;
-        // Thumb curls along local Z; fingers curl along local X.
-        const axis = chain === 'thumb' ? this._grabAxisZ : this._grabAxisX;
+        // Hands Engine non-negotiable: local X for ALL finger chains including thumb (no Z special case)
+        const axis = this._grabAxisX;
         for (let i = 0; i < bones.length; i++) {
           const rest = this._grabRest.get(bones[i]);
           if (!rest) continue;
-          const ang = GRAB_CURL_SIGN * curl * max * GRAB_JOINT_WEIGHTS[i];
+          let ang = GRAB_CURL_SIGN * curl * max * GRAB_JOINT_WEIGHTS[i];
+          if (this.handsEngine && this.handsEngine.curlCapRad !== null) {
+            const cap = this.handsEngine.curlCapRad * GRAB_JOINT_WEIGHTS[i];
+            if (Math.abs(ang) > cap) ang = Math.sign(ang) * cap;
+          }
           this._grabTmpQ.setFromAxisAngle(axis, ang);
           bones[i].quaternion.copy(rest).multiply(this._grabTmpQ);
         }
@@ -862,9 +886,13 @@ export class WeaponSystem {
         }
       });
       if (leftHandBone) {
-        leftHandBone.add(this.handFlashlightAnchor);
-        this.handFlashlightAnchor.position.set(0, 0, 0);
-        this.handFlashlightAnchor.rotation.set(0, 0, 0);
+        if (this.handsEngine) {
+          this.handsEngine.configureFlashlightAnchor(this.handFlashlightAnchor, leftHandBone);
+        } else {
+          leftHandBone.add(this.handFlashlightAnchor);
+          this.handFlashlightAnchor.position.set(0, 0, 0);
+          this.handFlashlightAnchor.rotation.set(0, 0, 0);
+        }
       }
 
       // Setup AnimationMixer with all baked clips
@@ -892,6 +920,12 @@ export class WeaponSystem {
       }
 
       this._collectGrabBones();
+      if (this.handsEngine && this.handsEngine.bones.weapon && this.shotgunRoot) {
+        this.handsEngine.attachShotgun(this.handsEngine.bones.weapon, this.shotgunRoot);
+      }
+      if (this.handsEngine && this.handsEngine.bones.rightHand && this.swordGroup) {
+        this.handsEngine.attachSword(this.handsEngine.bones.rightHand, this.swordGroup);
+      }
       if (this.pistolOwned && this.weaponsUnlocked.glock) {
         this._tryMountHeroGlockToArms();
       }
@@ -1000,6 +1034,9 @@ export class WeaponSystem {
       this.shotgunGroup.add(shotgunRoot);
 
       this.shotgunRoot = shotgunRoot;
+      if (this.handsEngine && this.handsEngine.bones.weapon) {
+        this.handsEngine.attachShotgun(this.handsEngine.bones.weapon, shotgunRoot);
+      }
       if (!this.shotgunFlashlightTarget) {
         this.shotgunFlashlightTarget = new THREE.Object3D();
         this.shotgunFlashlightTarget.name = 'ShotgunFlashlightTarget';
@@ -2212,9 +2249,10 @@ export class WeaponSystem {
     // Balistucia Shotgun transform (pump animation driven by ShotgunAnimator — 0.09 m travel)
     if (this.shotgunGroup) {
       this.shotgunPump = THREE.MathUtils.damp(this.shotgunPump, 0, 14, dt);
-      const shotgunBaseX = THREE.MathUtils.lerp(this.shotgunRestPos.x, this.shotgunAdsPos.x, aim);
-      const shotgunBaseY = THREE.MathUtils.lerp(this.shotgunRestPos.y, this.shotgunAdsPos.y, aim);
-      const shotgunBaseZ = THREE.MathUtils.lerp(this.shotgunRestPos.z, this.shotgunAdsPos.z, aim);
+      const adsDelta = this.handsEngine ? this.handsEngine.computeAdsTranslation(aim) : null;
+      const shotgunBaseX = adsDelta ? this.shotgunRestPos.x + adsDelta.x : THREE.MathUtils.lerp(this.shotgunRestPos.x, this.shotgunAdsPos.x, aim);
+      const shotgunBaseY = adsDelta ? this.shotgunRestPos.y + adsDelta.y : THREE.MathUtils.lerp(this.shotgunRestPos.y, this.shotgunAdsPos.y, aim);
+      const shotgunBaseZ = adsDelta ? this.shotgunRestPos.z + adsDelta.z : THREE.MathUtils.lerp(this.shotgunRestPos.z, this.shotgunAdsPos.z, aim);
 
       this.shotgunGroup.position.set(
         shotgunBaseX + bobX + swayX + idle.posX + inspectPosX + cyclerOffset.position.x,

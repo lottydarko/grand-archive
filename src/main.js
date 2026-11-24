@@ -240,6 +240,9 @@ hudRoot.innerHTML = `
       <div id="disc-counter-label" class="horror-text text-3xl text-[#e4d5b9] leading-none">discs 0 / 3</div>
     </div>
 
+    <!-- Hands Engine Calibration Verification HUD (?handcheck=1) -->
+    <div id="handcheck-hud" class="fixed top-4 left-4 z-50 font-mono text-xs text-[#5bf587] bg-black/85 p-3 rounded border border-[#5bf587]/40 whitespace-pre pointer-events-none hidden"></div>
+
     <!-- Hall Brute health readout: NON-BOSS (director's ruling, Nov 24, 2026).
          PLACEHOLDER visual on purpose — dashed frame, flat fill; the real
          art direction comes later. Label echoes the shipped whisper. -->
@@ -374,6 +377,7 @@ const dom = {
   aetherFlash: document.getElementById('aether-flash'),
   floorWrap: document.getElementById('floor-wrap'),
   floorLabel: document.getElementById('floor-label'),
+  handcheckHud: document.getElementById('handcheck-hud'),
   discCounterWrap: document.getElementById('disc-counter-wrap'),
   bruteReadout: document.getElementById('brute-readout'),
   bruteReadoutFill: document.getElementById('brute-readout-fill'),
@@ -1030,6 +1034,14 @@ function updateHudReadouts() {
     }
   }
 
+  if (dom.handcheckHud && weapons && weapons.handsEngine && !dom.handcheckHud.classList.contains('hidden')) {
+    let mode = 'hip';
+    if (weapons.activeWeapon === 'sword') mode = 'sword';
+    else if (controls && controls.isAiming) mode = 'ads';
+    else if (weapons.shotgunAnimator && weapons.shotgunAnimator.pumpTravel01 > 0.05) mode = 'pump';
+    dom.handcheckHud.textContent = weapons.handsEngine.formatTelemetry(mode);
+  }
+
   if (dom.discCounterWrap && dom.discCounterLabel) {
     const inMaze =
       (levelOneZones && levelOneZones.currentZone === LEVEL_ONE_ZONES.MAZE_ONE) ||
@@ -1590,6 +1602,10 @@ window.addEventListener('resize', () => {
 async function bootstrap() {
   const params = new URLSearchParams(window.location.search);
   const autoStart = params.get('autostart') === '1';
+
+  if (params.get('handcheck') === '1' && dom.handcheckHud) {
+    dom.handcheckHud.classList.remove('hidden');
+  }
 
   // Playtest-only virtual gamepad (opt-in): ?virtualpad=1 installs a synthetic
   // Xbox pad + window.__virtualPad driver so a script/AI can pass the controller
