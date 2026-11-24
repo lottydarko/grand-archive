@@ -34,10 +34,7 @@ import {
 import {
   HandsEngine,
   GRAB_CURL_SIGN as HANDS_CURL_SIGN,
-  PUMP_TRAVEL_M,
-  SWORD_HAND_LOCAL_POS,
-  FLASHLIGHT_PALM_OFFSET,
-  ADS_DELTA_TRANSLATION,
+  FLASHLIGHT_FORWARD_TARGET,
 } from './handsEngine.js';
 
 // Grab pose layer constants: per-joint share of a chain's total curl, and
@@ -172,6 +169,12 @@ export class WeaponSystem {
     // arms mixer + reach motion on the arms pivot. See grabAnimator.js.
     this.grabAnimator = new GrabAnimator();
     this.handsEngine = new HandsEngine();
+    // Draft-3 seal (Patch 3, D1): scratch for the single armsRoot writer in
+    // update(), and the grab-reach offset _updateGrab publishes into it
+    // (one writer per fact — _updateGrab no longer writes armsRoot itself).
+    this._adsRootOffset = new THREE.Vector3();
+    this._grabReachOffset = new THREE.Vector3();
+    this._armsPivotBaseRot = null;
     this._grabBones = null; // { R: {index:[..3 bones], thumb:[..], doubles:[..]}, L: {...} }
     this._grabRest = new Map(); // bone -> rest quaternion
     this._grabFromPose = clonePose(GRAB_POSES.open);
@@ -236,8 +239,15 @@ export class WeaponSystem {
     this.handFlashlightAnchor.position.set(-0.20, -0.16, -0.38);
     this.handFlashlightTarget = new THREE.Object3D();
     this.handFlashlightTarget.name = 'HandFlashlightTarget';
-    this.handFlashlightTarget.position.set(-0.05, -0.08, -10.0);
-    this.handFlashlightAnchor.add(this.handFlashlightTarget);
+    // Draft-3 seal (Patch 3): the aim target lives in camera space under the
+    // viewmodel root — NOT under the wrist-driven anchor — so flashlight aim
+    // is wrist-independent (D1).
+    this.root.add(this.handFlashlightTarget);
+    this.handFlashlightTarget.position.set(
+      FLASHLIGHT_FORWARD_TARGET.x,
+      FLASHLIGHT_FORWARD_TARGET.y,
+      FLASHLIGHT_FORWARD_TARGET.z
+    );
     this.root.add(this.handFlashlightAnchor);
 
     this._raycaster = new THREE.Raycaster();
@@ -439,6 +449,22 @@ export class WeaponSystem {
     }
     this._grabBones = out;
     this._armsPivotBasePos = this.armsRoot.position.clone();
+    this._armsPivotBaseRot = this.armsRoot.rotation.clone();
+    if (this.handsEngine) {
+      this.handsEngine.bindArms(this.armsRoot);
+    }
+  }
+
+  // Draft-3 seal (Patch 3): single entry point that binds an arms rig to
+  // this system — used by the production GLB load flow and by the
+  // integrated weapons.update() tests, so both bind the SAME rig object.
+  bindArmsRig(armsPivot) {
+    if (!armsPivot) return;
+    if (armsPivot.parent !== this.root) {
+      this.root.add(armsPivot);
+    }
+    this.armsRoot = armsPivot;
+    this._collectGrabBones();
     if (this.handsEngine) {
       this.handsEngine.bindArms(this.armsRoot);
     }
@@ -496,11 +522,10 @@ export class WeaponSystem {
         const depth = (ritual ? 0.2 : 0.13) * snap.reachAmt;
         const drop = (ritual ? 0.06 : 0.03) * snap.reachAmt;
         const center = (ritual ? 0.03 : 0) * snap.reachAmt;
-        this.armsRoot.position.set(
-          this._armsPivotBasePos.x + center,
-          this._armsPivotBasePos.y - drop,
-          this._armsPivotBasePos.z - depth
-        );
+        // Draft-3 seal (D1, one writer per fact): the reach is published as
+        // an offset; the single armsRoot writer in update() composes it.
+        // (This method used to write armsRoot.position directly.)
+        this._grabReachOffset.set(center, -drop, -depth);
       }
       if (snap.phase === 'done') this._grabRelease = 0.0001; // begin fade-out
       return;
@@ -511,7 +536,7 @@ export class WeaponSystem {
       if (hasRig) this._applyGrabPose(pose);
       if (this._grabRelease >= 1) {
         this._grabPoseCurrent = clonePose(GRAB_POSES.open);
-        if (hasRig) this.armsRoot.position.copy(this._armsPivotBasePos);
+        this._grabReachOffset.set(0, 0, 0);
         this._grabRelease = 0;
       }
     }
@@ -887,7 +912,7 @@ export class WeaponSystem {
       });
       if (leftHandBone) {
         if (this.handsEngine) {
-          this.handsEngine.configureFlashlightAnchor(this.handFlashlightAnchor, leftHandBone);
+          this.handsEngine.configureFlashlightAnchor(this.handFlashlightAnchor, leftHandBone, this.root, this.handFlashlightTarget);
         } else {
           leftHandBone.add(this.handFlashlightAnchor);
           this.handFlashlightAnchor.position.set(0, 0, 0);
@@ -922,6 +947,10 @@ export class WeaponSystem {
       this._collectGrabBones();
       if (this.handsEngine && this.handsEngine.bones.weapon && this.shotgunRoot) {
         this.handsEngine.attachShotgun(this.handsEngine.bones.weapon, this.shotgunRoot);
+        if (this.shotgunAnimator) {
+          this.shotgunAnimator.setBoneAttached(true);
+          this.handsEngine.setAnimator(this.shotgunAnimator);
+        }
       }
       if (this.handsEngine && this.handsEngine.bones.rightHand && this.swordGroup) {
         this.handsEngine.attachSword(this.handsEngine.bones.rightHand, this.swordGroup);
@@ -1109,6 +1138,16 @@ export class WeaponSystem {
           },
         }
       );
+      // Draft-3 seal (Patch 3): the real animator replaces the fallback —
+      // (re)attach the root to the Weapon bone, mark it bone-attached so it
+      // stops writing root transforms, and link it to the HandsEngine.
+      if (this.handsEngine && this.handsEngine.bones.weapon) {
+        this.handsEngine.attachShotgun(this.handsEngine.bones.weapon, shotgunRoot);
+        if (this.shotgunAnimator) {
+          this.shotgunAnimator.setBoneAttached(true);
+          this.handsEngine.setAnimator(this.shotgunAnimator);
+        }
+      }
       this._syncVisibility();
     });
   }
@@ -1384,6 +1423,7 @@ export class WeaponSystem {
     const showGlock = !showQuickKnife && activeVis === 'glock';
 
     if (this.shotgunGroup) this.shotgunGroup.visible = showShotgun;
+    if (this.shotgunRoot) this.shotgunRoot.visible = showShotgun;
     if (this.swordGroup) this.swordGroup.visible = showSword;
     if (this.knifeGroup) this.knifeGroup.visible = showKnife;
 
@@ -2172,19 +2212,10 @@ export class WeaponSystem {
     applyProceduralGlockKickback(this.glockSlide, this.slideBack, this.glockSlideRestZ, 0.052);
     this.glockMag.position.y = this.glockMagRestY + magDropY;
 
-    // fps_arms viewmodel transform (follows breathing idle, walk bob, sway across all loadouts)
-    if (this.armsRoot && !this.grabAnimator.active && this._grabRelease === 0 && this._armsPivotBasePos) {
-      this.armsRoot.position.set(
-        this._armsPivotBasePos.x + bobX * 0.7 + swayX * 0.5 + idle.posX + cyclerOffset.position.x,
-        this._armsPivotBasePos.y + bobY * 0.7 + swayY * 0.5 + idle.posY - lowerY * 0.4 + cyclerOffset.position.y,
-        this._armsPivotBasePos.z + idle.posZ + cyclerOffset.position.z
-      );
-      this.armsRoot.rotation.set(
-        idle.rotX + (this.activeWeapon === 'glock' ? this.recoilKick * (0.21 * (1 - aim * 0.35)) : 0) - this.holsterBlend * 0.25 + cyclerOffset.rotation.x,
-        idle.rotY + cyclerOffset.rotation.y,
-        idle.rotZ + cyclerOffset.rotation.z
-      );
-    }
+    // Draft-3 seal (D1): the old fps_arms viewmodel writer that lived here
+    // is retired — armsRoot now has exactly ONE writer, the D1 block at the
+    // end of this method, which composes this same bob/sway/idle/cycler
+    // motion with the ADS translation and the grab-reach offset.
 
     // Knife slash animation (windup -> fast diagonal slash -> recovery)
     let slashPosX = 0;
@@ -2249,27 +2280,8 @@ export class WeaponSystem {
       this.knifeRestRot.z + idle.rotZ + slashRotZ + inspectRotZ + cyclerOffset.rotation.z
     );
 
-    // Balistucia Shotgun transform (pump animation driven by ShotgunAnimator — 0.09 m travel)
-    if (this.shotgunGroup) {
-      this.shotgunPump = THREE.MathUtils.damp(this.shotgunPump, 0, 14, dt);
-      const adsDelta = this.handsEngine ? this.handsEngine.computeAdsTranslation(aim) : null;
-      const shotgunBaseX = adsDelta ? this.shotgunRestPos.x + adsDelta.x : THREE.MathUtils.lerp(this.shotgunRestPos.x, this.shotgunAdsPos.x, aim);
-      const shotgunBaseY = adsDelta ? this.shotgunRestPos.y + adsDelta.y : THREE.MathUtils.lerp(this.shotgunRestPos.y, this.shotgunAdsPos.y, aim);
-      const shotgunBaseZ = adsDelta ? this.shotgunRestPos.z + adsDelta.z : THREE.MathUtils.lerp(this.shotgunRestPos.z, this.shotgunAdsPos.z, aim);
-
-      this.shotgunGroup.position.set(
-        shotgunBaseX + bobX + swayX + idle.posX + inspectPosX + cyclerOffset.position.x,
-        shotgunBaseY + bobY + swayY + idle.posY + shotgunReloadLiftY + inspectPosY - lowerY + this.recoilKick * 0.02 + cyclerOffset.position.y,
-        shotgunBaseZ + idle.posZ + shoveZ + this.recoilKick * 0.08 + cyclerOffset.position.z
-      );
-      this.shotgunGroup.rotation.set(
-        shotgunReloadPitch + this.recoilKick * 0.35 + idle.rotX + shoveRotX - this.holsterBlend * 0.55 + cyclerOffset.rotation.x,
-        idle.rotY + inspectRotY + cyclerOffset.rotation.y,
-        shotgunReloadRoll + idle.rotZ + inspectRotZ + cyclerOffset.rotation.z
-      );
-    }
-
-    // Sword slash animation & transform
+    // Sword slash state computed BEFORE the armsRoot transform so the
+    // bone-parented sword's slash drives armsRoot movement (D1).
     let swordSlashX = 0;
     let swordSlashY = 0;
     let swordSlashZ = 0;
@@ -2313,31 +2325,74 @@ export class WeaponSystem {
       }
     }
 
-    if (this.swordGroup) {
-      this.swordGroup.position.set(
-        this.swordRestPos.x + bobX + swayX + idle.posX + swordSlashX + inspectPosX + cyclerOffset.position.x,
-        this.swordRestPos.y + bobY + swayY + idle.posY + swordSlashY + inspectPosY - lowerY + cyclerOffset.position.y,
-        this.swordRestPos.z + idle.posZ + swordSlashZ + shoveZ + cyclerOffset.position.z
+    // ONE writer per fact (D1, Draft-3 seal Patch 3): armsRoot carries the
+    // rig's base pose plus the ADS translation, bob, sway, idle, recoil,
+    // inspect, holster, cycler, grab-reach and sword-slash terms; the
+    // bone-parented shotgunRoot / swordGroup / handFlashlightAnchor
+    // inherit them through the scene graph. This replaces the retired
+    // per-frame writers on shotgunGroup, swordGroup and the flashlight
+    // anchor (and the old fps_arms viewmodel block above). Host
+    // reconciliation: Studio's draft wrote offsets only — the rig's
+    // captured base position/rotation (_armsPivotBasePos/_armsPivotBaseRot,
+    // zero on the v8 rig, authored on the legacy rig) and the grab-reach
+    // offset are composed in so no live behavior moves; the ADS amount
+    // prefers the deterministic _aimAmount override (screenshot/test
+    // poses) over the frame's aim.
+    if (this.armsRoot) {
+      const adsAim = this._aimAmount ?? aim;
+      const adsDelta = this.handsEngine ? this.handsEngine.computeAdsTranslation(adsAim) : null;
+      this._adsRootOffset.set(adsDelta ? adsDelta.x : 0, adsDelta ? adsDelta.y : 0, adsDelta ? adsDelta.z : 0);
+      const basePos = this._armsPivotBasePos;
+      const baseRot = this._armsPivotBaseRot;
+      this.armsRoot.position.set(
+        (basePos ? basePos.x : 0) + this._adsRootOffset.x + bobX + swayX + idle.posX + inspectPosX + cyclerOffset.position.x + swordSlashX + this._grabReachOffset.x,
+        (basePos ? basePos.y : 0) + this._adsRootOffset.y + bobY + swayY + idle.posY + shotgunReloadLiftY + inspectPosY - lowerY + this.recoilKick * 0.02 + cyclerOffset.position.y + swordSlashY + this._grabReachOffset.y,
+        (basePos ? basePos.z : 0) + this._adsRootOffset.z + idle.posZ + shoveZ + this.recoilKick * 0.08 + cyclerOffset.position.z + swordSlashZ + this._grabReachOffset.z
       );
-      this.swordGroup.rotation.set(
-        this.swordRestRot.x + idle.rotX + swordRotX + shoveRotX - this.holsterBlend * 0.5 + cyclerOffset.rotation.x,
-        this.swordRestRot.y + idle.rotY + swordRotY + inspectRotY + cyclerOffset.rotation.y,
-        this.swordRestRot.z + idle.rotZ + swordRotZ + inspectRotZ + cyclerOffset.rotation.z
+      this.armsRoot.rotation.set(
+        (baseRot ? baseRot.x : 0) + shotgunReloadPitch + this.recoilKick * 0.35 + idle.rotX + shoveRotX - this.holsterBlend * 0.55 + cyclerOffset.rotation.x + swordRotX,
+        (baseRot ? baseRot.y : 0) + idle.rotY + inspectRotY + cyclerOffset.rotation.y + swordRotY,
+        (baseRot ? baseRot.z : 0) + shotgunReloadRoll + idle.rotZ + inspectRotZ + cyclerOffset.rotation.z + swordRotZ
       );
     }
 
-    // Hand Flashlight Anchor motion (subtle torch idle & walk bob when held in hand unequipped)
-    if (this.handFlashlightAnchor && this.activeWeapon !== 'shotgun') {
-      this.handFlashlightAnchor.position.set(
-        -0.20 + bobX * 0.5 + swayX * 0.4 + idle.posX * 0.5,
-        -0.16 + bobY * 0.5 + swayY * 0.4 + idle.posY * 0.5,
-        -0.38 + idle.posZ * 0.5
+    // Pump: read-only here — the ShotgunAnimator owns pumpTravel01; the
+    // HandsEngine mirrors it (no pump writer in this method).
+    if (this.shotgunAnimator) {
+      this.shotgunPump = THREE.MathUtils.damp(this.shotgunPump, 0, 14, dt);
+      if (this.handsEngine) this.handsEngine.syncShotgunPose();
+    }
+
+    // No-rig fallback (host reconciliation, logged): before the arms GLB
+    // binds there is no bone-parented unit, so the placeholder shotgunGroup
+    // still receives the composed transform directly — the pre-seal
+    // behavior the repo's rig-less tests pin. The moment armsRoot binds,
+    // this never runs and the D1 writer above is the only writer.
+    if (!this.armsRoot && this.shotgunGroup) {
+      const adsDelta = this.handsEngine ? this.handsEngine.computeAdsTranslation(aim) : null;
+      const shotgunBaseX = adsDelta ? this.shotgunRestPos.x + adsDelta.x : THREE.MathUtils.lerp(this.shotgunRestPos.x, this.shotgunAdsPos.x, aim);
+      const shotgunBaseY = adsDelta ? this.shotgunRestPos.y + adsDelta.y : THREE.MathUtils.lerp(this.shotgunRestPos.y, this.shotgunAdsPos.y, aim);
+      const shotgunBaseZ = adsDelta ? this.shotgunRestPos.z + adsDelta.z : THREE.MathUtils.lerp(this.shotgunRestPos.z, this.shotgunAdsPos.z, aim);
+
+      this.shotgunGroup.position.set(
+        shotgunBaseX + bobX + swayX + idle.posX + inspectPosX + cyclerOffset.position.x,
+        shotgunBaseY + bobY + swayY + idle.posY + shotgunReloadLiftY + inspectPosY - lowerY + this.recoilKick * 0.02 + cyclerOffset.position.y,
+        shotgunBaseZ + idle.posZ + shoveZ + this.recoilKick * 0.08 + cyclerOffset.position.z
       );
-      this.handFlashlightAnchor.rotation.set(
-        idle.rotX * 0.4,
-        idle.rotY * 0.4,
-        idle.rotZ * 0.4
+      this.shotgunGroup.rotation.set(
+        shotgunReloadPitch + this.recoilKick * 0.35 + idle.rotX + shoveRotX - this.holsterBlend * 0.55 + cyclerOffset.rotation.x,
+        idle.rotY + inspectRotY + cyclerOffset.rotation.y,
+        shotgunReloadRoll + idle.rotZ + inspectRotZ + cyclerOffset.rotation.z
       );
     }
+
+    // Sword: NO per-frame position/rotation writes — swordGroup is
+    // bone-parented to RightHand (D1). Flashlight: NO per-frame anchor
+    // writes — the palm offset is load-time and aim is the camera-space
+    // target (D1). Studio's draft also called
+    // this._updateFlashlightMount(flash) here, gated on sword state;
+    // dropped on the host: the real method is the no-arg mount switcher,
+    // already driven by the cycler callbacks and equip paths — a per-frame
+    // re-mount would fight this same one-writer rule.
   }
 }
