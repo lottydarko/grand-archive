@@ -732,7 +732,6 @@ export class EnemyManager {
     // One disc per level (Lotty's build update, Nov 20, 2026): the disc
     // stays locked until every enemy spawned for this level is defeated.
     this.levelNumber = difficulty.floor || 1;
-    this.discUnlocked = false;
     this._levelClearFired = false;
 
     const safeSpawns = spawnPoints.filter(
@@ -1312,7 +1311,6 @@ export class EnemyManager {
     if (this._levelClearFired) return;
     if (this.enemies.some((e) => e.alive)) return;
     this._levelClearFired = true;
-    this.discUnlocked = true;
     this.callbacks.onLevelCleared?.(this.levelNumber || 1, dropPos);
   }
 

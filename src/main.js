@@ -939,7 +939,9 @@ function syncBodyDataset() {
   document.body.dataset.mazeExitOpen =
     levelOneState &&
     levelOneState.mazeExitUnlocked &&
-    levelOneState.mazeDiscsCollected >= levelOneState.mazeDiscsRequired
+    levelOneState.mazeDiscsCollected >= levelOneState.mazeDiscsRequired &&
+    enemies &&
+    enemies.mazeHordeCleared()
       ? 'true'
       : 'false';
   document.body.dataset.trapdoor =
@@ -1202,7 +1204,15 @@ function submitTerminalSeed(rawSeed) {
   updateHudReadouts();
 }
 
+let lastTrapdoorDescentAt = -Infinity;
 function triggerTrapdoorDescent() {
+  // One descent per trigger moment (overlap O9, Nov 24, 2026): the
+  // interact press and the position check can both fire in the same
+  // frame — without this latch, advanceFloor() runs twice and skips a
+  // floor. The latch makes every trigger path share one descent.
+  const now = Date.now();
+  if (now - lastTrapdoorDescentAt < 1500) return;
+  lastTrapdoorDescentAt = now;
   if (enemies?.levelOneMode && !canUnlockStairs(levelOneState)) {
     showWhisper('the way forward is sealed until the boss falls and the disc is seated', 2.6);
     return;

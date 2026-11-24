@@ -9,6 +9,10 @@ import {
 import { pulseRumble } from '../game/levelOneBindings.js';
 import { ShellCasingSystem } from './shellCasings.js';
 import {
+  FLASHLIGHT_INTENSITY,
+  FLASHLIGHT_DISTANCE,
+  FLASHLIGHT_ANGLE,
+  FLASHLIGHT_PENUMBRA,
   FLASHLIGHT_DECAY,
   VIEWMODEL_FILL_INTENSITY,
   VIEWMODEL_FILL_DISTANCE,
@@ -182,7 +186,16 @@ export class WeaponSystem {
       this.camera.children.find((c) => c.isSpotLight) ||
       null;
     if (!this.flashlight) {
-      this.flashlight = new THREE.SpotLight(0xeef3fa, 28, 27, Math.PI / 6.0, 0.64, FLASHLIGHT_DECAY);
+      // Fallback creation uses the same lightingConfig values as every
+      // other path (overlap cleanup, Nov 24, 2026) — no private constants.
+      this.flashlight = new THREE.SpotLight(
+        0xeef3fa,
+        FLASHLIGHT_INTENSITY,
+        FLASHLIGHT_DISTANCE,
+        FLASHLIGHT_ANGLE,
+        FLASHLIGHT_PENUMBRA,
+        FLASHLIGHT_DECAY
+      );
       this.flashlight.name = 'PlayerFlashlight';
     }
     this.flashlightTarget =

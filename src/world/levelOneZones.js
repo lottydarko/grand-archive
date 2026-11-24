@@ -96,16 +96,6 @@ export class LevelOneZoneController {
   }
 
   /**
-   * Opens the wrought-iron + stone double gate between White Aether and Castle of the Dead.
-   */
-  openCastleGate() {
-    if (this.castleGateOpened) return false;
-    this.castleGateOpened = true;
-    this.onGateOpen();
-    return true;
-  }
-
-  /**
    * Call when the Male Lion boss is defeated in the Lion Room.
    * Starts the heavy plinth case rising out of the ground with the level disc.
    */
