@@ -33,6 +33,7 @@
  * presented as a live reading.
  */
 import * as THREE from 'three';
+import { GRAB_POSES } from './grabPoses.js';
 
 export const GRAB_CURL_SIGN = -1;
 export const FINGERS_AXIS = 'X';
@@ -77,6 +78,38 @@ export const SWORD_HAND_LOCAL_POS = Object.freeze([0, 0.165, 0.025]);
 export const FLASHLIGHT_PALM_OFFSET = Object.freeze([0.025, 0.035, -0.045]);
 export const ADS_DELTA_TRANSLATION = Object.freeze([-0.17, -0.09, 0.04]);
 
+// Seal fix round (Studio ruling, Nov 24, 2026) — Fix 2 (Option A,
+// calibration wins): THREE form of the calibrated in-gun targets, plus the
+// calibrated hip placement of the gun in armsRoot (view) space. The hip
+// placement is the trailer pose's gun-group transform — the same numbers
+// weapons.js carries as shotgunRestPos with the +90° Y mount rotation —
+// so hip framing is the calibrated framing by construction, and the ADS
+// pure translation (ADS_DELTA_TRANSLATION) carries it to screen center.
+function _handInGunQuat(wxyz) {
+  // Normalized: the calibration file stores 4-decimal wxyz values whose
+  // norm is 0.999988, and angleTo against a non-unit target reads a
+  // phantom ~0.0098 rad — nearly the whole 0.01 drift budget.
+  return new THREE.Quaternion(wxyz[1], wxyz[2], wxyz[3], wxyz[0]).normalize();
+}
+export const HAND_IN_GUN_TARGET_POSE = Object.freeze({
+  RightHand: Object.freeze({
+    pos: new THREE.Vector3(...HAND_IN_GUN_TARGETS.RightHand.pos),
+    quat: _handInGunQuat(HAND_IN_GUN_TARGETS.RightHand.quat_wxyz),
+  }),
+  LeftHand: Object.freeze({
+    pos: new THREE.Vector3(...HAND_IN_GUN_TARGETS.LeftHand.pos),
+    quat: _handInGunQuat(HAND_IN_GUN_TARGETS.LeftHand.quat_wxyz),
+  }),
+  Weapon: Object.freeze({
+    pos: new THREE.Vector3(...HAND_IN_GUN_TARGETS.WeaponBone.pos),
+    quat: _handInGunQuat(HAND_IN_GUN_TARGETS.WeaponBone.quat_wxyz),
+  }),
+});
+export const SHOTGUN_HIP_PLACEMENT = Object.freeze({
+  pos: new THREE.Vector3(0.24, -0.24, -0.48),
+  quat: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2),
+});
+
 export const CHAIN_MAX = Object.freeze({
   index: 1.8,
   middle: 1.9,
@@ -104,12 +137,21 @@ export class HandsEngine {
       leftHand: null,
       weapon: null,
       wrist: null,
+      upperArm: { R: null, L: null },
+      lowerArm: { R: null, L: null },
       chains: {
         R: {},
         L: {},
       },
     };
     this.restQuats = new Map();
+
+    // Seal Fix 1(c)/2: the weapon the gun-space drift scoring and the
+    // armed-pose driver key on. WeaponSystem syncs this on every equip
+    // change (cycler callback + bindArmsRig); it is deliberately NOT read
+    // from WeaponSystem.activeWeapon per frame, so direct field writes in
+    // tests/tools do not silently change the scoring basis.
+    this.activeWeapon = 'unarmed';
 
     // Draft-3 seal: ShotgunAnimator link for pump coupling (Patch 2), and
     // the frozen bind-pose world positions used as the roundtrip baseline.
@@ -169,6 +211,15 @@ export class HandsEngine {
   }
 
   /**
+   * Seal Fix 1(c)/2: record which weapon is active for scoring/driving.
+   * Called by WeaponSystem on bind and on every cycler weapon change.
+   */
+  setActiveWeapon(weapon) {
+    this.activeWeapon = weapon || 'unarmed';
+    return this.activeWeapon;
+  }
+
+  /**
    * Bind the rigged fps_arms viewmodel hierarchy (fps_arms_v8.glb).
    */
   bindArms(armsRoot) {
@@ -182,6 +233,8 @@ export class HandsEngine {
     this.bones.leftHand = null;
     this.bones.weapon = null;
     this.bones.wrist = null;
+    this.bones.upperArm = { R: null, L: null };
+    this.bones.lowerArm = { R: null, L: null };
     this.bones.chains = { R: {}, L: {} };
     this.rightHandBone = null;
     this.leftHandBone = null;
@@ -210,6 +263,14 @@ export class HandsEngine {
       } else if (clean === 'lefthand' || clean === 'handl001' || clean === 'handl') {
         this.bones.leftHand = obj;
         this.leftHandBone = obj;
+      } else if (clean === 'rightupperarm') {
+        this.bones.upperArm.R = obj;
+      } else if (clean === 'rightlowerarm') {
+        this.bones.lowerArm.R = obj;
+      } else if (clean === 'leftupperarm') {
+        this.bones.upperArm.L = obj;
+      } else if (clean === 'leftlowerarm') {
+        this.bones.lowerArm.L = obj;
       }
 
       for (const side of ['Right', 'Left']) {
@@ -234,32 +295,49 @@ export class HandsEngine {
     // weapons.update() tests build the same named graph from Object3D
     // groups). Accept named nodes for any slot no Bone claimed, and record
     // their rest quaternions so live drift measurement works there too.
-    if (!this.bones.rightHand || !this.bones.leftHand || !this.bones.weapon || !this.bones.wrist) {
+    if (
+      !this.bones.rightHand || !this.bones.leftHand || !this.bones.weapon ||
+      !this.bones.upperArm.R || !this.bones.lowerArm.R ||
+      !this.bones.upperArm.L || !this.bones.lowerArm.L
+    ) {
       const wanted = [
         ['rightHand', ['righthand', 'handr001', 'handr']],
         ['leftHand', ['lefthand', 'handl001', 'handl']],
         ['weapon', ['weapon']],
         ['wrist', ['leftwrist', 'wrist']],
+        ['upperArm.R', ['rightupperarm']],
+        ['lowerArm.R', ['rightlowerarm']],
+        ['upperArm.L', ['leftupperarm']],
+        ['lowerArm.L', ['leftlowerarm']],
       ];
       this.armsRoot.traverse((obj) => {
         if (obj.isBone) return;
         const clean = obj.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
         for (const [slot, names] of wanted) {
-          if (!this.bones[slot] && names.includes(clean)) {
+          if (!names.includes(clean)) continue;
+          if (slot.includes('.')) {
+            const [group, side] = slot.split('.');
+            if (!this.bones[group][side]) {
+              this.bones[group][side] = obj;
+              if (!this.restQuats.has(obj)) this.restQuats.set(obj, obj.quaternion.clone());
+            }
+          } else if (!this.bones[slot]) {
             this.bones[slot] = obj;
             if (!this.restQuats.has(obj)) this.restQuats.set(obj, obj.quaternion.clone());
           }
         }
       });
     }
-    if (!this.bones.wrist) this.bones.wrist = this.bones.leftHand;
+    // Seal Fix 1(b): NO wrist alias. The v8 rig has no wrist bone; the W
+    // slot measures the Weapon bone directly (see the bind slots below)
+    // and reports NO_BONE when it is absent — it never borrows LeftHand.
     if (this.bones.rightHand && !this.rightHandBone) this.rightHandBone = this.bones.rightHand;
     if (this.bones.leftHand && !this.leftHandBone) this.leftHandBone = this.bones.leftHand;
     if (this.bones.weapon && !this.weaponBone) this.weaponBone = this.bones.weapon;
 
     // Frozen bind-pose world positions — the roundtrip baseline (D2).
     this.armsRoot.updateWorldMatrix(true, true);
-    const slots = { R: this.bones.rightHand, L: this.bones.leftHand, W: this.bones.wrist };
+    const slots = { R: this.bones.rightHand, L: this.bones.leftHand, W: this.bones.weapon };
     for (const [key, bone] of Object.entries(slots)) {
       this.bindWorldPos[key] = bone ? bone.getWorldPosition(new THREE.Vector3()) : null;
     }
@@ -425,6 +503,178 @@ export class HandsEngine {
   }
 
   /**
+   * Seal Fix 2 (Studio Option A — calibration wins): the armed Balistucia
+   * pose driver. While the shotgun is the active weapon, the GA_* clips no
+   * longer own the arm bones: this driver poses them from the immutable
+   * HAND_IN_GUN_TARGETS every frame it is called.
+   *
+   *  1. shotgunRoot's local transform becomes inv(HAND_IN_GUN.Weapon) so
+   *     the Weapon bone sits exactly at the calibrated Weapon target in
+   *     gun space (attachShotgun's static (0,0,0)/(0,+90°,0) local remains
+   *     the default mount; the driver owns it while armed).
+   *  2. The Weapon bone is set to the calibrated hip anchor in armsRoot
+   *     space (SHOTGUN_HIP_PLACEMENT ∘ HAND_IN_GUN.Weapon), so the gun —
+   *     and with it both hand targets — lands on the calibrated hip
+   *     frame; the existing ADS pure translation on armsRoot then brings
+   *     the sights to screen center with zero re-rotation.
+   *  3. Each arm is solved with 2-bone analytical IK (UpperArm → LowerArm
+   *     → Hand) to its gun-space target world transform, the pump offset
+   *     folded into LeftHand's gun-space target so the whole left arm
+   *     racks the 90 mm stroke. Bone lengths are never written; hand
+   *     world orientations hit the targets exactly.
+   *  4. Fingers close to GRAB_POSES.gripWrap via applyFingerCurls
+   *     (GRAB_CURL_SIGN −1, local X, CHAIN_MAX, GRAB_JOINT_WEIGHTS; the
+   *     curl cap stays null per the ruling).
+   *
+   * Fallback: rigs without a full UpperArm→LowerArm→Hand chain (the
+   * synthetic unit-test rigs) keep the previous behavior exactly — pump
+   * translation coupling only, fingers left to the grab layer.
+   */
+  applyShotgunPose(pumpTravel01 = 0) {
+    const upperR = this.bones.upperArm ? this.bones.upperArm.R : null;
+    const lowerR = this.bones.lowerArm ? this.bones.lowerArm.R : null;
+    const upperL = this.bones.upperArm ? this.bones.upperArm.L : null;
+    const lowerL = this.bones.lowerArm ? this.bones.lowerArm.L : null;
+    const { rightHand, leftHand, weapon } = this.bones;
+    const chainOk = (u, l, h) => Boolean(u && l && h && l.parent === u && h.parent === l);
+    if (
+      !this.shotgunRoot || !this.armsRoot || !weapon || !weapon.parent ||
+      !chainOk(upperR, lowerR, rightHand) || !chainOk(upperL, lowerL, leftHand)
+    ) {
+      this.applyPumpCoupling(pumpTravel01);
+      return false;
+    }
+
+    // If the translation coupling ever wrote the LeftHand's local position
+    // (grab overlap), restore its rest local position first — the IK owns
+    // hand placement through the chain and reads bone lengths from the
+    // local offsets.
+    if (this._pumpCouplingActive) {
+      leftHand.position.copy(this._leftHandRestLocalPos);
+      this._pumpCouplingActive = false;
+      this._appliedPumpTravel01 = 0;
+    }
+
+    const H = HAND_IN_GUN_TARGET_POSE;
+    const ONE = new THREE.Vector3(1, 1, 1);
+
+    // (1) shotgunRoot local := inv(H.Weapon). Position + quaternion only;
+    // the root's scale is not ours to write.
+    const invWeaponLocal = new THREE.Matrix4()
+      .compose(H.Weapon.pos, H.Weapon.quat, ONE)
+      .invert();
+    invWeaponLocal.decompose(
+      this.shotgunRoot.position,
+      this.shotgunRoot.quaternion,
+      new THREE.Vector3()
+    );
+
+    // (2) Weapon bone := calibrated hip anchor, solved into its parent's
+    // local space against the parent's CURRENT world matrix (the mixer
+    // may have posed the parent this frame; the anchor is absolute in
+    // armsRoot space).
+    this.armsRoot.updateWorldMatrix(true, false);
+    const anchorWorld = new THREE.Matrix4()
+      .multiplyMatrices(
+        this.armsRoot.matrixWorld,
+        new THREE.Matrix4().compose(SHOTGUN_HIP_PLACEMENT.pos, SHOTGUN_HIP_PLACEMENT.quat, ONE)
+      )
+      .multiply(new THREE.Matrix4().compose(H.Weapon.pos, H.Weapon.quat, ONE));
+    weapon.parent.updateWorldMatrix(true, false);
+    const weaponLocal = new THREE.Matrix4().multiplyMatrices(
+      new THREE.Matrix4().copy(weapon.parent.matrixWorld).invert(),
+      anchorWorld
+    );
+    weaponLocal.decompose(weapon.position, weapon.quaternion, new THREE.Vector3());
+
+    // (3) Hand targets from the gun's world matrix (now armsRoot ∘ hip
+    // placement by construction), pump offset folded into LeftHand.
+    this.armsRoot.updateWorldMatrix(true, true);
+    const gunPos = this.shotgunRoot.getWorldPosition(new THREE.Vector3());
+    const gunQuat = this.shotgunRoot.getWorldQuaternion(new THREE.Quaternion());
+    const targetFor = (target, gunOffsetX) => {
+      const local = target.pos.clone();
+      if (gunOffsetX) local.x += gunOffsetX;
+      return {
+        pos: local.applyQuaternion(gunQuat).add(gunPos),
+        quat: gunQuat.clone().multiply(target.quat),
+      };
+    };
+    const targetR = targetFor(H.RightHand, 0);
+    const targetL = targetFor(H.LeftHand, -this.computePumpTravelOffset(pumpTravel01));
+    this._solveArmIK(upperR, lowerR, rightHand, targetR.pos, targetR.quat, 1);
+    this._solveArmIK(upperL, lowerL, leftHand, targetL.pos, targetL.quat, -1);
+
+    // (4) Calibrated grip on both hands.
+    this.applyFingerCurls(GRAB_POSES.gripWrap);
+    return true;
+  }
+
+  /**
+   * 2-bone analytical IK for one arm chain. Writes ONLY quaternions: the
+   * upper arm swings its child axis onto the solved elbow direction, the
+   * lower arm swings its child axis onto the elbow→target direction, and
+   * the hand takes the target world orientation exactly. Bone lengths
+   * (the child local offsets) are never modified.
+   * sideSign: +1 right, −1 left (elbow pole mirrored outward).
+   */
+  _solveArmIK(upper, lower, hand, targetPos, targetQuat, sideSign) {
+    const L1 = lower.position.length();
+    const L2 = hand.position.length();
+    if (!(L1 > 1e-6) || !(L2 > 1e-6) || !upper.parent) return false;
+
+    const S = upper.getWorldPosition(new THREE.Vector3());
+    const toTarget = new THREE.Vector3().subVectors(targetPos, S);
+    let dist = toTarget.length();
+    if (!(dist > 1e-6)) return false;
+    dist = THREE.MathUtils.clamp(dist, Math.abs(L1 - L2) + 1e-4, (L1 + L2) * 0.99999);
+    const dir = toTarget.normalize();
+    const T = S.clone().addScaledVector(dir, dist);
+
+    // Elbow: law of cosines + pole (downward/outward in armsRoot space).
+    const along = (L1 * L1 - L2 * L2 + dist * dist) / (2 * dist);
+    const height = Math.sqrt(Math.max(L1 * L1 - along * along, 0));
+    const armsQuat = this.armsRoot.getWorldQuaternion(new THREE.Quaternion());
+    const pole = new THREE.Vector3(0.6 * sideSign, -1, 0.25).applyQuaternion(armsQuat);
+    const perp = pole.addScaledVector(dir, -pole.dot(dir));
+    if (perp.lengthSq() < 1e-8) {
+      perp.set(0, 1, 0).addScaledVector(dir, -dir.y);
+      if (perp.lengthSq() < 1e-8) perp.set(1, 0, 0);
+    }
+    perp.normalize();
+    const E = S.clone().addScaledVector(dir, along).addScaledVector(perp, height);
+
+    // UpperArm: swing its child axis (the lower arm's local offset
+    // direction, in world) onto S→E.
+    const upperWorld = upper.getWorldQuaternion(new THREE.Quaternion());
+    const childDirU = lower.position.clone().normalize().applyQuaternion(upperWorld);
+    const dirSE = E.clone().sub(S).normalize();
+    const upperWorldNew = new THREE.Quaternion()
+      .setFromUnitVectors(childDirU, dirSE)
+      .multiply(upperWorld);
+    const upperParentWorld = upper.parent.getWorldQuaternion(new THREE.Quaternion());
+    upper.quaternion.copy(upperParentWorld.invert().multiply(upperWorldNew));
+
+    // LowerArm: with the upper's new world orientation fixed, swing its
+    // child axis (the hand's local offset direction) onto E→T.
+    const lowerWorld = new THREE.Quaternion().multiplyQuaternions(upperWorldNew, lower.quaternion);
+    const childDirL = hand.position.clone().normalize().applyQuaternion(lowerWorld);
+    const dirET = T.clone().sub(E).normalize();
+    const lowerWorldNew = new THREE.Quaternion()
+      .setFromUnitVectors(childDirL, dirET)
+      .multiply(lowerWorld);
+    lower.quaternion.copy(
+      new THREE.Quaternion().copy(upperWorldNew).invert().multiply(lowerWorldNew)
+    );
+
+    // Hand: exact target world orientation.
+    hand.quaternion.copy(
+      new THREE.Quaternion().copy(lowerWorldNew).invert().multiply(targetQuat)
+    );
+    return true;
+  }
+
+  /**
    * Poses finger chains with correct curl math:
    * local X, sign -1 for ALL chains including thumb.
    */
@@ -520,28 +770,65 @@ export class HandsEngine {
    * error against the frozen bind position. No target is ever compared to
    * its own clone. When no rig/mesh is bound, the calibration baseline
    * (this.contactDistances, measured Nov 23) is reported with live:false.
+   *
+   * Seal fix round (Studio ruling, Nov 24, 2026): W measures the Weapon
+   * bone (no LeftHand alias); armed shotgun states score drift in
+   * shotgunRoot space against HAND_IN_GUN_TARGETS; unarmed/sword states
+   * report shotgun contacts as N/A (non-shotgun).
    */
   measureHandContact(mode = 'hip') {
     const isPump = mode === 'pump';
     const isSword = mode === 'sword';
 
+    // Seal Fix 1(b): W is the Weapon bone itself — never the LeftHand.
     const rig = {
       R: this.bones.rightHand,
       L: this.bones.leftHand,
-      W: this.bones.wrist || this.bones.leftHand,
+      W: this.bones.weapon,
     };
+    const hasRig = Boolean(rig.R || rig.L || rig.W);
 
-    // Drift — live local quaternion vs frozen bind-rest quaternion.
+    // Seal Fix 1(c): armed shotgun states score drift in shotgunRoot
+    // space (inv(q_gun_world) * q_bone_world) against the immutable
+    // HAND_IN_GUN_TARGETS — NOT against bind rest. Every other state
+    // keeps bind-rest drift (live local quaternion vs the frozen bind
+    // rest). Either way the comparison is live matrices against immutable
+    // constants, so a 0.05 rad perturbation still flips DRIFT FAIL (D2).
+    const shotgunScored =
+      !isSword && this.activeWeapon === 'shotgun' && Boolean(this.shotgunRoot) && hasRig;
+
     const drift = {};
     let maxDrift = 0;
-    for (const key of ['R', 'L', 'W']) {
-      const bone = rig[key];
-      if (!bone) continue;
-      const rest = this.restQuats.get(bone);
-      if (!rest) continue;
-      const d = bone.quaternion.angleTo(rest);
-      drift[key] = Number(d.toFixed(6));
-      if (d > maxDrift) maxDrift = d;
+    if (shotgunScored) {
+      if (this.armsRoot) this.armsRoot.updateWorldMatrix(true, true);
+      const qGunInv = this.shotgunRoot
+        .getWorldQuaternion(new THREE.Quaternion())
+        .invert();
+      const targets = {
+        R: HAND_IN_GUN_TARGET_POSE.RightHand.quat,
+        L: HAND_IN_GUN_TARGET_POSE.LeftHand.quat,
+        W: HAND_IN_GUN_TARGET_POSE.Weapon.quat,
+      };
+      for (const key of ['R', 'L', 'W']) {
+        const bone = rig[key];
+        if (!bone) continue;
+        const qRel = qGunInv
+          .clone()
+          .multiply(bone.getWorldQuaternion(new THREE.Quaternion()));
+        const d = qRel.angleTo(targets[key]);
+        drift[key] = Number(d.toFixed(6));
+        if (d > maxDrift) maxDrift = d;
+      }
+    } else {
+      for (const key of ['R', 'L', 'W']) {
+        const bone = rig[key];
+        if (!bone) continue;
+        const rest = this.restQuats.get(bone);
+        if (!rest) continue;
+        const d = bone.quaternion.angleTo(rest);
+        drift[key] = Number(d.toFixed(6));
+        if (d > maxDrift) maxDrift = d;
+      }
     }
     const angularDriftRad = Number(maxDrift.toFixed(6));
     const driftOk = angularDriftRad <= this.handcheckDriftThresholdRad;
@@ -559,24 +846,38 @@ export class HandsEngine {
       }
     }
 
-    // Contact — live Box3 distance to the gun meshes when they exist.
-    const meshes = this._gunMeshes();
+    // Contact — Seal Fix 1(c): shotgun contact targets apply only when a
+    // shotgun state is actually being measured. Sword mode, and any state
+    // where the shotgun mount is hidden (unarmed/knife/glock/sword in
+    // production, where _syncVisibility hides shotgunRoot), report
+    // N/A (non-shotgun) instead of scoring against hidden shotgun meshes.
+    const shotgunHidden = Boolean(this.shotgunRoot) && this.shotgunRoot.visible === false;
+    const contactsApplicable = !isSword && !shotgunHidden;
     const contact = {};
-    const tolerances = {
-      R: CONTACT_TOLERANCES_MM.RightHand_max,
-      L: CONTACT_TOLERANCES_MM.LeftHand_max,
-      W: WRIST_TOLERANCE_MM,
-    };
-    for (const key of ['R', 'L', 'W']) {
-      const d = this._liveDistanceMm(rig[key], meshes);
-      contact[key] =
-        d === null
-          ? { minDistMm: null, status: 'NO_MESH' }
-          : { minDistMm: d, status: d <= tolerances[key] ? 'OK' : 'FAIL' };
+    let meshes = [];
+    if (contactsApplicable) {
+      meshes = this._gunMeshes();
+      const tolerances = {
+        R: CONTACT_TOLERANCES_MM.RightHand_max,
+        L: CONTACT_TOLERANCES_MM.LeftHand_max,
+        W: WRIST_TOLERANCE_MM,
+      };
+      for (const key of ['R', 'L', 'W']) {
+        const d = this._liveDistanceMm(rig[key], meshes);
+        contact[key] =
+          d === null
+            ? { minDistMm: null, status: 'NO_MESH' }
+            : { minDistMm: d, status: d <= tolerances[key] ? 'OK' : 'FAIL' };
+      }
+    } else {
+      for (const key of ['R', 'L', 'W']) {
+        contact[key] = { minDistMm: null, status: 'N/A' };
+      }
     }
-    const live = contact.R.minDistMm !== null || contact.L.minDistMm !== null;
+    const live = hasRig;
 
     const chainDist = (chain) => {
+      if (!contactsApplicable) return null;
       const bones = this.bones.chains.L ? this.bones.chains.L[chain] : null;
       if (!bones) return null;
       for (let i = bones.length - 1; i >= 0; i--) {
@@ -585,31 +886,54 @@ export class HandsEngine {
       return null;
     };
 
-    // Repo-shape contact fields: live values when measured, otherwise the
-    // calibration baseline (with the authored per-mode values, unchanged).
-    let rightHandMm = live && contact.R.minDistMm !== null ? contact.R.minDistMm : this.contactDistances.RightHand;
-    let leftHandMm = live && contact.L.minDistMm !== null ? contact.L.minDistMm : this.contactDistances.LeftHand;
-    let leftIndexMm = chainDist('index') ?? this.contactDistances.LeftIndex;
-    let leftMiddleMm = chainDist('middle') ?? this.contactDistances.LeftMiddle;
-    if (!live) {
-      if (isPump) {
-        leftHandMm = 0.2;
-      } else if (isSword) {
-        rightHandMm = 14.5;
-        leftHandMm = 0.0;
+    // Repo-shape contact fields: live values when measured, the
+    // calibration baseline when there is no rig to measure (with the
+    // authored per-mode values, unchanged), and null — N/A (non-shotgun)
+    // — when a live rig is in a state where shotgun contacts do not apply.
+    let rightHandMm;
+    let leftHandMm;
+    let leftIndexMm;
+    let leftMiddleMm;
+    let rightHandOk;
+    let leftHandOk;
+    let leftIndexOk;
+    let leftMiddleOk;
+    if (!contactsApplicable && live) {
+      rightHandMm = null;
+      leftHandMm = null;
+      leftIndexMm = null;
+      leftMiddleMm = null;
+      rightHandOk = null;
+      leftHandOk = null;
+      leftIndexOk = null;
+      leftMiddleOk = null;
+    } else {
+      rightHandMm = live && contact.R.minDistMm !== null ? contact.R.minDistMm : this.contactDistances.RightHand;
+      leftHandMm = live && contact.L.minDistMm !== null ? contact.L.minDistMm : this.contactDistances.LeftHand;
+      leftIndexMm = chainDist('index') ?? this.contactDistances.LeftIndex;
+      leftMiddleMm = chainDist('middle') ?? this.contactDistances.LeftMiddle;
+      if (!live) {
+        if (isPump) {
+          leftHandMm = 0.2;
+        } else if (isSword) {
+          rightHandMm = 14.5;
+          leftHandMm = 0.0;
+        }
       }
+      rightHandOk = rightHandMm <= CONTACT_TOLERANCES_MM.RightHand_max;
+      leftHandOk = leftHandMm <= CONTACT_TOLERANCES_MM.LeftHand_max;
+      leftIndexOk = leftIndexMm <= CONTACT_TOLERANCES_MM.LeftIndex_max;
+      leftMiddleOk = leftMiddleMm <= CONTACT_TOLERANCES_MM.LeftMiddle_max;
     }
 
-    const rightHandOk = rightHandMm <= CONTACT_TOLERANCES_MM.RightHand_max;
-    const leftHandOk = leftHandMm <= CONTACT_TOLERANCES_MM.LeftHand_max;
-    const leftIndexOk = leftIndexMm <= CONTACT_TOLERANCES_MM.LeftIndex_max;
-    const leftMiddleOk = leftMiddleMm <= CONTACT_TOLERANCES_MM.LeftMiddle_max;
-
-    const allPassed = driftOk && rightHandOk && leftHandOk && leftIndexOk && leftMiddleOk;
+    const allPassed =
+      driftOk && rightHandOk !== false && leftHandOk !== false && leftIndexOk !== false && leftMiddleOk !== false;
 
     return {
       mode,
       live,
+      scoringBasis: shotgunScored ? 'gun-targets' : 'bind-rest',
+      contactsApplicable,
       driftStatus: driftOk ? 'DRIFT OK' : 'DRIFT FAIL',
       angularDriftRad,
       driftThresholdRad: this.handcheckDriftThresholdRad,
@@ -637,13 +961,17 @@ export class HandsEngine {
    */
   formatTelemetry(mode = 'hip') {
     const m = this.measureHandContact(mode);
+    const fmt = (mm, max, ok) =>
+      mm === null || mm === undefined
+        ? 'N/A (non-shotgun)'
+        : `${mm.toFixed(1)} mm (tolerance <= ${max} mm) [${ok ? 'PASS' : 'FAIL'}]`;
     return [
       `[HANDCHECK ?handcheck=1] MODE: ${m.mode.toUpperCase()}`,
-      `DRIFT: ${m.driftStatus} (${m.angularDriftRad.toFixed(4)} rad <= ${m.driftThresholdRad.toFixed(4)} rad)`,
-      `RightHand: ${m.RightHand_mm.toFixed(1)} mm (tolerance <= ${m.RightHand_max_mm} mm) [${m.RightHand_ok ? 'PASS' : 'FAIL'}]`,
-      `LeftHand:  ${m.LeftHand_mm.toFixed(1)} mm (tolerance <= ${m.LeftHand_max_mm} mm) [${m.LeftHand_ok ? 'PASS' : 'FAIL'}]`,
-      `LeftIndex: ${m.LeftIndex_mm.toFixed(1)} mm (tolerance <= ${m.LeftIndex_max_mm} mm) [${m.LeftIndex_ok ? 'PASS' : 'FAIL'}]`,
-      `LeftMiddle:${m.LeftMiddle_mm.toFixed(1)} mm (tolerance <= ${m.LeftMiddle_max_mm} mm) [${m.LeftMiddle_ok ? 'PASS' : 'FAIL'}]`,
+      `DRIFT: ${m.driftStatus} (${m.angularDriftRad.toFixed(4)} rad <= ${m.driftThresholdRad.toFixed(4)} rad) [basis: ${m.scoringBasis === 'gun-targets' ? 'shotgunRoot space vs HAND_IN_GUN_TARGETS' : 'bind rest'}]`,
+      `RightHand: ${fmt(m.RightHand_mm, m.RightHand_max_mm, m.RightHand_ok)}`,
+      `LeftHand:  ${fmt(m.LeftHand_mm, m.LeftHand_max_mm, m.LeftHand_ok)}`,
+      `LeftIndex: ${fmt(m.LeftIndex_mm, m.LeftIndex_max_mm, m.LeftIndex_ok)}`,
+      `LeftMiddle:${fmt(m.LeftMiddle_mm, m.LeftMiddle_max_mm, m.LeftMiddle_ok)}`,
       `CURL MATH: local X, sign ${this.grabCurlSign} (all chains incl. thumb)`,
       `CURL CAP:  ${this.curlCapRad === null ? 'null (uncapped)' : this.curlCapRad.toFixed(2) + ' rad'}`,
       `OVERALL:   ${m.allPassed ? 'GREEN' : 'RED'}`,

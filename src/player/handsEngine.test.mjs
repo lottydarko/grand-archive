@@ -149,3 +149,71 @@ test('handsEngine: ?handcheck=1 telemetry reports DRIFT OK, RightHand <= 20 mm, 
     assert.ok(text.includes('OVERALL:   GREEN'));
   }
 });
+
+test('handsEngine: seal Fix 1(b) — W measures the Weapon bone directly, never a LeftHand alias', () => {
+  const root = new THREE.Group();
+  const mk = (name, parent) => {
+    const b = new THREE.Bone();
+    b.name = name;
+    parent.add(b);
+    return b;
+  };
+  mk('RightHand', root);
+  mk('LeftHand', root);
+  const weapon = mk('Weapon', root);
+
+  const engine = new HandsEngine();
+  engine.bindArms(root);
+  assert.equal(engine.bones.wrist, null, 'rig has no wrist bone — the slot must stay empty (no alias)');
+
+  const before = engine.measureHandContact('hip');
+  assert.ok(before.drift.W < 1e-6, 'Weapon bone at bind rest must read ~0 W drift');
+
+  // Perturb ONLY the Weapon bone: W drift must follow it exactly, and the
+  // LeftHand drift must not move (the old alias reported the same bone
+  // twice and hid the Weapon bone entirely).
+  weapon.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.05);
+  const after = engine.measureHandContact('hip');
+  assert.ok(Math.abs(after.drift.W - 0.05) < 1e-5, `W drift must track the Weapon bone (got ${after.drift.W})`);
+  assert.ok(after.drift.L < 1e-6, 'LeftHand drift must NOT move when only the Weapon bone moves');
+  assert.equal(after.driftStatus, 'DRIFT FAIL');
+});
+
+test('handsEngine: seal Fix 1(c) — non-shotgun states report shotgun contacts as N/A', () => {
+  // Live rig whose shotgun mount is hidden (the production unarmed state:
+  // _syncVisibility sets shotgunRoot.visible = false) — contacts must be
+  // N/A (non-shotgun), never scored against the hidden meshes, while the
+  // bind-rest drift stays live.
+  const root = new THREE.Group();
+  const mk = (name, parent) => {
+    const b = new THREE.Bone();
+    b.name = name;
+    parent.add(b);
+    return b;
+  };
+  mk('RightHand', root);
+  mk('LeftHand', root);
+  const weapon = mk('Weapon', root);
+  const shotgunRoot = new THREE.Group();
+  shotgunRoot.name = 'ShotgunRoot';
+  const gunBody = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.1, 0.08));
+  gunBody.position.set(0.05, 0, 0);
+  shotgunRoot.add(gunBody);
+
+  const engine = new HandsEngine();
+  engine.bindArms(root);
+  engine.attachShotgun(weapon, shotgunRoot);
+  shotgunRoot.visible = false;
+
+  const m = engine.measureHandContact('hip');
+  assert.equal(m.live, true, 'drift is live on a bound rig');
+  assert.equal(m.contactsApplicable, false);
+  assert.equal(m.RightHand_mm, null, 'RightHand contact must be N/A, not scored against hidden meshes');
+  assert.equal(m.LeftHand_mm, null);
+  assert.equal(m.contact.R.status, 'N/A');
+  assert.equal(m.driftStatus, 'DRIFT OK', 'bind-rest drift still scores in unarmed state');
+  assert.ok(engine.formatTelemetry('hip').includes('N/A (non-shotgun)'), 'telemetry must print N/A (non-shotgun)');
+
+  const sword = engine.measureHandContact('sword');
+  assert.equal(sword.RightHand_mm, null, 'sword mode contacts are N/A (non-shotgun) on a live rig');
+});

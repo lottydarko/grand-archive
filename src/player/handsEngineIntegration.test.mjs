@@ -63,7 +63,10 @@ import {
   CONTACT_TOLERANCE_MM,
   ROUNDTRIP_TOLERANCE_MM,
   HANDCHECK_DRIFT_TOLERANCE_RAD,
+  HAND_IN_GUN_TARGETS,
+  CHAIN_MAX,
 } from './handsEngine.js';
+import { GRAB_POSES } from './grabPoses.js';
 import { WeaponSystem } from './weapons.js';
 
 // Minimal live-rig stand-in: the SAME Object3D graph WeaponSystem.update() runs against (not a HandsEngine-only mock).
@@ -274,4 +277,192 @@ test('Knife — Level One loadout: slash is live and its hit check reaches the e
   }
   assert.equal(meleeCalls.length, 1, 'the swing hit check must call handleMeleeSlash exactly once');
   assert.equal(meleeCalls[0].range, 2.95, 'knife reach of record (2.95 m)');
+});
+
+// ---------------------------------------------------------------------------
+// Seal fix round (Studio ruling, Nov 24, 2026) — Fixes 1(c), 2 and 3.
+//
+// Fix 2 regression rig: the production arm-chain graph
+// (UpperArm → LowerArm → Hand) as THREE.Bones with the real v8 rig's bind
+// offsets (UpperArm (±0.19, −0.06, −0.27), LowerArm (0, 0.29, 0), Hand
+// (0, 0.265, 0)), plus full finger chains — the graph the 2-bone IK needs.
+function makeArmChainRig() {
+  const root = new THREE.Group();
+  root.name = 'PlayerRoot';
+  const armsRoot = new THREE.Group();
+  armsRoot.name = 'ArmsRoot';
+  root.add(armsRoot);
+  const mkBone = (name, parent, pos) => {
+    const b = new THREE.Bone();
+    b.name = name;
+    b.position.set(pos[0], pos[1], pos[2]);
+    parent.add(b);
+    return b;
+  };
+  const upperR = mkBone('RightUpperArm', armsRoot, [0.19, -0.06, -0.27]);
+  const lowerR = mkBone('RightLowerArm', upperR, [0, 0.29, 0]);
+  const rightHand = mkBone('RightHand', lowerR, [0, 0.265, 0]);
+  const upperL = mkBone('LeftUpperArm', armsRoot, [-0.19, -0.06, -0.27]);
+  const lowerL = mkBone('LeftLowerArm', upperL, [0, 0.29, 0]);
+  const leftHand = mkBone('LeftHand', lowerL, [0, 0.265, 0]);
+  const weapon = mkBone('Weapon', armsRoot, [0.06, 0.235, -0.074]);
+  const fingers = { R: {}, L: {} };
+  for (const [side, hand] of [['R', rightHand], ['L', leftHand]]) {
+    const sn = side === 'R' ? 'Right' : 'Left';
+    for (const chain of ['Index', 'Middle', 'Ring', 'Pinky', 'Thumb']) {
+      let parent = hand;
+      const arr = [];
+      for (const seg of ['Proximal', 'Intermediate', 'Distal']) {
+        const b = mkBone(`${sn}${chain}${seg}`, parent, [0, 0.03, 0]);
+        arr.push(b);
+        parent = b;
+      }
+      fingers[side][chain.toLowerCase()] = arr;
+    }
+  }
+  const shotgunRoot = new THREE.Group();
+  shotgunRoot.name = 'ShotgunRoot';
+  const shotgunGroup = new THREE.Group();
+  shotgunGroup.name = 'ShotgunGroup';
+  shotgunRoot.add(shotgunGroup);
+  const gunBody = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.1, 0.08));
+  gunBody.name = 'GunBody';
+  gunBody.position.set(0.3, -0.02, 0.1);
+  shotgunGroup.add(gunBody);
+  const swordGroup = new THREE.Group();
+  swordGroup.name = 'SwordGroup';
+  const flashlightAnchor = new THREE.Group();
+  flashlightAnchor.name = 'HandFlashlightAnchor';
+  return {
+    root, armsRoot, upperR, lowerR, rightHand, upperL, lowerL, leftHand,
+    weapon, shotgunRoot, shotgunGroup, swordGroup, flashlightAnchor, fingers,
+  };
+}
+
+// Fix 2 (Option A) + Fix 1(c): with a non-rest "GA_Carry" pose on the arm
+// bones, an armed shotgun update() must hold R/L/W within 0.01 rad of
+// HAND_IN_GUN_TARGETS in gun space, land both hands ON the targets, keep
+// bone lengths invariant, close the gripWrap curls, and track the pump
+// with the left arm. On the pre-fix code this fails outright: nothing
+// applied the targets at runtime (drift read against bind rest in the
+// 1.8–2.2 rad range) and the gun-space scoring basis did not exist.
+test('Fix 2 — armed shotgun update() drives R/L/W onto HAND_IN_GUN_TARGETS via IK (Option A)', () => {
+  const rig = makeArmChainRig();
+  const weapons = makeWeapons(rig);
+  weapons.setLoadout('level1');
+
+  // Non-rest pose on every arm bone + the Weapon bone — the stand-in for
+  // a GA_Carry mixer pose owning the bones (the pre-fix failure mode).
+  rig.upperR.rotation.set(0.4, 0.2, -0.9);
+  rig.lowerR.rotation.set(-0.7, 0.1, 0.3);
+  rig.rightHand.rotation.set(0.2, -0.4, 0.5);
+  rig.upperL.rotation.set(-0.3, -0.2, 0.8);
+  rig.lowerL.rotation.set(-0.9, 0.0, -0.2);
+  rig.leftHand.rotation.set(-0.1, 0.3, -0.4);
+  rig.weapon.rotation.set(0.3, -0.5, 0.8);
+
+  weapons.unlockWeapon('shotgun'); // auto-equips → engine syncs to 'shotgun'
+  assert.equal(weapons.activeWeapon, 'shotgun');
+  assert.equal(weapons.handsEngine.activeWeapon, 'shotgun');
+
+  weapons.update(0.016, mockControls(), null, 100);
+
+  const eng = weapons.handsEngine;
+  const m = eng.measureHandContact('hip');
+  assert.equal(m.scoringBasis, 'gun-targets', 'armed shotgun must score in gun space');
+  for (const key of ['R', 'L', 'W']) {
+    assert.ok(m.drift[key] <= 0.01, `drift.${key} must be <= 0.01 rad of HAND_IN_GUN_TARGETS (got ${m.drift[key]})`);
+  }
+  assert.equal(m.driftStatus, 'DRIFT OK');
+
+  // Hands land ON the targets (position, not just orientation): expected
+  // world position = shotgunRoot.matrixWorld ∘ HAND_IN_GUN_TARGETS pos.
+  rig.root.updateWorldMatrix(true, true);
+  const expectedPos = (target) =>
+    new THREE.Vector3(...target.pos).applyMatrix4(rig.shotgunRoot.matrixWorld);
+  const rPos = rig.rightHand.getWorldPosition(new THREE.Vector3());
+  const lPos = rig.leftHand.getWorldPosition(new THREE.Vector3());
+  assert.ok(rPos.distanceTo(expectedPos(HAND_IN_GUN_TARGETS.RightHand)) < 0.002, 'RightHand must land on its gun-space target');
+  assert.ok(lPos.distanceTo(expectedPos(HAND_IN_GUN_TARGETS.LeftHand)) < 0.002, 'LeftHand must land on its gun-space target');
+
+  // Bone lengths invariant: the IK writes quaternions only.
+  assert.ok(Math.abs(rig.lowerR.position.length() - 0.29) < 1e-9, 'RightLowerArm length invariant');
+  assert.ok(Math.abs(rig.rightHand.position.length() - 0.265) < 1e-9, 'RightHand offset invariant');
+  assert.ok(Math.abs(rig.lowerL.position.length() - 0.29) < 1e-9, 'LeftLowerArm length invariant');
+  assert.ok(Math.abs(rig.leftHand.position.length() - 0.265) < 1e-9, 'LeftHand offset invariant');
+
+  // Grip: right index proximal carries gripWrap through applyFingerCurls —
+  // angle = sign(−1) × curl 0.3 × CHAIN_MAX 1.8 × joint weight 0.45.
+  const indexQ = rig.fingers.R.index[0].quaternion;
+  const indexAngle = 2 * Math.atan2(indexQ.x, indexQ.w);
+  const expectedCurl = -GRAB_POSES.gripWrap.R.index * CHAIN_MAX.index * 0.45;
+  assert.ok(Math.abs(indexAngle - expectedCurl) < 0.02, `gripWrap curl must be applied while armed (got ${indexAngle}, expected ${expectedCurl})`);
+
+  // Pump: the whole left arm racks — LeftHand's gun-space X tracks
+  // pumpTravel01 by −travel × 0.09 m, orientation scoring stays on target.
+  const gunLocalX = () => {
+    rig.root.updateWorldMatrix(true, true);
+    return rig.shotgunRoot.worldToLocal(rig.leftHand.getWorldPosition(new THREE.Vector3())).x;
+  };
+  const restX = gunLocalX();
+  assert.ok(Math.abs(restX - HAND_IN_GUN_TARGETS.LeftHand.pos[0]) < 0.003, 'LeftHand gun-space X at pump rest');
+  weapons.shotgunAnimator.debugHoldPump01 = 0.5;
+  weapons.update(0.016, mockControls(), null, 100);
+  assert.equal(weapons.shotgunAnimator.pumpTravel01, 0.5);
+  const pumpedX = gunLocalX();
+  assert.ok(
+    Math.abs(pumpedX - (HAND_IN_GUN_TARGETS.LeftHand.pos[0] - 0.045)) < 0.003,
+    `LeftHand must track the pump −45 mm in gun space (got x ${pumpedX})`
+  );
+  const mPump = eng.measureHandContact('pump');
+  for (const key of ['R', 'L', 'W']) {
+    assert.ok(mPump.drift[key] <= 0.01, `pump drift.${key} must stay <= 0.01 rad (got ${mPump.drift[key]})`);
+  }
+  weapons.shotgunAnimator.debugHoldPump01 = 0;
+  weapons.update(0.016, mockControls(), null, 100);
+  assert.ok(Math.abs(gunLocalX() - HAND_IN_GUN_TARGETS.LeftHand.pos[0]) < 0.003, 'LeftHand must restore at pump 0');
+
+  // D2 integrity in gun space: a 0.05 rad perturbation of the RightHand
+  // must flip DRIFT FAIL against the immutable targets.
+  rig.rightHand.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.05));
+  const perturbed = eng.measureHandContact('hip');
+  assert.ok(perturbed.drift.R > 0.04, `gun-space drift must read the perturbation (got ${perturbed.drift.R})`);
+  assert.equal(perturbed.driftStatus, 'DRIFT FAIL');
+  assert.ok(eng.formatTelemetry('hip').includes('HAND_IN_GUN_TARGETS'), 'telemetry must name the gun-target basis');
+});
+
+// Fix 3: a pickup whose onClose unlocks the shotgun mid-grab must not lose
+// the auto-equip — it queues and flushes when the grab completes, so
+// activeWeapon (the value main.js derives the HUD weapon label from every
+// frame) ends on 'shotgun', never lingering on 'knife'. On the pre-fix
+// code the equip was silently dropped and activeWeapon stayed 'knife'
+// forever after the grab.
+test('Fix 3 — unlock during an active grab defers the auto-equip and flushes it on grab done', () => {
+  const rig = makeRig();
+  const weapons = makeWeapons(rig);
+  weapons.setLoadout('level1');
+  assert.ok(weapons.equip('knife'));
+  assert.equal(weapons.activeWeapon, 'knife');
+
+  let closeFired = false;
+  weapons.startGrab({
+    profile: 'fast',
+    pose: 'gripWrap',
+    onClose: () => {
+      closeFired = true;
+      weapons.unlockWeapon('shotgun'); // the pickup effect: unlock + auto-equip
+    },
+  });
+  assert.equal(weapons.grabAnimator.active, true, 'grab must be running');
+
+  for (let i = 0; i < 12 && !closeFired; i++) weapons.update(0.05, mockControls(), null, 100);
+  assert.ok(closeFired, 'onClose must fire mid-grab');
+  assert.equal(weapons.weaponsUnlocked.shotgun, true, 'shotgun is unlocked');
+  assert.equal(weapons.activeWeapon, 'knife', 'equip must be DEFERRED while the grab runs');
+  assert.equal(weapons._pendingEquipWeapon, 'shotgun', 'the refused equip must be queued');
+
+  for (let i = 0; i < 24 && weapons.grabAnimator.active; i++) weapons.update(0.05, mockControls(), null, 100);
+  assert.equal(weapons.grabAnimator.active, false, 'grab must complete');
+  assert.equal(weapons.activeWeapon, 'shotgun', 'pending equip must flush on grab done (HUD label derives from activeWeapon)');
+  assert.equal(weapons._pendingEquipWeapon, null, 'queue must be empty after the flush');
 });

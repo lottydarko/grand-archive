@@ -187,6 +187,9 @@ export class WeaponSystem {
     // Grab system (Stage 4 Slot 2): procedural finger-pose layer over the
     // arms mixer + reach motion on the arms pivot. See grabAnimator.js.
     this.grabAnimator = new GrabAnimator();
+    // Seal Fix 3: weapon whose auto-equip was refused because a grab was
+    // running; flushed when the grab completes (see _updateGrab).
+    this._pendingEquipWeapon = null;
     this.handsEngine = new HandsEngine();
     // Draft-3 seal (Patch 3, D1): scratch for the single armsRoot writer in
     // update(), and the grab-reach offset _updateGrab publishes into it
@@ -281,6 +284,9 @@ export class WeaponSystem {
       getUnlockedWeapons: () => this.weaponsUnlocked,
       onActiveWeaponChanged: (newWeapon) => {
         this.activeWeapon = newWeapon;
+        // Seal Fix 1(c)/2: keep the HandsEngine's scoring/driving weapon
+        // in sync on every real equip change.
+        if (this.handsEngine) this.handsEngine.setActiveWeapon(newWeapon);
         this._updateFlashlightMount();
       },
       onVisibilityChanged: () => {
@@ -384,7 +390,15 @@ export class WeaponSystem {
       this.weaponsUnlocked[weapon] = true;
     }
     if (autoEquip) {
-      this.equip(weapon);
+      const equipped = this.equip(weapon);
+      if (!equipped && this.grabAnimator && this.grabAnimator.active) {
+        // Seal Fix 3: equip() refuses while a grab is running, and the
+        // pickup onClose fires mid-grab by design — so the unlock's
+        // auto-equip used to be silently dropped (the shotgun capture:
+        // unlocked, never equipped, knife label on shotgun hip). Queue it
+        // and flush on grab completion (see _updateGrab).
+        this._pendingEquipWeapon = weapon;
+      }
     } else {
       this._syncVisibility();
     }
@@ -486,6 +500,7 @@ export class WeaponSystem {
     this._collectGrabBones();
     if (this.handsEngine) {
       this.handsEngine.bindArms(this.armsRoot);
+      this.handsEngine.setActiveWeapon(this.activeWeapon);
     }
   }
 
@@ -546,7 +561,19 @@ export class WeaponSystem {
         // (This method used to write armsRoot.position directly.)
         this._grabReachOffset.set(center, -drop, -depth);
       }
-      if (snap.phase === 'done') this._grabRelease = 0.0001; // begin fade-out
+      if (snap.phase === 'done') {
+        this._grabRelease = 0.0001; // begin fade-out
+        // Seal Fix 3: flush an auto-equip that was refused mid-grab.
+        // GrabAnimator.active is already false on the done snapshot, so
+        // equip() takes its normal path; the HUD weapon label is derived
+        // from activeWeapon every frame in main.js, so it follows the
+        // flush immediately (no lingering knife label on shotgun hip).
+        if (this._pendingEquipWeapon) {
+          const pending = this._pendingEquipWeapon;
+          this._pendingEquipWeapon = null;
+          this.equip(pending);
+        }
+      }
       return;
     }
     if (this._grabRelease > 0) {
@@ -1012,6 +1039,12 @@ export class WeaponSystem {
         }
       }
 
+      // Seal Fix 1(a): bind BEFORE the initial clip poses the rig, so the
+      // frozen bind-rest quaternions/positions are the true unposed bind
+      // rest. The old order froze the Idle pose as "rest" and manufactured
+      // the 2.202279 rad armed-state drift the diagnosis proved.
+      this._collectGrabBones();
+
       // Setup AnimationMixer with all baked clips
       if (gltf.animations && gltf.animations.length > 0) {
         this.armsMixer = new THREE.AnimationMixer(armsScene);
@@ -1036,7 +1069,6 @@ export class WeaponSystem {
         this.armsMixer.update(0.016);
       }
 
-      this._collectGrabBones();
       if (this.handsEngine && this.handsEngine.bones.weapon && this.shotgunRoot) {
         this.handsEngine.attachShotgun(this.handsEngine.bones.weapon, this.shotgunRoot);
         if (this.shotgunAnimator) {
@@ -1316,6 +1348,7 @@ export class WeaponSystem {
       knife: true,
     };
     this.activeWeapon = 'unarmed';
+    this._pendingEquipWeapon = null; // Seal Fix 3: no stale deferred equip across runs
     // Unmount hero Glock if it was mounted during a previous run
     if (this._heroGlockHandMount) {
       if (this._heroGlockHandMount.parent) {
@@ -2474,12 +2507,22 @@ export class WeaponSystem {
     // fix). Placed after shotgunAnimator.update(dt) (above) AND after the
     // single armsRoot transform writer (above), per Studio's spec: only
     // the shotgun's pump couples the hand; any other weapon restores it.
+    // Seal Fix 2 (Option A): while the Balistucia is armed and no grab
+    // owns the hands, the HandsEngine DRIVES the whole armed pose from
+    // HAND_IN_GUN_TARGETS (applyShotgunPose: Weapon anchor + 2-bone IK +
+    // gripWrap curls, pump folded into the LeftHand target) and the GA_*
+    // clips are retired as shotgun bone owners. Every other state keeps
+    // the translation coupling exactly as before.
     if (this.shotgunAnimator) {
       this.shotgunPump = THREE.MathUtils.damp(this.shotgunPump, 0, 14, dt);
       if (this.handsEngine) {
         this.handsEngine.syncShotgunPose();
         const pumpTravel = this.activeWeapon === 'shotgun' ? this.shotgunAnimator.pumpTravel01 : 0;
-        this.handsEngine.applyPumpCoupling(pumpTravel);
+        if (this.activeWeapon === 'shotgun' && !this.grabAnimator.active) {
+          this.handsEngine.applyShotgunPose(pumpTravel);
+        } else {
+          this.handsEngine.applyPumpCoupling(pumpTravel);
+        }
       }
     }
 
