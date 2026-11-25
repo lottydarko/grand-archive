@@ -851,6 +851,11 @@ let worldItems = null;
 let transformer = null;
 let controls = null;
 let weapons = null;
+// Weapon the HUD readouts last rendered. The equip path (incl. the Fix-3
+// grab-done flush) raises no hudDirty event, so stepSimulation compares
+// against this every frame — without it the weapon label trails exactly
+// one equip behind (diagnosis round 2, Q4).
+let lastHudWeapon = null;
 let enemies = null;
 let worldRayMeshes = [];
 
@@ -2862,6 +2867,10 @@ function stepSimulation(dt) {
   updateHandcheckHud();
   if (wasReloading && !weapons.reloading) hudDirty = true;
   if (wasCycleLocked !== weapons.isCycleLocked) hudDirty = true;
+  if (weapons.activeWeapon !== lastHudWeapon) {
+    lastHudWeapon = weapons.activeWeapon;
+    hudDirty = true;
+  }
 
   const enemyTimeScale = levelOneState.adsPaused
     ? 0
