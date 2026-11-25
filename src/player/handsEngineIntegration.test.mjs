@@ -40,6 +40,17 @@
 //     constructor starts holstered at blend 1 — D1b's ADS pose is a
 //     drawn-weapon pose (the startup sequence draws before play), so the
 //     harness sets the drawn state the pose assumes.
+//  8. PATCH 7 (D1e fix, Studio's ruling on the host report): D1e's body is
+//     Studio's replacement test — the pump is driven via
+//     debugHoldPump01 = 0.5 (her Patch 4 mechanism; the original body's
+//     bare setPumpTravel(0.5) was reset by the animator's idle case), and
+//     the LeftHand displacement is measured in shotgunRoot local space
+//     (-45 mm ± 5 mm on X, no Y/Z drift, pumpTravel01 holds at 0.5, no
+//     hand-drift change, restore at 0). Assertions and tolerances are
+//     Studio's, unchanged. Harness state setup only: the test sets
+//     weapons.activeWeapon = 'shotgun' (the constructor starts 'unarmed'
+//     and Patch 7's update() call couples only the shotgun's pump), the
+//     same pattern D1c already uses for 'sword'.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
@@ -168,12 +179,52 @@ test('D1e — pumpTravel01 is live on shotgunAnimator and couples LeftHand throu
   const rig = makeRig();
   const weapons = makeWeapons(rig);
   assert.ok(weapons.shotgunAnimator, 'shotgunAnimator must exist');
-  weapons.shotgunAnimator.setPumpTravel(0.5);
+  weapons.activeWeapon = 'shotgun';
+
+  // LeftHand position in shotgunRoot local space: measuring in the gun's
+  // own frame makes the delta immune to the armsRoot writer's motion.
+  const gunLocalOf = (obj) => {
+    rig.root.updateWorldMatrix(true, true);
+    return rig.shotgunRoot.worldToLocal(obj.getWorldPosition(new THREE.Vector3()));
+  };
+  const restLocal = gunLocalOf(rig.leftHand);
+  const driftBefore = weapons.handsEngine.measureHandContact('hip').drift.L;
+
+  // Drive the pump through the animator's deterministic debug hold (the
+  // Patch 4 setHandCheckPose mechanism) — a bare setPumpTravel(0.5) is
+  // reset to 0 by the animator's idle case on the very next update, which
+  // was defect 1 of the original D1e.
+  weapons.shotgunAnimator.debugHoldPump01 = 0.5;
   weapons.update(0.016, mockControls(), null, 100);
-  assert.equal(weapons.shotgunAnimator.pumpTravel01, 0.5);
-  const left = rig.leftHand.getWorldPosition(new THREE.Vector3());
-  const expected = PUMP_TRAVEL_M * 0.5;
-  assert.ok(Math.abs(left.x + expected) < 0.01, `LeftHand must ride the pump ${expected} m (got x ${left.x})`);
+  assert.equal(weapons.shotgunAnimator.pumpTravel01, 0.5, 'pumpTravel01 must hold at 0.5 under the debug hold');
+
+  const pumpedLocal = gunLocalOf(rig.leftHand);
+  const dxMm = (pumpedLocal.x - restLocal.x) * 1000;
+  const dyMm = (pumpedLocal.y - restLocal.y) * 1000;
+  const dzMm = (pumpedLocal.z - restLocal.z) * 1000;
+  assert.ok(
+    Math.abs(dxMm + PUMP_TRAVEL_M * 0.5 * 1000) <= 5,
+    `LeftHand must ride the pump -45 mm in shotgun space (got ${dxMm.toFixed(2)} mm)`
+  );
+  assert.ok(
+    Math.abs(dyMm) <= 5 && Math.abs(dzMm) <= 5,
+    `LeftHand must not drift in shotgun Y/Z (got ${dyMm.toFixed(2)}, ${dzMm.toFixed(2)} mm)`
+  );
+
+  // The coupling is position-only: hand drift (quaternion vs bind rest)
+  // must be exactly what it was before the pump.
+  const driftAfter = weapons.handsEngine.measureHandContact('hip').drift.L;
+  assert.equal(driftAfter, driftBefore, 'pump coupling must not change hand drift');
+
+  // Restore at 0: the hand returns to its rest position.
+  weapons.shotgunAnimator.debugHoldPump01 = 0;
+  weapons.update(0.016, mockControls(), null, 100);
+  assert.equal(weapons.shotgunAnimator.pumpTravel01, 0);
+  const restoredLocal = gunLocalOf(rig.leftHand);
+  assert.ok(
+    restoredLocal.distanceTo(restLocal) < 0.001,
+    `LeftHand must restore at pump 0 (off by ${restoredLocal.distanceTo(restLocal)} m)`
+  );
 });
 
 test('D2 — ?handcheck measures the LIVE rig: perturbing RightHand by 0.05 rad MUST fail DRIFT', () => {

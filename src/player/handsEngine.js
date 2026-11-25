@@ -118,6 +118,14 @@ export class HandsEngine {
     this._boxTmp = null;
     this._closestTmp = null;
 
+    // Draft-3 seal (Patch 7, D1e fix): LeftHand pump-coupling state. The
+    // coupling writes the LeftHand bone's local position so the hand rides
+    // the pump_forend; the rest local position is captured on activation
+    // and restored exactly when travel returns to 0.
+    this._leftHandRestLocalPos = new THREE.Vector3();
+    this._pumpCouplingActive = false;
+    this._appliedPumpTravel01 = 0;
+
     // Scene attachment tracking
     this.shotgunRoot = null;
     this.swordRoot = null;
@@ -138,6 +146,7 @@ export class HandsEngine {
     // Shared reusable math temporaries
     this._vTmp = new THREE.Vector3();
     this._qTmp = new THREE.Quaternion();
+    this._qTmp2 = new THREE.Quaternion();
     this._axisX = new THREE.Vector3(1, 0, 0);
   }
 
@@ -177,6 +186,10 @@ export class HandsEngine {
     this.rightHandBone = null;
     this.leftHandBone = null;
     this.weaponBone = null;
+    // Patch 7: a (re-)bind invalidates any live pump coupling — the new
+    // rig's LeftHand sits at its own rest position.
+    this._pumpCouplingActive = false;
+    this._appliedPumpTravel01 = 0;
 
     const chainNames = ['Index', 'Middle', 'Ring', 'Pinky', 'Thumb'];
     const segmentNames = ['Proximal', 'Intermediate', 'Distal'];
@@ -360,6 +373,55 @@ export class HandsEngine {
     } else {
       this.setPumpTravel(THREE.MathUtils.clamp(this.animator.pumpTravel01 ?? 0, 0, 1));
     }
+  }
+
+  /**
+   * Draft-3 seal (Patch 7, D1e fix — Studio's specified coupling): the
+   * LeftHand bone rides the pump. The pump travel is an offset along the
+   * shotgun's own -X (the forend writer's axis, see computePumpTravelOffset)
+   * expressed in shotgunRoot space; it is converted through world space
+   * into the LeftHand's parent space before being written to the bone's
+   * local position, so the (0, π/2, 0) mount rotation from attachShotgun
+   * is honored instead of assumed away. Position only — the bone's
+   * quaternion is never touched, so hand drift is unchanged. At travel 0
+   * the captured rest local position is restored exactly.
+   *
+   * Host reconciliation (logged): Studio's hunk referenced scratch fields
+   * this._tmpQuat / this._tmpQuat2, which this module does not carry; its
+   * pre-allocated scratch quaternions are this._qTmp / this._qTmp2, used
+   * here. this.shotgunRoot is the reference attachShotgun already stores.
+   */
+  applyPumpCoupling(travel01) {
+    const leftHand = this.bones.leftHand;
+    if (!leftHand || !this.shotgunRoot || !leftHand.parent) return;
+    const travel = THREE.MathUtils.clamp(travel01 ?? 0, 0, 1);
+
+    if (travel <= 0) {
+      if (this._pumpCouplingActive) {
+        leftHand.position.copy(this._leftHandRestLocalPos);
+        this._pumpCouplingActive = false;
+      }
+      this._appliedPumpTravel01 = 0;
+      return;
+    }
+
+    if (!this._pumpCouplingActive) {
+      this._leftHandRestLocalPos.copy(leftHand.position);
+      this._pumpCouplingActive = true;
+    }
+
+    // Gun-space pump offset: forend travels -X by travel * PUMP_TRAVEL_M.
+    this._vTmp.set(-this.computePumpTravelOffset(travel), 0, 0);
+    // shotgunRoot local -> world (direction only).
+    this.shotgunRoot.getWorldQuaternion(this._qTmp);
+    this._vTmp.applyQuaternion(this._qTmp);
+    // world -> LeftHand parent space.
+    leftHand.parent.getWorldQuaternion(this._qTmp2);
+    this._qTmp2.invert();
+    this._vTmp.applyQuaternion(this._qTmp2);
+
+    leftHand.position.copy(this._leftHandRestLocalPos).add(this._vTmp);
+    this._appliedPumpTravel01 = travel;
   }
 
   /**

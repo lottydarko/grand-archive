@@ -2356,11 +2356,18 @@ export class WeaponSystem {
       );
     }
 
-    // Pump: read-only here — the ShotgunAnimator owns pumpTravel01; the
-    // HandsEngine mirrors it (no pump writer in this method).
+    // Pump: the ShotgunAnimator owns pumpTravel01; the HandsEngine mirrors
+    // it and couples the LeftHand bone to it (Draft-3 seal Patch 7, D1e
+    // fix). Placed after shotgunAnimator.update(dt) (above) AND after the
+    // single armsRoot transform writer (above), per Studio's spec: only
+    // the shotgun's pump couples the hand; any other weapon restores it.
     if (this.shotgunAnimator) {
       this.shotgunPump = THREE.MathUtils.damp(this.shotgunPump, 0, 14, dt);
-      if (this.handsEngine) this.handsEngine.syncShotgunPose();
+      if (this.handsEngine) {
+        this.handsEngine.syncShotgunPose();
+        const pumpTravel = this.activeWeapon === 'shotgun' ? this.shotgunAnimator.pumpTravel01 : 0;
+        this.handsEngine.applyPumpCoupling(pumpTravel);
+      }
     }
 
     // No-rig fallback (host reconciliation, logged): before the arms GLB
