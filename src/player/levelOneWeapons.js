@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { cathedralBus } from '../audio/cathedralBus.js';
 import { sfx } from '../audio/sfx.js';
 import { pulseRumble } from '../game/levelOneBindings.js';
+import { WEAPON_DATA } from './weaponData.js';
 
 export const SHOTGUN_CONFIG = Object.freeze({
   magSize: 6,
@@ -79,7 +80,7 @@ export function executeShotgunFire({
 
   // Tactical gamepad rumble & camera recoil
   pulseRumble('shotgun_blast', callbacks.controls);
-  callbacks.onRecoil?.(0.085);
+  callbacks.onRecoil?.(THREE.MathUtils.degToRad(WEAPON_DATA.shotgun.punchDeg));
   callbacks.onShake?.(0.45);
   callbacks.onGunshotNoise?.();
 

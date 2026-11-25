@@ -14,6 +14,13 @@ class ShotgunAnimator {
     this.basePumpZ = 0;
     this.baseBoltX = 0;
     this.baseBoltZ = 0;
+    // Draft-3 seal (Patch 1): live pump phase 0..1 (was missing — main.js's
+    // ?handcheck pump-mode read could never trigger), bone-attach flag (D1:
+    // when the root is bone-parented the animator must not write root
+    // position/rotation), and a deterministic hold for proof screenshots.
+    this.pumpTravel01 = 0;
+    this.boneAttached = false;
+    this.debugHoldPump01 = null;
     this.shellPool = [];
     this.poolCursor = 0;
     this.tmpPos = new THREE.Vector3();
@@ -61,10 +68,18 @@ class ShotgunAnimator {
   getState() {
     return this.state;
   }
+  setBoneAttached(attached) {
+    this.boneAttached = Boolean(attached);
+    if (this.refs?.root) {
+      this.baseRootPos.copy(this.refs.root.position);
+      this.baseRootRot.copy(this.refs.root.rotation);
+    }
+  }
   getAnimState() {
     return {
       state: this.state,
       stateTime: Number(this.stateTime.toFixed(3)),
+      pumpTravel01: Number(this.pumpTravel01.toFixed(4)),
       pumpForend: this.refs.pumpForend ? {
         position: [
           Number(this.refs.pumpForend.position.x.toFixed(4)),
@@ -110,6 +125,7 @@ class ShotgunAnimator {
     return this.state !== "idle";
   }
   playFireAndPump() {
+    this.debugHoldPump01 = null;
     this.insertShellMesh.visible = false;
     this.shellsToInsert = 0;
     this.ejectedThisCycle = false;
@@ -179,7 +195,16 @@ class ShotgunAnimator {
     this.callbacks.onShellEjected?.();
   }
   setPumpTravel(amount01) {
+    // Draft-3 seal (Patch 1, host-adapted): pumpTravel01 is now the single
+    // recorded live pump phase and this method its single writer. Studio's
+    // draft moved refs.root along a `pumpAxis` vector — that field does not
+    // exist on this animator; the real pump motion is the forend/bolt travel
+    // below (0.09 m / 0.035 m), which is preserved exactly.
     const travel = THREE.MathUtils.clamp(amount01, 0, 1);
+    this.pumpTravel01 = travel;
+    if (this.debugHoldPump01 != null) {
+      this.debugHoldPump01 = travel;
+    }
     if (this.refs.pumpForend) {
       this.refs.pumpForend.position.x = this.basePumpX - travel * 0.09;
       this.refs.pumpForend.position.z = this.basePumpZ;
@@ -209,36 +234,46 @@ class ShotgunAnimator {
     const root = this.refs.root;
     const pos = root.position;
     const rot = root.rotation;
+    // Draft-3 seal (Patch 1, host-adapted): when boneAttached, the bone owns
+    // the root transform — skip ONLY the pos/rot writes below. Studio's draft
+    // used `if (this.boneAttached) { return; }`, which would also skip the
+    // state transitions and freeze the animator mid-cycle; the state machine,
+    // pump travel, trigger and shell logic must keep running.
+    const writeRoot = !this.boneAttached;
     switch (this.state) {
       case "idle": {
         this.insertShellMesh.visible = false;
-        this.setPumpTravel(0);
-        pos.set(
-          this.baseRootPos.x,
-          this.baseRootPos.y + Math.sin(this.idleClock * 2.1) * 4e-3,
-          this.baseRootPos.z
-        );
-        rot.set(
-          this.baseRootRot.x,
-          this.baseRootRot.y,
-          this.baseRootRot.z + Math.cos(this.idleClock * 1.4) * 8e-3
-        );
+        this.setPumpTravel(this.debugHoldPump01 != null ? this.debugHoldPump01 : 0);
+        if (writeRoot) {
+          pos.set(
+            this.baseRootPos.x,
+            this.baseRootPos.y + Math.sin(this.idleClock * 2.1) * 4e-3,
+            this.baseRootPos.z
+          );
+          rot.set(
+            this.baseRootRot.x,
+            this.baseRootRot.y,
+            this.baseRootRot.z + Math.cos(this.idleClock * 1.4) * 8e-3
+          );
+        }
         break;
       }
       case "fire_recoil": {
         const dur = 0.14;
         const t = Math.min(this.stateTime / dur, 1);
         const kick = Math.sin(t * Math.PI);
-        pos.set(
-          this.baseRootPos.x,
-          this.baseRootPos.y + kick * 0.015,
-          this.baseRootPos.z + kick * 0.075
-        );
-        rot.set(
-          this.baseRootRot.x + kick * 0.24,
-          this.baseRootRot.y,
-          this.baseRootRot.z
-        );
+        if (writeRoot) {
+          pos.set(
+            this.baseRootPos.x,
+            this.baseRootPos.y + kick * 0.015,
+            this.baseRootPos.z + kick * 0.075
+          );
+          rot.set(
+            this.baseRootRot.x + kick * 0.24,
+            this.baseRootRot.y,
+            this.baseRootRot.z
+          );
+        }
         this.setPumpTravel(0);
         if (this.refs.triggerBlade) {
           // Trigger pull: rotates backward during recoil (rotation.z <= -0.25)
@@ -255,16 +290,18 @@ class ShotgunAnimator {
         const t = Math.min(this.stateTime / dur, 1);
         const ease = t * t * (3 - 2 * t);
         this.setPumpTravel(ease);
-        pos.set(
-          this.baseRootPos.x,
-          this.baseRootPos.y - ease * 0.01,
-          this.baseRootPos.z + ease * 0.02
-        );
-        rot.set(
-          this.baseRootRot.x + ease * 0.06,
-          this.baseRootRot.y,
-          this.baseRootRot.z - ease * 0.12
-        );
+        if (writeRoot) {
+          pos.set(
+            this.baseRootPos.x,
+            this.baseRootPos.y - ease * 0.01,
+            this.baseRootPos.z + ease * 0.02
+          );
+          rot.set(
+            this.baseRootRot.x + ease * 0.06,
+            this.baseRootRot.y,
+            this.baseRootRot.z - ease * 0.12
+          );
+        }
         if (!this.ejectedThisCycle && t >= 0.55) {
           this.ejectedThisCycle = true;
           this.spawnEjectedShell();
@@ -277,16 +314,18 @@ class ShotgunAnimator {
         const t = Math.min(this.stateTime / dur, 1);
         const ease = 1 - t * t * (3 - 2 * t);
         this.setPumpTravel(ease);
-        pos.set(
-          this.baseRootPos.x,
-          this.baseRootPos.y - ease * 0.01,
-          this.baseRootPos.z + ease * 0.02
-        );
-        rot.set(
-          this.baseRootRot.x + ease * 0.06,
-          this.baseRootRot.y,
-          this.baseRootRot.z - ease * 0.12
-        );
+        if (writeRoot) {
+          pos.set(
+            this.baseRootPos.x,
+            this.baseRootPos.y - ease * 0.01,
+            this.baseRootPos.z + ease * 0.02
+          );
+          rot.set(
+            this.baseRootRot.x + ease * 0.06,
+            this.baseRootRot.y,
+            this.baseRootRot.z - ease * 0.12
+          );
+        }
         if (t >= 1) this.enterState("idle");
         break;
       }
@@ -295,16 +334,18 @@ class ShotgunAnimator {
         const t = Math.min(this.stateTime / dur, 1);
         const ease = t * t * (3 - 2 * t);
         this.setPumpTravel(0);
-        pos.set(
-          this.baseRootPos.x - ease * 0.02,
-          this.baseRootPos.y - ease * 0.04,
-          this.baseRootPos.z + ease * 0.02
-        );
-        rot.set(
-          this.baseRootRot.x + ease * 0.34,
-          this.baseRootRot.y,
-          this.baseRootRot.z + ease * 0.58
-        );
+        if (writeRoot) {
+          pos.set(
+            this.baseRootPos.x - ease * 0.02,
+            this.baseRootPos.y - ease * 0.04,
+            this.baseRootPos.z + ease * 0.02
+          );
+          rot.set(
+            this.baseRootRot.x + ease * 0.34,
+            this.baseRootRot.y,
+            this.baseRootRot.z + ease * 0.58
+          );
+        }
         if (t >= 1) this.enterState("reload_insert_shell");
         break;
       }
@@ -323,16 +364,18 @@ class ShotgunAnimator {
         );
         this.insertShellMesh.rotation.set(-0.35 * (1 - ease), 0, 0);
         const bump = t > 0.72 ? Math.sin((t - 0.72) / 0.28 * Math.PI) * 0.015 : 0;
-        pos.set(
-          this.baseRootPos.x - 0.02,
-          this.baseRootPos.y - 0.04 + bump,
-          this.baseRootPos.z + 0.02
-        );
-        rot.set(
-          this.baseRootRot.x + 0.34,
-          this.baseRootRot.y,
-          this.baseRootRot.z + 0.58
-        );
+        if (writeRoot) {
+          pos.set(
+            this.baseRootPos.x - 0.02,
+            this.baseRootPos.y - 0.04 + bump,
+            this.baseRootPos.z + 0.02
+          );
+          rot.set(
+            this.baseRootRot.x + 0.34,
+            this.baseRootRot.y,
+            this.baseRootRot.z + 0.58
+          );
+        }
         if (t >= 1) {
           this.insertShellMesh.visible = false;
           this.shellsToInsert = Math.max(0, this.shellsToInsert - 1);
@@ -354,16 +397,18 @@ class ShotgunAnimator {
         const pumpArc = Math.sin(t * Math.PI);
         this.setPumpTravel(pumpArc);
         const settle = 1 - Math.min(t * 2, 1);
-        pos.set(
-          this.baseRootPos.x - settle * 0.02,
-          this.baseRootPos.y - settle * 0.04,
-          this.baseRootPos.z + settle * 0.02
-        );
-        rot.set(
-          this.baseRootRot.x + settle * 0.34,
-          this.baseRootRot.y,
-          this.baseRootRot.z + settle * 0.58
-        );
+        if (writeRoot) {
+          pos.set(
+            this.baseRootPos.x - settle * 0.02,
+            this.baseRootPos.y - settle * 0.04,
+            this.baseRootPos.z + settle * 0.02
+          );
+          rot.set(
+            this.baseRootRot.x + settle * 0.34,
+            this.baseRootRot.y,
+            this.baseRootRot.z + settle * 0.58
+          );
+        }
         if (t >= 1) {
           this.setPumpTravel(0);
           this.callbacks.onReloadComplete?.();
@@ -375,16 +420,18 @@ class ShotgunAnimator {
         const dur = 0.2;
         const t = Math.min(this.stateTime / dur, 1);
         const remain = 1 - t * t * (3 - 2 * t);
-        pos.set(
-          this.baseRootPos.x - remain * 0.02,
-          this.baseRootPos.y - remain * 0.04,
-          this.baseRootPos.z + remain * 0.02
-        );
-        rot.set(
-          this.baseRootRot.x + remain * 0.34,
-          this.baseRootRot.y,
-          this.baseRootRot.z + remain * 0.58
-        );
+        if (writeRoot) {
+          pos.set(
+            this.baseRootPos.x - remain * 0.02,
+            this.baseRootPos.y - remain * 0.04,
+            this.baseRootPos.z + remain * 0.02
+          );
+          rot.set(
+            this.baseRootRot.x + remain * 0.34,
+            this.baseRootRot.y,
+            this.baseRootRot.z + remain * 0.58
+          );
+        }
         if (t >= 1) {
           this.callbacks.onReloadComplete?.();
           this.enterState("idle");

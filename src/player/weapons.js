@@ -34,16 +34,24 @@ import {
 import {
   HandsEngine,
   GRAB_CURL_SIGN as HANDS_CURL_SIGN,
-  PUMP_TRAVEL_M,
-  SWORD_HAND_LOCAL_POS,
-  FLASHLIGHT_PALM_OFFSET,
-  ADS_DELTA_TRANSLATION,
+  FLASHLIGHT_FORWARD_TARGET,
 } from './handsEngine.js';
 
 // Grab pose layer constants: per-joint share of a chain's total curl, and
 // the curl direction sign for this rig's finger bones (Hands Engine: sign -1, local X).
 const GRAB_JOINT_WEIGHTS = [0.45, 0.33, 0.22];
 const GRAB_CURL_SIGN = HANDS_CURL_SIGN;
+
+// Unarmed flashlight hold (director, Nov 24, 2026): with no weapon equipped
+// the player must SEE the flashlight and the hand holding it. The hold is a
+// framing term of the ONE armsRoot writer in update() (D1): scaled by
+// unarmedHoldBlend, it composes the holster lowering back OUT of the arms
+// and this lift/tilt IN, so the left hand — flashlight parented at its
+// calibrated palm offset — rises into the lower frame. Viewmodel framing
+// constants, not hand calibration; the in-game capture pass tunes them.
+const UNARMED_HOLD_LIFT_Y = 0.06;
+const UNARMED_HOLD_LIFT_Z = 0.03;
+const UNARMED_HOLD_TILT_X = 0.12;
 
 /**
  * Computes the exact weapon cant and shell-push lift for GA_Reload (40 frames @ 30 fps).
@@ -145,6 +153,14 @@ export class WeaponSystem {
     this.swapAnim = 0; // 0 = ready, 1 = lowered
     this.holstered = true; // Holstered by default (Lotty, Nov 20, 2026)
     this.holsterBlend = 1; // 0 = drawn, 1 = holstered
+    // Unarmed flashlight hold (director, Nov 24, 2026): damped 0..1 like
+    // holsterBlend — 1 while unarmed (hand raised, torch grip posed),
+    // 0 the moment any weapon is equipped. Starts lowered; update()
+    // raises it on the first frames of an unarmed run.
+    this.unarmedHoldBlend = 0;
+    this._holdPoseApplied = false; // additive grab layer currently holds the torch grip
+    this._flashlightBody = null; // visible torch mesh (hand mount only)
+    this._flashlightLensMat = null;
     this.inspecting = false;
     this.inspectTimer = 0;
     this.inspectDuration = 1.65;
@@ -171,7 +187,16 @@ export class WeaponSystem {
     // Grab system (Stage 4 Slot 2): procedural finger-pose layer over the
     // arms mixer + reach motion on the arms pivot. See grabAnimator.js.
     this.grabAnimator = new GrabAnimator();
+    // Seal Fix 3: weapon whose auto-equip was refused because a grab was
+    // running; flushed when the grab completes (see _updateGrab).
+    this._pendingEquipWeapon = null;
     this.handsEngine = new HandsEngine();
+    // Draft-3 seal (Patch 3, D1): scratch for the single armsRoot writer in
+    // update(), and the grab-reach offset _updateGrab publishes into it
+    // (one writer per fact — _updateGrab no longer writes armsRoot itself).
+    this._adsRootOffset = new THREE.Vector3();
+    this._grabReachOffset = new THREE.Vector3();
+    this._armsPivotBaseRot = null;
     this._grabBones = null; // { R: {index:[..3 bones], thumb:[..], doubles:[..]}, L: {...} }
     this._grabRest = new Map(); // bone -> rest quaternion
     this._grabFromPose = clonePose(GRAB_POSES.open);
@@ -236,8 +261,15 @@ export class WeaponSystem {
     this.handFlashlightAnchor.position.set(-0.20, -0.16, -0.38);
     this.handFlashlightTarget = new THREE.Object3D();
     this.handFlashlightTarget.name = 'HandFlashlightTarget';
-    this.handFlashlightTarget.position.set(-0.05, -0.08, -10.0);
-    this.handFlashlightAnchor.add(this.handFlashlightTarget);
+    // Draft-3 seal (Patch 3): the aim target lives in camera space under the
+    // viewmodel root — NOT under the wrist-driven anchor — so flashlight aim
+    // is wrist-independent (D1).
+    this.root.add(this.handFlashlightTarget);
+    this.handFlashlightTarget.position.set(
+      FLASHLIGHT_FORWARD_TARGET.x,
+      FLASHLIGHT_FORWARD_TARGET.y,
+      FLASHLIGHT_FORWARD_TARGET.z
+    );
     this.root.add(this.handFlashlightAnchor);
 
     this._raycaster = new THREE.Raycaster();
@@ -252,6 +284,9 @@ export class WeaponSystem {
       getUnlockedWeapons: () => this.weaponsUnlocked,
       onActiveWeaponChanged: (newWeapon) => {
         this.activeWeapon = newWeapon;
+        // Seal Fix 1(c)/2: keep the HandsEngine's scoring/driving weapon
+        // in sync on every real equip change.
+        if (this.handsEngine) this.handsEngine.setActiveWeapon(newWeapon);
         this._updateFlashlightMount();
       },
       onVisibilityChanged: () => {
@@ -355,7 +390,15 @@ export class WeaponSystem {
       this.weaponsUnlocked[weapon] = true;
     }
     if (autoEquip) {
-      this.equip(weapon);
+      const equipped = this.equip(weapon);
+      if (!equipped && this.grabAnimator && this.grabAnimator.active) {
+        // Seal Fix 3: equip() refuses while a grab is running, and the
+        // pickup onClose fires mid-grab by design — so the unlock's
+        // auto-equip used to be silently dropped (the shotgun capture:
+        // unlocked, never equipped, knife label on shotgun hip). Queue it
+        // and flush on grab completion (see _updateGrab).
+        this._pendingEquipWeapon = weapon;
+      }
     } else {
       this._syncVisibility();
     }
@@ -439,8 +482,25 @@ export class WeaponSystem {
     }
     this._grabBones = out;
     this._armsPivotBasePos = this.armsRoot.position.clone();
+    this._armsPivotBaseRot = this.armsRoot.rotation.clone();
     if (this.handsEngine) {
       this.handsEngine.bindArms(this.armsRoot);
+    }
+  }
+
+  // Draft-3 seal (Patch 3): single entry point that binds an arms rig to
+  // this system — used by the production GLB load flow and by the
+  // integrated weapons.update() tests, so both bind the SAME rig object.
+  bindArmsRig(armsPivot) {
+    if (!armsPivot) return;
+    if (armsPivot.parent !== this.root) {
+      this.root.add(armsPivot);
+    }
+    this.armsRoot = armsPivot;
+    this._collectGrabBones();
+    if (this.handsEngine) {
+      this.handsEngine.bindArms(this.armsRoot);
+      this.handsEngine.setActiveWeapon(this.activeWeapon);
     }
   }
 
@@ -496,13 +556,24 @@ export class WeaponSystem {
         const depth = (ritual ? 0.2 : 0.13) * snap.reachAmt;
         const drop = (ritual ? 0.06 : 0.03) * snap.reachAmt;
         const center = (ritual ? 0.03 : 0) * snap.reachAmt;
-        this.armsRoot.position.set(
-          this._armsPivotBasePos.x + center,
-          this._armsPivotBasePos.y - drop,
-          this._armsPivotBasePos.z - depth
-        );
+        // Draft-3 seal (D1, one writer per fact): the reach is published as
+        // an offset; the single armsRoot writer in update() composes it.
+        // (This method used to write armsRoot.position directly.)
+        this._grabReachOffset.set(center, -drop, -depth);
       }
-      if (snap.phase === 'done') this._grabRelease = 0.0001; // begin fade-out
+      if (snap.phase === 'done') {
+        this._grabRelease = 0.0001; // begin fade-out
+        // Seal Fix 3: flush an auto-equip that was refused mid-grab.
+        // GrabAnimator.active is already false on the done snapshot, so
+        // equip() takes its normal path; the HUD weapon label is derived
+        // from activeWeapon every frame in main.js, so it follows the
+        // flush immediately (no lingering knife label on shotgun hip).
+        if (this._pendingEquipWeapon) {
+          const pending = this._pendingEquipWeapon;
+          this._pendingEquipWeapon = null;
+          this.equip(pending);
+        }
+      }
       return;
     }
     if (this._grabRelease > 0) {
@@ -511,8 +582,24 @@ export class WeaponSystem {
       if (hasRig) this._applyGrabPose(pose);
       if (this._grabRelease >= 1) {
         this._grabPoseCurrent = clonePose(GRAB_POSES.open);
-        if (hasRig) this.armsRoot.position.copy(this._armsPivotBasePos);
+        this._grabReachOffset.set(0, 0, 0);
         this._grabRelease = 0;
+      }
+    }
+    // Unarmed flashlight hold (director, Nov 24, 2026): while unarmed, the
+    // torch grip is a PERSISTENT pose on this same additive layer — NOT a
+    // GrabAnimator sequence (grabs are unskippable one-shots, and equip()
+    // refuses mid-grab, so a looping grab would block weapon pickups).
+    // Runs only when no grab and no release fade own the layer. The pose
+    // amount is the damped unarmedHoldBlend: the grip closes as the hand
+    // raises and opens back to rest as a weapon comes up.
+    if (hasRig && this._grabRelease === 0) {
+      const amt = this.unarmedHoldBlend;
+      if (amt > 0.001 || this._holdPoseApplied) {
+        const pose = lerpPose(GRAB_POSES.open, GRAB_POSES.flashlightGrip, amt);
+        this._applyGrabPose(pose);
+        this._grabPoseCurrent = pose;
+        this._holdPoseApplied = amt > 0.001;
       }
     }
   }
@@ -587,6 +674,59 @@ export class WeaponSystem {
     } else {
       this._mountFlashlightToHand();
     }
+    this._ensureFlashlightBody();
+  }
+
+  /**
+   * Visible torch body for the hand mount (director, Nov 24, 2026: unarmed,
+   * "we need to see the flashlight and the hand"). The SpotLight itself is
+   * invisible, so a small procedural body rides the SAME hand anchor the
+   * light uses — the anchor the Hands Engine parents to the LeftHand bone
+   * at the calibrated palm offset; no new mount, no per-frame writes. The
+   * body is VISIBLE ONLY while unarmed: on the shotgun the light is a
+   * barrel mount with no body (as before), and in every other weapon
+   * state it stays hidden so weapon framing is pixel-identical to before.
+   * Re-parented onto whatever anchor the system currently holds, so the
+   * load flow (and test harnesses) can adopt the anchor freely.
+   */
+  _buildFlashlightBody() {
+    const body = new THREE.Group();
+    body.name = 'FlashlightBody';
+    const shellMat = new THREE.MeshStandardMaterial({ color: 0x17181c, roughness: 0.42, metalness: 0.62 });
+    const headMat = new THREE.MeshStandardMaterial({ color: 0x232529, roughness: 0.3, metalness: 0.78 });
+    // Tube along the anchor's forward (-Z): tail behind the palm, head
+    // past the fingers. CylinderGeometry's axis is Y — rotate to Z.
+    const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.0115, 0.013, 0.1, 12), shellMat);
+    tube.rotation.x = Math.PI * 0.5;
+    tube.position.set(0, 0, -0.012);
+    const head = new THREE.Mesh(new THREE.CylinderGeometry(0.0165, 0.014, 0.032, 12), headMat);
+    head.rotation.x = Math.PI * 0.5;
+    head.position.set(0, 0, -0.07);
+    this._flashlightLensMat = new THREE.MeshStandardMaterial({
+      color: 0x11151a,
+      roughness: 0.25,
+      metalness: 0.1,
+      emissive: 0xcfe2ff,
+      emissiveIntensity: this.flashlightOn ? 2.4 : 0.04,
+    });
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(0.0145, 12), this._flashlightLensMat);
+    lens.rotation.y = Math.PI; // face -Z (the way the light shines)
+    lens.position.set(0, 0, -0.0865);
+    body.add(tube);
+    body.add(head);
+    body.add(lens);
+    return body;
+  }
+
+  _ensureFlashlightBody() {
+    if (!this.handFlashlightAnchor) return;
+    if (!this._flashlightBody) {
+      this._flashlightBody = this._buildFlashlightBody();
+    }
+    if (this._flashlightBody.parent !== this.handFlashlightAnchor) {
+      this.handFlashlightAnchor.add(this._flashlightBody);
+    }
+    this._flashlightBody.visible = this.activeWeapon === 'unarmed';
   }
 
   toggleFlashlight() {
@@ -603,6 +743,10 @@ export class WeaponSystem {
   _syncFlashlightIntensity() {
     if (!this.flashlight) return;
     this.flashlight.intensity = this.flashlightOn ? this._flashlightIntensity : 0;
+    // The visible torch body's lens follows the same on/off state.
+    if (this._flashlightLensMat) {
+      this._flashlightLensMat.emissiveIntensity = this.flashlightOn ? 2.4 : 0.04;
+    }
   }
 
   getFlashlightMountInfo() {
@@ -887,13 +1031,19 @@ export class WeaponSystem {
       });
       if (leftHandBone) {
         if (this.handsEngine) {
-          this.handsEngine.configureFlashlightAnchor(this.handFlashlightAnchor, leftHandBone);
+          this.handsEngine.configureFlashlightAnchor(this.handFlashlightAnchor, leftHandBone, this.root, this.handFlashlightTarget);
         } else {
           leftHandBone.add(this.handFlashlightAnchor);
           this.handFlashlightAnchor.position.set(0, 0, 0);
           this.handFlashlightAnchor.rotation.set(0, 0, 0);
         }
       }
+
+      // Seal Fix 1(a): bind BEFORE the initial clip poses the rig, so the
+      // frozen bind-rest quaternions/positions are the true unposed bind
+      // rest. The old order froze the Idle pose as "rest" and manufactured
+      // the 2.202279 rad armed-state drift the diagnosis proved.
+      this._collectGrabBones();
 
       // Setup AnimationMixer with all baked clips
       if (gltf.animations && gltf.animations.length > 0) {
@@ -919,9 +1069,12 @@ export class WeaponSystem {
         this.armsMixer.update(0.016);
       }
 
-      this._collectGrabBones();
       if (this.handsEngine && this.handsEngine.bones.weapon && this.shotgunRoot) {
         this.handsEngine.attachShotgun(this.handsEngine.bones.weapon, this.shotgunRoot);
+        if (this.shotgunAnimator) {
+          this.shotgunAnimator.setBoneAttached(true);
+          this.handsEngine.setAnimator(this.shotgunAnimator);
+        }
       }
       if (this.handsEngine && this.handsEngine.bones.rightHand && this.swordGroup) {
         this.handsEngine.attachSword(this.handsEngine.bones.rightHand, this.swordGroup);
@@ -1109,6 +1262,16 @@ export class WeaponSystem {
           },
         }
       );
+      // Draft-3 seal (Patch 3): the real animator replaces the fallback —
+      // (re)attach the root to the Weapon bone, mark it bone-attached so it
+      // stops writing root transforms, and link it to the HandsEngine.
+      if (this.handsEngine && this.handsEngine.bones.weapon) {
+        this.handsEngine.attachShotgun(this.handsEngine.bones.weapon, shotgunRoot);
+        if (this.shotgunAnimator) {
+          this.shotgunAnimator.setBoneAttached(true);
+          this.handsEngine.setAnimator(this.shotgunAnimator);
+        }
+      }
       this._syncVisibility();
     });
   }
@@ -1185,6 +1348,7 @@ export class WeaponSystem {
       knife: true,
     };
     this.activeWeapon = 'unarmed';
+    this._pendingEquipWeapon = null; // Seal Fix 3: no stale deferred equip across runs
     // Unmount hero Glock if it was mounted during a previous run
     if (this._heroGlockHandMount) {
       if (this._heroGlockHandMount.parent) {
@@ -1215,6 +1379,7 @@ export class WeaponSystem {
     this.swapAnim = 0;
     this.holstered = true; // Unarmed / holstered at every (re)start
     this.holsterBlend = 1;
+    this.unarmedHoldBlend = 0; // torch hand raises fresh on the first unarmed frames
     this.inspecting = false;
     this.inspectTimer = 0;
     this.shoving = false;
@@ -1384,6 +1549,7 @@ export class WeaponSystem {
     const showGlock = !showQuickKnife && activeVis === 'glock';
 
     if (this.shotgunGroup) this.shotgunGroup.visible = showShotgun;
+    if (this.shotgunRoot) this.shotgunRoot.visible = showShotgun;
     if (this.swordGroup) this.swordGroup.visible = showSword;
     if (this.knifeGroup) this.knifeGroup.visible = showKnife;
 
@@ -1879,13 +2045,13 @@ export class WeaponSystem {
 
   triggerKnifeSlash(isQuick = false) {
     if (this.isCycleLocked) return false;
-    // §D: Knife is disabled in Level One (script arsenal is Balistucia + Sword).
-    if (this.loadout === 'level1') {
-      if (this.weaponsUnlocked.sword && this.activeWeapon === 'sword') {
-        return this.triggerSwordSlash();
-      }
-      return false;
-    }
+    // Knife is LIVE in Level One (Lotty, Nov 24, 2026): it is owned from the
+    // start (see setLoadout — "the knife is the floor") and is the only way
+    // to kill the G1/G2 portal guard packs before the shotgun. The former §D
+    // disable refused every slash in this loadout, leaving the 80 HP guards
+    // unkillable and G2 sealed forever — an unprogressable softlock found by
+    // the Draft-3 seal screenshot capture. Regression test: handsEngineIntegration
+    // "Knife — Level One loadout".
     if (this.slashing || this.shoving) return false;
     if (this.holstered) this.holstered = false;
     this.inspecting = false;
@@ -2044,6 +2210,16 @@ export class WeaponSystem {
     this.slideBack = recoiled.slideBack;
     this.swapAnim = THREE.MathUtils.damp(this.swapAnim, 0, 11, dt);
     this.holsterBlend = THREE.MathUtils.damp(this.holsterBlend, this.holstered ? 1 : 0, 9, dt);
+    // Unarmed flashlight hold (director, Nov 24, 2026): rises only in the
+    // unarmed state — every path that enters unarmed sets holstered (the
+    // hold IS the unarmed "drawn" state; the holster key lowers the hand
+    // again), and any equipped weapon takes the target straight to 0.
+    this.unarmedHoldBlend = THREE.MathUtils.damp(
+      this.unarmedHoldBlend,
+      this.activeWeapon === 'unarmed' && this.holstered ? 1 : 0,
+      9,
+      dt
+    );
     if (this.shellCasings) this.shellCasings.update(dt);
     this._updateGrab(dt);
     if (this.shotgunAnimator) this.shotgunAnimator.update(dt);
@@ -2172,19 +2348,10 @@ export class WeaponSystem {
     applyProceduralGlockKickback(this.glockSlide, this.slideBack, this.glockSlideRestZ, 0.052);
     this.glockMag.position.y = this.glockMagRestY + magDropY;
 
-    // fps_arms viewmodel transform (follows breathing idle, walk bob, sway across all loadouts)
-    if (this.armsRoot && !this.grabAnimator.active && this._grabRelease === 0 && this._armsPivotBasePos) {
-      this.armsRoot.position.set(
-        this._armsPivotBasePos.x + bobX * 0.7 + swayX * 0.5 + idle.posX + cyclerOffset.position.x,
-        this._armsPivotBasePos.y + bobY * 0.7 + swayY * 0.5 + idle.posY - lowerY * 0.4 + cyclerOffset.position.y,
-        this._armsPivotBasePos.z + idle.posZ + cyclerOffset.position.z
-      );
-      this.armsRoot.rotation.set(
-        idle.rotX + (this.activeWeapon === 'glock' ? this.recoilKick * (0.21 * (1 - aim * 0.35)) : 0) - this.holsterBlend * 0.25 + cyclerOffset.rotation.x,
-        idle.rotY + cyclerOffset.rotation.y,
-        idle.rotZ + cyclerOffset.rotation.z
-      );
-    }
+    // Draft-3 seal (D1): the old fps_arms viewmodel writer that lived here
+    // is retired — armsRoot now has exactly ONE writer, the D1 block at the
+    // end of this method, which composes this same bob/sway/idle/cycler
+    // motion with the ADS translation and the grab-reach offset.
 
     // Knife slash animation (windup -> fast diagonal slash -> recovery)
     let slashPosX = 0;
@@ -2249,27 +2416,8 @@ export class WeaponSystem {
       this.knifeRestRot.z + idle.rotZ + slashRotZ + inspectRotZ + cyclerOffset.rotation.z
     );
 
-    // Balistucia Shotgun transform (pump animation driven by ShotgunAnimator — 0.09 m travel)
-    if (this.shotgunGroup) {
-      this.shotgunPump = THREE.MathUtils.damp(this.shotgunPump, 0, 14, dt);
-      const adsDelta = this.handsEngine ? this.handsEngine.computeAdsTranslation(aim) : null;
-      const shotgunBaseX = adsDelta ? this.shotgunRestPos.x + adsDelta.x : THREE.MathUtils.lerp(this.shotgunRestPos.x, this.shotgunAdsPos.x, aim);
-      const shotgunBaseY = adsDelta ? this.shotgunRestPos.y + adsDelta.y : THREE.MathUtils.lerp(this.shotgunRestPos.y, this.shotgunAdsPos.y, aim);
-      const shotgunBaseZ = adsDelta ? this.shotgunRestPos.z + adsDelta.z : THREE.MathUtils.lerp(this.shotgunRestPos.z, this.shotgunAdsPos.z, aim);
-
-      this.shotgunGroup.position.set(
-        shotgunBaseX + bobX + swayX + idle.posX + inspectPosX + cyclerOffset.position.x,
-        shotgunBaseY + bobY + swayY + idle.posY + shotgunReloadLiftY + inspectPosY - lowerY + this.recoilKick * 0.02 + cyclerOffset.position.y,
-        shotgunBaseZ + idle.posZ + shoveZ + this.recoilKick * 0.08 + cyclerOffset.position.z
-      );
-      this.shotgunGroup.rotation.set(
-        shotgunReloadPitch + this.recoilKick * 0.35 + idle.rotX + shoveRotX - this.holsterBlend * 0.55 + cyclerOffset.rotation.x,
-        idle.rotY + inspectRotY + cyclerOffset.rotation.y,
-        shotgunReloadRoll + idle.rotZ + inspectRotZ + cyclerOffset.rotation.z
-      );
-    }
-
-    // Sword slash animation & transform
+    // Sword slash state computed BEFORE the armsRoot transform so the
+    // bone-parented sword's slash drives armsRoot movement (D1).
     let swordSlashX = 0;
     let swordSlashY = 0;
     let swordSlashZ = 0;
@@ -2313,31 +2461,101 @@ export class WeaponSystem {
       }
     }
 
-    if (this.swordGroup) {
-      this.swordGroup.position.set(
-        this.swordRestPos.x + bobX + swayX + idle.posX + swordSlashX + inspectPosX + cyclerOffset.position.x,
-        this.swordRestPos.y + bobY + swayY + idle.posY + swordSlashY + inspectPosY - lowerY + cyclerOffset.position.y,
-        this.swordRestPos.z + idle.posZ + swordSlashZ + shoveZ + cyclerOffset.position.z
+    // ONE writer per fact (D1, Draft-3 seal Patch 3): armsRoot carries the
+    // rig's base pose plus the ADS translation, bob, sway, idle, recoil,
+    // inspect, holster, cycler, grab-reach and sword-slash terms; the
+    // bone-parented shotgunRoot / swordGroup / handFlashlightAnchor
+    // inherit them through the scene graph. This replaces the retired
+    // per-frame writers on shotgunGroup, swordGroup and the flashlight
+    // anchor (and the old fps_arms viewmodel block above). Host
+    // reconciliation: Studio's draft wrote offsets only — the rig's
+    // captured base position/rotation (_armsPivotBasePos/_armsPivotBaseRot,
+    // zero on the v8 rig, authored on the legacy rig) and the grab-reach
+    // offset are composed in so no live behavior moves; the ADS amount
+    // prefers the deterministic _aimAmount override (screenshot/test
+    // poses) over the frame's aim.
+    if (this.armsRoot) {
+      const adsAim = this._aimAmount ?? aim;
+      const adsDelta = this.handsEngine ? this.handsEngine.computeAdsTranslation(adsAim) : null;
+      this._adsRootOffset.set(adsDelta ? adsDelta.x : 0, adsDelta ? adsDelta.y : 0, adsDelta ? adsDelta.z : 0);
+      const basePos = this._armsPivotBasePos;
+      const baseRot = this._armsPivotBaseRot;
+      // Unarmed flashlight hold (director, Nov 24, 2026): the hold blend
+      // composes the holster lowering back OUT of the arms only — the
+      // weapon groups keep their own holster terms above (there is no
+      // weapon to lower while unarmed) — and composes the torch lift/tilt
+      // IN, raising the left hand into the lower frame. Still this ONE
+      // writer (D1): the hold is terms of this composition, never a
+      // second transform path.
+      const holdBlend = this.unarmedHoldBlend;
+      const armsHolsterBlend = this.holsterBlend * (1 - holdBlend);
+      const armsLowerY = this.swapAnim * 0.22 + armsHolsterBlend * 0.42;
+      this.armsRoot.position.set(
+        (basePos ? basePos.x : 0) + this._adsRootOffset.x + bobX + swayX + idle.posX + inspectPosX + cyclerOffset.position.x + swordSlashX + this._grabReachOffset.x,
+        (basePos ? basePos.y : 0) + this._adsRootOffset.y + bobY + swayY + idle.posY + shotgunReloadLiftY + inspectPosY - armsLowerY + UNARMED_HOLD_LIFT_Y * holdBlend + this.recoilKick * 0.02 + cyclerOffset.position.y + swordSlashY + this._grabReachOffset.y,
+        (basePos ? basePos.z : 0) + this._adsRootOffset.z + idle.posZ + shoveZ + this.recoilKick * 0.08 + cyclerOffset.position.z + swordSlashZ + this._grabReachOffset.z + UNARMED_HOLD_LIFT_Z * holdBlend
       );
-      this.swordGroup.rotation.set(
-        this.swordRestRot.x + idle.rotX + swordRotX + shoveRotX - this.holsterBlend * 0.5 + cyclerOffset.rotation.x,
-        this.swordRestRot.y + idle.rotY + swordRotY + inspectRotY + cyclerOffset.rotation.y,
-        this.swordRestRot.z + idle.rotZ + swordRotZ + inspectRotZ + cyclerOffset.rotation.z
+      this.armsRoot.rotation.set(
+        (baseRot ? baseRot.x : 0) + shotgunReloadPitch + this.recoilKick * 0.35 + idle.rotX + shoveRotX - armsHolsterBlend * 0.55 + UNARMED_HOLD_TILT_X * holdBlend + cyclerOffset.rotation.x + swordRotX,
+        (baseRot ? baseRot.y : 0) + idle.rotY + inspectRotY + cyclerOffset.rotation.y + swordRotY,
+        (baseRot ? baseRot.z : 0) + shotgunReloadRoll + idle.rotZ + inspectRotZ + cyclerOffset.rotation.z + swordRotZ
       );
     }
 
-    // Hand Flashlight Anchor motion (subtle torch idle & walk bob when held in hand unequipped)
-    if (this.handFlashlightAnchor && this.activeWeapon !== 'shotgun') {
-      this.handFlashlightAnchor.position.set(
-        -0.20 + bobX * 0.5 + swayX * 0.4 + idle.posX * 0.5,
-        -0.16 + bobY * 0.5 + swayY * 0.4 + idle.posY * 0.5,
-        -0.38 + idle.posZ * 0.5
+    // Pump: the ShotgunAnimator owns pumpTravel01; the HandsEngine mirrors
+    // it and couples the LeftHand bone to it (Draft-3 seal Patch 7, D1e
+    // fix). Placed after shotgunAnimator.update(dt) (above) AND after the
+    // single armsRoot transform writer (above), per Studio's spec: only
+    // the shotgun's pump couples the hand; any other weapon restores it.
+    // Seal Fix 2 (Option A): while the Balistucia is armed and no grab
+    // owns the hands, the HandsEngine DRIVES the whole armed pose from
+    // HAND_IN_GUN_TARGETS (applyShotgunPose: Weapon anchor + 2-bone IK +
+    // gripWrap curls, pump folded into the LeftHand target) and the GA_*
+    // clips are retired as shotgun bone owners. Every other state keeps
+    // the translation coupling exactly as before.
+    if (this.shotgunAnimator) {
+      this.shotgunPump = THREE.MathUtils.damp(this.shotgunPump, 0, 14, dt);
+      if (this.handsEngine) {
+        this.handsEngine.syncShotgunPose();
+        const pumpTravel = this.activeWeapon === 'shotgun' ? this.shotgunAnimator.pumpTravel01 : 0;
+        if (this.activeWeapon === 'shotgun' && !this.grabAnimator.active) {
+          this.handsEngine.applyShotgunPose(pumpTravel);
+        } else {
+          this.handsEngine.applyPumpCoupling(pumpTravel);
+        }
+      }
+    }
+
+    // No-rig fallback (host reconciliation, logged): before the arms GLB
+    // binds there is no bone-parented unit, so the placeholder shotgunGroup
+    // still receives the composed transform directly — the pre-seal
+    // behavior the repo's rig-less tests pin. The moment armsRoot binds,
+    // this never runs and the D1 writer above is the only writer.
+    if (!this.armsRoot && this.shotgunGroup) {
+      const adsDelta = this.handsEngine ? this.handsEngine.computeAdsTranslation(aim) : null;
+      const shotgunBaseX = adsDelta ? this.shotgunRestPos.x + adsDelta.x : THREE.MathUtils.lerp(this.shotgunRestPos.x, this.shotgunAdsPos.x, aim);
+      const shotgunBaseY = adsDelta ? this.shotgunRestPos.y + adsDelta.y : THREE.MathUtils.lerp(this.shotgunRestPos.y, this.shotgunAdsPos.y, aim);
+      const shotgunBaseZ = adsDelta ? this.shotgunRestPos.z + adsDelta.z : THREE.MathUtils.lerp(this.shotgunRestPos.z, this.shotgunAdsPos.z, aim);
+
+      this.shotgunGroup.position.set(
+        shotgunBaseX + bobX + swayX + idle.posX + inspectPosX + cyclerOffset.position.x,
+        shotgunBaseY + bobY + swayY + idle.posY + shotgunReloadLiftY + inspectPosY - lowerY + this.recoilKick * 0.02 + cyclerOffset.position.y,
+        shotgunBaseZ + idle.posZ + shoveZ + this.recoilKick * 0.08 + cyclerOffset.position.z
       );
-      this.handFlashlightAnchor.rotation.set(
-        idle.rotX * 0.4,
-        idle.rotY * 0.4,
-        idle.rotZ * 0.4
+      this.shotgunGroup.rotation.set(
+        shotgunReloadPitch + this.recoilKick * 0.35 + idle.rotX + shoveRotX - this.holsterBlend * 0.55 + cyclerOffset.rotation.x,
+        idle.rotY + inspectRotY + cyclerOffset.rotation.y,
+        shotgunReloadRoll + idle.rotZ + inspectRotZ + cyclerOffset.rotation.z
       );
     }
+
+    // Sword: NO per-frame position/rotation writes — swordGroup is
+    // bone-parented to RightHand (D1). Flashlight: NO per-frame anchor
+    // writes — the palm offset is load-time and aim is the camera-space
+    // target (D1). Studio's draft also called
+    // this._updateFlashlightMount(flash) here, gated on sword state;
+    // dropped on the host: the real method is the no-arg mount switcher,
+    // already driven by the cycler callbacks and equip paths — a per-frame
+    // re-mount would fight this same one-writer rule.
   }
 }

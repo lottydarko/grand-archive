@@ -31,7 +31,8 @@
     "clean": "rm -rf dist server.js",
     "dev": "vite --port=3000 --host=0.0.0.0",
     "lint": "tsc --noEmit",
-    "prebuild": "node src/engine/heroGlbGuard.check.mjs",
+    "prebuild": "node src/engine/heroGlbGuard.check.mjs && node src/engine/modelCompleteness.check.mjs",
+    "postbuild": "node src/engine/modelCompleteness.check.mjs --dist",
     "preview": "vite preview"
   },
   "type": "module",
