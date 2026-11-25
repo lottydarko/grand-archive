@@ -36,6 +36,13 @@ import {
   GRAB_CURL_SIGN as HANDS_CURL_SIGN,
   FLASHLIGHT_FORWARD_TARGET,
 } from './handsEngine.js';
+import {
+  getArmsVisible,
+  setArmsVisible as setArmsVisibleFlag,
+  toggleArmsVisible as toggleArmsVisibleFlag,
+  collectArmMeshes,
+  applyArmsVisibility,
+} from './armsVisibility.js';
 
 // Grab pose layer constants: per-joint share of a chain's total curl, and
 // the curl direction sign for this rig's finger bones (Hands Engine: sign -1, local X).
@@ -177,6 +184,9 @@ export class WeaponSystem {
     this.activeArmsAction = null;
     this.armsLoaded = false;
     this.armsRoot = null;
+    // Arms-visibility dev toggle (director ruling, Nov 25, 2026): the arms
+    // model's own meshes, collected at load/bind time — see armsVisibility.js.
+    this._armMeshes = [];
     this._heroGlockScene = null;
     this._heroGlockLoadStarted = false;
     this._mountedGlockOnArms = false;
@@ -488,6 +498,30 @@ export class WeaponSystem {
     }
   }
 
+  // Arms-visibility dev toggle (director ruling, Nov 25, 2026): the ONE
+  // authoritative flag lives in armsVisibility.js (module-level, default
+  // OFF — the rig hands render badly); these methods apply it to this
+  // system's rig. Only the arm meshes collected at load/bind time are
+  // gated — weapons and the flashlight are attached to bones afterwards
+  // and are never in that set, so they stay visible and functional.
+  // Bones keep posing and the Hands Engine keeps running exactly as
+  // before; only arm MESH rendering is gated.
+  get armsVisible() {
+    return getArmsVisible();
+  }
+
+  setArmsVisible(visible) {
+    const next = setArmsVisibleFlag(visible);
+    if (this.armsRoot) applyArmsVisibility(this.armsRoot, next);
+    return next;
+  }
+
+  toggleArmsVisible() {
+    const next = toggleArmsVisibleFlag();
+    if (this.armsRoot) applyArmsVisibility(this.armsRoot, next);
+    return next;
+  }
+
   // Draft-3 seal (Patch 3): single entry point that binds an arms rig to
   // this system — used by the production GLB load flow and by the
   // integrated weapons.update() tests, so both bind the SAME rig object.
@@ -497,6 +531,10 @@ export class WeaponSystem {
       this.root.add(armsPivot);
     }
     this.armsRoot = armsPivot;
+    // Collect + gate the arm meshes NOW, before any weapon mount or
+    // flashlight anchor is attached to the rig's bones (armsVisibility.js).
+    this._armMeshes = collectArmMeshes(armsPivot);
+    applyArmsVisibility(armsPivot);
     this._collectGrabBones();
     if (this.handsEngine) {
       this.handsEngine.bindArms(this.armsRoot);
@@ -1018,6 +1056,14 @@ export class WeaponSystem {
       this.armsRoot = armsPivot;
       this.armsLoaded = true;
       this._armsPivotBasePos = armsPivot.position.clone();
+
+      // Arms-visibility dev toggle (director ruling, Nov 25, 2026):
+      // collect + gate the arms model's own meshes NOW — before the
+      // flashlight anchor reparent below and before attachShotgun /
+      // attachSword mount weapons onto the rig's bones — so the gated
+      // set can only ever contain arm meshes (see armsVisibility.js).
+      this._armMeshes = collectArmMeshes(armsScene);
+      applyArmsVisibility(armsPivot);
 
       // Reparent flashlight hand-mount anchor to LeftHand bone
       let leftHandBone = null;

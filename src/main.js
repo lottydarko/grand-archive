@@ -31,6 +31,11 @@ import { createSoftRadialTexture } from './world/textures.js';
 import { PlayerControls } from './player/controls.js';
 import { WeaponSystem } from './player/weapons.js';
 import {
+  parseArmsVisibleParam,
+  setArmsVisible as setArmsVisibleFlag,
+  isArmsToggleCombo,
+} from './player/armsVisibility.js';
+import {
   createInventory,
   addItemToInventory,
   useInventoryItem,
@@ -1327,6 +1332,16 @@ dom.terminalForm.addEventListener('submit', (e) => {
 
 // Global hotkeys
 window.addEventListener('keydown', (e) => {
+  // Dev toggle (director ruling, Nov 25, 2026): Ctrl+Alt+A flips the fps
+  // arms meshes on/off live (hidden by default — the rig hands render
+  // badly). preventDefault so the browser never treats the combo as its
+  // own command. Weapons, flashlight and HUD are never gated by it.
+  if (isArmsToggleCombo(e)) {
+    e.preventDefault();
+    if (weapons) weapons.toggleArmsVisible();
+    return;
+  }
+
   if (cinemaLoader.active) {
     if (e.code === 'Space' || e.code === 'Enter' || e.code === 'Escape') {
       e.preventDefault();
@@ -1638,6 +1653,13 @@ async function bootstrap() {
   if (params.get('handcheck') === '1' && dom.handcheckHud) {
     dom.handcheckHud.classList.remove('hidden');
   }
+
+  // Arms-visibility dev toggle (director ruling, Nov 25, 2026): ?arms=1
+  // boots with the fps arms meshes shown; the default is OFF (the rig
+  // hands render badly). This sets the ONE module-level flag in
+  // armsVisibility.js; WeaponSystem applies it whenever the arms rig
+  // loads/binds, so ordering against the async GLB load does not matter.
+  setArmsVisibleFlag(parseArmsVisibleParam(window.location.search));
 
   // Playtest-only virtual gamepad (opt-in): ?virtualpad=1 installs a synthetic
   // Xbox pad + window.__virtualPad driver so a script/AI can pass the controller
