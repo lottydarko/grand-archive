@@ -51,7 +51,7 @@ import { CinemaLoader, CINEMA_REELS } from './ui/cinemaLoader.js';
 import { StartupSequence } from './ui/startupSequence.js';
 import { playChromeStationBoot } from './ui/chromestationBoot.js';
 import { createBlackBoxDoor } from './ui/blackBoxGameHouse.js';
-import { TitleMenu } from './ui/titleMenu.js';
+import { createCrtMenu } from './ui/crtMenu.js';
 import { SatchelUI } from './ui/satchelUI.js';
 import { DriveVaultUI } from './ui/driveVaultUI.js';
 import { MapOverlay } from './ui/mapOverlay.js';
@@ -812,7 +812,7 @@ const startupSequence = new StartupSequence(hudRoot, renderer, {
     if (blackBox.phase !== 'door') setPhase('title');
   },
 });
-const titleMenu = new TitleMenu(hudRoot, {
+const titleMenu = createCrtMenu(renderer, {
   onEnterConfirmed: () => {
     blackBox.phase = 'game';
     suspendBackgroundMenuVideo(document.querySelector('video'));
@@ -3047,7 +3047,12 @@ function tick() {
     if (startupSequence.isRendering3DStage()) {
       renderedWebGl = startupSequence.render3DStage();
     }
-  } else if (gameState.phase !== 'title' && library) {
+  } else if (gameState.phase === 'title') {
+    if (titleMenu.visible) {
+      titleMenu.render();
+      renderedWebGl = true;
+    }
+  } else if (library) {
     if (resScaler.shouldRender()) {
       renderer.render(scene, camera);
       renderedWebGl = true;
