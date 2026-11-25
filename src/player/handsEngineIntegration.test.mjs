@@ -243,3 +243,35 @@ test('D2 — ?handcheck measures the LIVE rig: perturbing RightHand by 0.05 rad 
     'contact values must differ when the rig moves'
   );
 });
+
+// Host regression test (Muse, Nov 24, 2026) — BUG→SCRIPT for the portal-guard
+// softlock the seal screenshot capture found in-build: the former §D block in
+// triggerKnifeSlash refused every knife slash in the Level One loadout, so the
+// 80 HP G1/G2 guard packs could never be killed and G2 stayed sealed forever.
+// Canon: the knife is owned from the start in Level One (setLoadout) — it is
+// "the floor". This test drives the production entry paths (setLoadout →
+// Digit2 equip → triggerPrimary) through the real update() loop and requires
+// the swing's hit check to reach the enemy manager. It FAILS on the pre-fix
+// code (triggerPrimary returns false) and passes after the §D removal.
+test('Knife — Level One loadout: slash is live and its hit check reaches the enemy manager (portal-guard softlock regression)', () => {
+  const rig = makeRig();
+  const weapons = makeWeapons(rig);
+  weapons.setLoadout('level1');
+  assert.ok(weapons._isWeaponOwned('knife'), 'knife must be owned from the start in Level One');
+  assert.ok(weapons.equip('knife'), 'knife must be equippable in Level One (Digit2 path)');
+  assert.equal(weapons.activeWeapon, 'knife');
+  const meleeCalls = [];
+  const enemyManager = {
+    handleMeleeSlash(origin, dir, range) {
+      meleeCalls.push({ range });
+      return null;
+    },
+  };
+  assert.ok(weapons.triggerPrimary(enemyManager, null), 'knife slash must start in Level One (pre-fix §D returned false)');
+  assert.ok(weapons.slashing, 'slash state must be entered');
+  for (let i = 0; i < 10 && meleeCalls.length === 0; i++) {
+    weapons.update(0.05, mockControls(), enemyManager, 100);
+  }
+  assert.equal(meleeCalls.length, 1, 'the swing hit check must call handleMeleeSlash exactly once');
+  assert.equal(meleeCalls[0].range, 2.95, 'knife reach of record (2.95 m)');
+});

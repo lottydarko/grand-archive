@@ -1919,13 +1919,13 @@ export class WeaponSystem {
 
   triggerKnifeSlash(isQuick = false) {
     if (this.isCycleLocked) return false;
-    // §D: Knife is disabled in Level One (script arsenal is Balistucia + Sword).
-    if (this.loadout === 'level1') {
-      if (this.weaponsUnlocked.sword && this.activeWeapon === 'sword') {
-        return this.triggerSwordSlash();
-      }
-      return false;
-    }
+    // Knife is LIVE in Level One (Lotty, Nov 24, 2026): it is owned from the
+    // start (see setLoadout — "the knife is the floor") and is the only way
+    // to kill the G1/G2 portal guard packs before the shotgun. The former §D
+    // disable refused every slash in this loadout, leaving the 80 HP guards
+    // unkillable and G2 sealed forever — an unprogressable softlock found by
+    // the Draft-3 seal screenshot capture. Regression test: handsEngineIntegration
+    // "Knife — Level One loadout".
     if (this.slashing || this.shoving) return false;
     if (this.holstered) this.holstered = false;
     this.inspecting = false;
