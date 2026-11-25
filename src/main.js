@@ -286,6 +286,9 @@ hudRoot.innerHTML = `
     <!-- White Aether crossing flash (one-shot white-out when the portal crossing first registers) -->
     <div id="aether-flash" class="fixed inset-0 pointer-events-none opacity-0 z-30 bg-white"></div>
 
+    <!-- Portal transit shimmer (brief purple arrival flash when a press-X portal jump lands) -->
+    <div id="portal-flash" class="fixed inset-0 pointer-events-none opacity-0 z-30" style="background: radial-gradient(ellipse at center, rgba(196,181,253,0.55) 0%, rgba(139,92,246,0.35) 45%, rgba(76,29,149,0.12) 75%, transparent 100%);"></div>
+
     <!-- Room 2 Visor Brain Splatter Overlay (fades via unskippable stepBrainWipe) -->
     <div id="brain-splatter-overlay" class="fixed inset-0 pointer-events-none opacity-0 z-30 bg-[radial-gradient(circle_at_52%_46%,rgba(122,14,18,0.92)_0%,rgba(78,8,12,0.85)_34%,rgba(44,4,8,0.58)_62%,transparent_88%)]"></div>
 
@@ -375,6 +378,7 @@ const dom = {
   playingHud: document.getElementById('playing-hud'),
   crosshair: document.getElementById('crosshair'),
   aetherFlash: document.getElementById('aether-flash'),
+  portalFlash: document.getElementById('portal-flash'),
   floorWrap: document.getElementById('floor-wrap'),
   floorLabel: document.getElementById('floor-label'),
   handcheckHud: document.getElementById('handcheck-hud'),
@@ -451,6 +455,7 @@ let whisperTimer = 0;
 const gateSignpostAt = {};
 let aetherFlashLevel = 0;
 let aetherFlashFired = false;
+let portalFlashLevel = 0;
 function showWhisper(text, duration = 2.4) {
   dom.whisperText.textContent = text;
   dom.whisperBanner.style.opacity = '1';
@@ -1468,6 +1473,7 @@ function isNearCrawlArch() {
 window.__archiveTest = {
   getState: () => ({
     phase: gameState.phase,
+    simElapsed: elapsed,
     startupStage: startupSequence.getCurrentStage(),
     loadingReady: startupSequence.loadingReady,
     title: titleMenu.getStateSnapshot(),
@@ -2259,6 +2265,26 @@ function stepSimulation(dt) {
       levelOneCorridor.returnStairGateMesh.visible = !returnStairOpen;
     }
   }
+  // PORTAL SURFACES (Lotty, Nov 24, 2026): purple swirl state per gate —
+  // a ready gate burns bright lavender with a near-white core and fast
+  // churn; a sealed gate stays deep violet and slow (HL/Halo trace
+  // adopt #2). G5's ready read = its disc price paid, even while the
+  // maze horde still bars the way; G4/G6 have no lingering ready state
+  // (the tutorial latch / the lion's death opens them outright).
+  if (levelOneCorridor && typeof levelOneCorridor.updatePortals === 'function') {
+    levelOneCorridor.updatePortals(elapsed, {
+      G1: g1Ready,
+      G2: g2Ready,
+      G3: g3Ready,
+      G4: false,
+      G5: Boolean(
+        levelOneState &&
+          !mazeExitOpen &&
+          levelOneState.mazeDiscsCollected >= levelOneState.mazeDiscsRequired
+      ),
+      G6: false,
+    });
+  }
   // SIGNPOSTING (Nov 23, 2026 — playtest: Lotty stood at a locked door with no
   // idea what it wanted). A closed gate states its price when the player is
   // close enough to be pushing on it. One whisper at a time, per-gate
@@ -2724,6 +2750,10 @@ function stepSimulation(dt) {
       // gate — mesh and collider follow in the gate block next frame.
       portalEntered[interactable.gate] = true;
       interactable.active = false;
+      // Transit event (HL/Halo portal trace adopt #5, visual half): a
+      // brief purple arrival shimmer as the press-X jump lands. The
+      // transit zap SOUND is an Audio Engine follow-up — not built here.
+      portalFlashLevel = 0.9;
       sfx.playTrapdoorMechanism();
     } else if (interactable.type === 'pickup') {
       const applyPickupEffect = () => {
@@ -2900,6 +2930,10 @@ function stepSimulation(dt) {
   if (aetherFlashLevel > 0) {
     aetherFlashLevel = Math.max(0, aetherFlashLevel - dt * 0.8);
     if (dom.aetherFlash) dom.aetherFlash.style.opacity = String(aetherFlashLevel);
+  }
+  if (portalFlashLevel > 0) {
+    portalFlashLevel = Math.max(0, portalFlashLevel - dt * 1.6);
+    if (dom.portalFlash) dom.portalFlash.style.opacity = String(portalFlashLevel);
   }
   if (whisperTimer > 0) {
     whisperTimer -= dt;
