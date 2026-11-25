@@ -42,6 +42,17 @@ import {
 const GRAB_JOINT_WEIGHTS = [0.45, 0.33, 0.22];
 const GRAB_CURL_SIGN = HANDS_CURL_SIGN;
 
+// Unarmed flashlight hold (director, Nov 24, 2026): with no weapon equipped
+// the player must SEE the flashlight and the hand holding it. The hold is a
+// framing term of the ONE armsRoot writer in update() (D1): scaled by
+// unarmedHoldBlend, it composes the holster lowering back OUT of the arms
+// and this lift/tilt IN, so the left hand — flashlight parented at its
+// calibrated palm offset — rises into the lower frame. Viewmodel framing
+// constants, not hand calibration; the in-game capture pass tunes them.
+const UNARMED_HOLD_LIFT_Y = 0.06;
+const UNARMED_HOLD_LIFT_Z = 0.03;
+const UNARMED_HOLD_TILT_X = 0.12;
+
 /**
  * Computes the exact weapon cant and shell-push lift for GA_Reload (40 frames @ 30 fps).
  * Key points (wiring note):
@@ -142,6 +153,14 @@ export class WeaponSystem {
     this.swapAnim = 0; // 0 = ready, 1 = lowered
     this.holstered = true; // Holstered by default (Lotty, Nov 20, 2026)
     this.holsterBlend = 1; // 0 = drawn, 1 = holstered
+    // Unarmed flashlight hold (director, Nov 24, 2026): damped 0..1 like
+    // holsterBlend — 1 while unarmed (hand raised, torch grip posed),
+    // 0 the moment any weapon is equipped. Starts lowered; update()
+    // raises it on the first frames of an unarmed run.
+    this.unarmedHoldBlend = 0;
+    this._holdPoseApplied = false; // additive grab layer currently holds the torch grip
+    this._flashlightBody = null; // visible torch mesh (hand mount only)
+    this._flashlightLensMat = null;
     this.inspecting = false;
     this.inspectTimer = 0;
     this.inspectDuration = 1.65;
@@ -540,6 +559,22 @@ export class WeaponSystem {
         this._grabRelease = 0;
       }
     }
+    // Unarmed flashlight hold (director, Nov 24, 2026): while unarmed, the
+    // torch grip is a PERSISTENT pose on this same additive layer — NOT a
+    // GrabAnimator sequence (grabs are unskippable one-shots, and equip()
+    // refuses mid-grab, so a looping grab would block weapon pickups).
+    // Runs only when no grab and no release fade own the layer. The pose
+    // amount is the damped unarmedHoldBlend: the grip closes as the hand
+    // raises and opens back to rest as a weapon comes up.
+    if (hasRig && this._grabRelease === 0) {
+      const amt = this.unarmedHoldBlend;
+      if (amt > 0.001 || this._holdPoseApplied) {
+        const pose = lerpPose(GRAB_POSES.open, GRAB_POSES.flashlightGrip, amt);
+        this._applyGrabPose(pose);
+        this._grabPoseCurrent = pose;
+        this._holdPoseApplied = amt > 0.001;
+      }
+    }
   }
 
   // ---- Shotgun Animator (Balistucia) ----
@@ -612,6 +647,59 @@ export class WeaponSystem {
     } else {
       this._mountFlashlightToHand();
     }
+    this._ensureFlashlightBody();
+  }
+
+  /**
+   * Visible torch body for the hand mount (director, Nov 24, 2026: unarmed,
+   * "we need to see the flashlight and the hand"). The SpotLight itself is
+   * invisible, so a small procedural body rides the SAME hand anchor the
+   * light uses — the anchor the Hands Engine parents to the LeftHand bone
+   * at the calibrated palm offset; no new mount, no per-frame writes. The
+   * body is VISIBLE ONLY while unarmed: on the shotgun the light is a
+   * barrel mount with no body (as before), and in every other weapon
+   * state it stays hidden so weapon framing is pixel-identical to before.
+   * Re-parented onto whatever anchor the system currently holds, so the
+   * load flow (and test harnesses) can adopt the anchor freely.
+   */
+  _buildFlashlightBody() {
+    const body = new THREE.Group();
+    body.name = 'FlashlightBody';
+    const shellMat = new THREE.MeshStandardMaterial({ color: 0x17181c, roughness: 0.42, metalness: 0.62 });
+    const headMat = new THREE.MeshStandardMaterial({ color: 0x232529, roughness: 0.3, metalness: 0.78 });
+    // Tube along the anchor's forward (-Z): tail behind the palm, head
+    // past the fingers. CylinderGeometry's axis is Y — rotate to Z.
+    const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.0115, 0.013, 0.1, 12), shellMat);
+    tube.rotation.x = Math.PI * 0.5;
+    tube.position.set(0, 0, -0.012);
+    const head = new THREE.Mesh(new THREE.CylinderGeometry(0.0165, 0.014, 0.032, 12), headMat);
+    head.rotation.x = Math.PI * 0.5;
+    head.position.set(0, 0, -0.07);
+    this._flashlightLensMat = new THREE.MeshStandardMaterial({
+      color: 0x11151a,
+      roughness: 0.25,
+      metalness: 0.1,
+      emissive: 0xcfe2ff,
+      emissiveIntensity: this.flashlightOn ? 2.4 : 0.04,
+    });
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(0.0145, 12), this._flashlightLensMat);
+    lens.rotation.y = Math.PI; // face -Z (the way the light shines)
+    lens.position.set(0, 0, -0.0865);
+    body.add(tube);
+    body.add(head);
+    body.add(lens);
+    return body;
+  }
+
+  _ensureFlashlightBody() {
+    if (!this.handFlashlightAnchor) return;
+    if (!this._flashlightBody) {
+      this._flashlightBody = this._buildFlashlightBody();
+    }
+    if (this._flashlightBody.parent !== this.handFlashlightAnchor) {
+      this.handFlashlightAnchor.add(this._flashlightBody);
+    }
+    this._flashlightBody.visible = this.activeWeapon === 'unarmed';
   }
 
   toggleFlashlight() {
@@ -628,6 +716,10 @@ export class WeaponSystem {
   _syncFlashlightIntensity() {
     if (!this.flashlight) return;
     this.flashlight.intensity = this.flashlightOn ? this._flashlightIntensity : 0;
+    // The visible torch body's lens follows the same on/off state.
+    if (this._flashlightLensMat) {
+      this._flashlightLensMat.emissiveIntensity = this.flashlightOn ? 2.4 : 0.04;
+    }
   }
 
   getFlashlightMountInfo() {
@@ -1254,6 +1346,7 @@ export class WeaponSystem {
     this.swapAnim = 0;
     this.holstered = true; // Unarmed / holstered at every (re)start
     this.holsterBlend = 1;
+    this.unarmedHoldBlend = 0; // torch hand raises fresh on the first unarmed frames
     this.inspecting = false;
     this.inspectTimer = 0;
     this.shoving = false;
@@ -2084,6 +2177,16 @@ export class WeaponSystem {
     this.slideBack = recoiled.slideBack;
     this.swapAnim = THREE.MathUtils.damp(this.swapAnim, 0, 11, dt);
     this.holsterBlend = THREE.MathUtils.damp(this.holsterBlend, this.holstered ? 1 : 0, 9, dt);
+    // Unarmed flashlight hold (director, Nov 24, 2026): rises only in the
+    // unarmed state — every path that enters unarmed sets holstered (the
+    // hold IS the unarmed "drawn" state; the holster key lowers the hand
+    // again), and any equipped weapon takes the target straight to 0.
+    this.unarmedHoldBlend = THREE.MathUtils.damp(
+      this.unarmedHoldBlend,
+      this.activeWeapon === 'unarmed' && this.holstered ? 1 : 0,
+      9,
+      dt
+    );
     if (this.shellCasings) this.shellCasings.update(dt);
     this._updateGrab(dt);
     if (this.shotgunAnimator) this.shotgunAnimator.update(dt);
@@ -2344,13 +2447,23 @@ export class WeaponSystem {
       this._adsRootOffset.set(adsDelta ? adsDelta.x : 0, adsDelta ? adsDelta.y : 0, adsDelta ? adsDelta.z : 0);
       const basePos = this._armsPivotBasePos;
       const baseRot = this._armsPivotBaseRot;
+      // Unarmed flashlight hold (director, Nov 24, 2026): the hold blend
+      // composes the holster lowering back OUT of the arms only — the
+      // weapon groups keep their own holster terms above (there is no
+      // weapon to lower while unarmed) — and composes the torch lift/tilt
+      // IN, raising the left hand into the lower frame. Still this ONE
+      // writer (D1): the hold is terms of this composition, never a
+      // second transform path.
+      const holdBlend = this.unarmedHoldBlend;
+      const armsHolsterBlend = this.holsterBlend * (1 - holdBlend);
+      const armsLowerY = this.swapAnim * 0.22 + armsHolsterBlend * 0.42;
       this.armsRoot.position.set(
         (basePos ? basePos.x : 0) + this._adsRootOffset.x + bobX + swayX + idle.posX + inspectPosX + cyclerOffset.position.x + swordSlashX + this._grabReachOffset.x,
-        (basePos ? basePos.y : 0) + this._adsRootOffset.y + bobY + swayY + idle.posY + shotgunReloadLiftY + inspectPosY - lowerY + this.recoilKick * 0.02 + cyclerOffset.position.y + swordSlashY + this._grabReachOffset.y,
-        (basePos ? basePos.z : 0) + this._adsRootOffset.z + idle.posZ + shoveZ + this.recoilKick * 0.08 + cyclerOffset.position.z + swordSlashZ + this._grabReachOffset.z
+        (basePos ? basePos.y : 0) + this._adsRootOffset.y + bobY + swayY + idle.posY + shotgunReloadLiftY + inspectPosY - armsLowerY + UNARMED_HOLD_LIFT_Y * holdBlend + this.recoilKick * 0.02 + cyclerOffset.position.y + swordSlashY + this._grabReachOffset.y,
+        (basePos ? basePos.z : 0) + this._adsRootOffset.z + idle.posZ + shoveZ + this.recoilKick * 0.08 + cyclerOffset.position.z + swordSlashZ + this._grabReachOffset.z + UNARMED_HOLD_LIFT_Z * holdBlend
       );
       this.armsRoot.rotation.set(
-        (baseRot ? baseRot.x : 0) + shotgunReloadPitch + this.recoilKick * 0.35 + idle.rotX + shoveRotX - this.holsterBlend * 0.55 + cyclerOffset.rotation.x + swordRotX,
+        (baseRot ? baseRot.x : 0) + shotgunReloadPitch + this.recoilKick * 0.35 + idle.rotX + shoveRotX - armsHolsterBlend * 0.55 + UNARMED_HOLD_TILT_X * holdBlend + cyclerOffset.rotation.x + swordRotX,
         (baseRot ? baseRot.y : 0) + idle.rotY + inspectRotY + cyclerOffset.rotation.y + swordRotY,
         (baseRot ? baseRot.z : 0) + shotgunReloadRoll + idle.rotZ + inspectRotZ + cyclerOffset.rotation.z + swordRotZ
       );

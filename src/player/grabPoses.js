@@ -43,6 +43,18 @@ export const GRAB_POSES = Object.freeze({
     R: hand(0.68, 0.5, 0.72),
     L: hand(0.05, 0.04, 0.05),
   }),
+
+  // Unarmed flashlight hold (director, Nov 24, 2026): with no weapon
+  // equipped the player sees the left hand raised, wrapped around the
+  // torch body — index a touch straighter than a full wrap, mirroring
+  // the gripWrap forend hand — while the right hand rests near-open.
+  // Unlike the grab poses above this is a PERSISTENT hold, applied by
+  // WeaponSystem's unarmed-hold path for as long as the player is
+  // unarmed; it is not a GrabAnimator sequence.
+  flashlightGrip: Object.freeze({
+    R: hand(0.06, 0.04, 0.06),
+    L: hand(0.8, 0.58, 0.85),
+  }),
 });
 
 const CHAINS = ['index', 'thumb', 'doubles'];
