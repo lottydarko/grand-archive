@@ -1,0 +1,628 @@
+{
+  "version": 1,
+  "source": "QUIPS_LIBRARY.md (Lotty, Nov 24, 2026). Texts verbatim from the library; durationSec measured with ffprobe from the recorded, director-approved masters staged under public/audio/streak/.",
+  "categories": {
+    "announcer": [
+      {
+        "count": 3,
+        "text": "THREEEEEE!",
+        "audioFile": "/audio/streak/announcer/streak_3.mp3",
+        "durationSec": 2.36
+      },
+      {
+        "count": 4,
+        "text": "FOURRRR!",
+        "audioFile": "/audio/streak/announcer/streak_4.mp3",
+        "durationSec": 1.29
+      },
+      {
+        "count": 5,
+        "text": "FIVEEE!",
+        "audioFile": "/audio/streak/announcer/streak_5.mp3",
+        "durationSec": 1.29
+      },
+      {
+        "count": 6,
+        "text": "SIXXX!",
+        "audioFile": "/audio/streak/announcer/streak_6.mp3",
+        "durationSec": 1.22
+      },
+      {
+        "count": 7,
+        "text": "SEVENNN!",
+        "audioFile": "/audio/streak/announcer/streak_7.mp3",
+        "durationSec": 1.72
+      },
+      {
+        "count": 8,
+        "text": "EIGHTTT!",
+        "audioFile": "/audio/streak/announcer/streak_8.mp3",
+        "durationSec": 1.15
+      },
+      {
+        "count": 9,
+        "text": "NINEEE!",
+        "audioFile": "/audio/streak/announcer/streak_9.mp3",
+        "durationSec": 1.65
+      },
+      {
+        "count": 10,
+        "text": "TENNN!",
+        "audioFile": "/audio/streak/announcer/streak_10.mp3",
+        "durationSec": 1.43
+      }
+    ],
+    "narrator": [
+      {
+        "id": 1,
+        "tier": "3",
+        "text": "Three in a row. I am just getting started.",
+        "audioFile": "/audio/streak/narrator/narrator_01.mp3",
+        "durationSec": 3.21
+      },
+      {
+        "id": 2,
+        "tier": "3",
+        "text": "That is three. Please, keep them coming.",
+        "audioFile": "/audio/streak/narrator/narrator_02.mp3",
+        "durationSec": 2.11
+      },
+      {
+        "id": 3,
+        "tier": "3",
+        "text": "Three. I suppose I am warmed up now.",
+        "audioFile": "/audio/streak/narrator/narrator_03.mp3",
+        "durationSec": 2.14
+      },
+      {
+        "id": 4,
+        "tier": "3",
+        "text": "Three already. The evening is young.",
+        "audioFile": "/audio/streak/narrator/narrator_04.mp3",
+        "durationSec": 2.13
+      },
+      {
+        "id": 5,
+        "tier": "3",
+        "text": "Three. I am keeping count, by the way.",
+        "audioFile": "/audio/streak/narrator/narrator_05.mp3",
+        "durationSec": 1.71
+      },
+      {
+        "id": 6,
+        "tier": "3",
+        "text": "Three down. I feel quite calm about it.",
+        "audioFile": "/audio/streak/narrator/narrator_06.mp3",
+        "durationSec": 2.38
+      },
+      {
+        "id": 7,
+        "tier": "4",
+        "text": "Four. I do this rather well, actually.",
+        "audioFile": "/audio/streak/narrator/narrator_07.mp3",
+        "durationSec": 2.51
+      },
+      {
+        "id": 8,
+        "tier": "4",
+        "text": "Four down. The archive stays closed.",
+        "audioFile": "/audio/streak/narrator/narrator_08.mp3",
+        "durationSec": 2.34
+      },
+      {
+        "id": 9,
+        "tier": "4",
+        "text": "Four. Should I be concerned? I am not.",
+        "audioFile": "/audio/streak/narrator/narrator_09.mp3",
+        "durationSec": 2.45
+      },
+      {
+        "id": 10,
+        "tier": "4",
+        "text": "Four. This is becoming a habit.",
+        "audioFile": "/audio/streak/narrator/narrator_10.mp3",
+        "durationSec": 2.46
+      },
+      {
+        "id": 11,
+        "tier": "4",
+        "text": "Four in a row. Neat and tidy.",
+        "audioFile": "/audio/streak/narrator/narrator_11.mp3",
+        "durationSec": 2.15
+      },
+      {
+        "id": 12,
+        "tier": "4",
+        "text": "Four. I barely raised my voice.",
+        "audioFile": "/audio/streak/narrator/narrator_12.mp3",
+        "durationSec": 2.3
+      },
+      {
+        "id": 13,
+        "tier": "5-7",
+        "text": "Five. At this point, it is a routine.",
+        "audioFile": "/audio/streak/narrator/narrator_13.mp3",
+        "durationSec": 2.77
+      },
+      {
+        "id": 14,
+        "tier": "5-7",
+        "text": "You may want to reconsider this strategy.",
+        "audioFile": "/audio/streak/narrator/narrator_14.mp3",
+        "durationSec": 2.92
+      },
+      {
+        "id": 15,
+        "tier": "5-7",
+        "text": "Five. I could do this all evening.",
+        "audioFile": "/audio/streak/narrator/narrator_15.mp3",
+        "durationSec": 2.22
+      },
+      {
+        "id": 16,
+        "tier": "5-7",
+        "text": "Six. Somebody should write this down.",
+        "audioFile": "/audio/streak/narrator/narrator_16.mp3",
+        "durationSec": 2.07
+      },
+      {
+        "id": 17,
+        "tier": "5-7",
+        "text": "Six. I am not even breathing hard.",
+        "audioFile": "/audio/streak/narrator/narrator_17.mp3",
+        "durationSec": 2.27
+      },
+      {
+        "id": 18,
+        "tier": "5-7",
+        "text": "Seven. The collection grows.",
+        "audioFile": "/audio/streak/narrator/narrator_18.mp3",
+        "durationSec": 1.96
+      },
+      {
+        "id": 19,
+        "tier": "8+",
+        "text": "I have lost count. That is not a good sign for you.",
+        "audioFile": "/audio/streak/narrator/narrator_19.mp3",
+        "durationSec": 1.8
+      },
+      {
+        "id": 20,
+        "tier": "8+",
+        "text": "Still standing. Still counting.",
+        "audioFile": "/audio/streak/narrator/narrator_20.mp3",
+        "durationSec": 2.15
+      },
+      {
+        "id": 21,
+        "tier": "8+",
+        "text": "Eight. I will need a bigger notebook.",
+        "audioFile": "/audio/streak/narrator/narrator_21.mp3",
+        "durationSec": 2.4
+      },
+      {
+        "id": 22,
+        "tier": "8+",
+        "text": "Nine. This is no longer a fair arrangement.",
+        "audioFile": "/audio/streak/narrator/narrator_22.mp3",
+        "durationSec": 3.26
+      },
+      {
+        "id": 23,
+        "tier": "8+",
+        "text": "Ten. At some point, this becomes rude.",
+        "audioFile": "/audio/streak/narrator/narrator_23.mp3",
+        "durationSec": 3.16
+      },
+      {
+        "id": 24,
+        "tier": "8+",
+        "text": "However many that was, I meant all of them.",
+        "audioFile": "/audio/streak/narrator/narrator_24.mp3",
+        "durationSec": 1.4
+      }
+    ],
+    "phantom": [
+      {
+        "id": 1,
+        "tier": "standard",
+        "text": "Murderer.",
+        "audioFile": "/audio/streak/phantom/phantom_01.mp3",
+        "durationSec": 1.16
+      },
+      {
+        "id": 2,
+        "tier": "standard",
+        "text": "Look at you. Murderer.",
+        "audioFile": "/audio/streak/phantom/phantom_02.mp3",
+        "durationSec": 2.11
+      },
+      {
+        "id": 3,
+        "tier": "standard",
+        "text": "How many is that now... murderer?",
+        "audioFile": "/audio/streak/phantom/phantom_03.mp3",
+        "durationSec": 2.88
+      },
+      {
+        "id": 4,
+        "tier": "standard",
+        "text": "Count them. Go on. I insssist.",
+        "audioFile": "/audio/streak/phantom/phantom_04.mp3",
+        "durationSec": 6.3
+      },
+      {
+        "id": 5,
+        "tier": "standard",
+        "text": "Sssuch a talented... little... murderer.",
+        "audioFile": "/audio/streak/phantom/phantom_05.mp3",
+        "durationSec": 4.26
+      },
+      {
+        "id": 6,
+        "tier": "standard",
+        "text": "The archive remembersss. It alwaysss remembers.",
+        "audioFile": "/audio/streak/phantom/phantom_06.mp3",
+        "durationSec": 6.89
+      },
+      {
+        "id": 7,
+        "tier": "standard",
+        "text": "All that ssslaughter. And for what?",
+        "audioFile": "/audio/streak/phantom/phantom_07.mp3",
+        "durationSec": 4.7
+      },
+      {
+        "id": 8,
+        "tier": "standard",
+        "text": "Mummy would be ssso proud.",
+        "audioFile": "/audio/streak/phantom/phantom_08.mp3",
+        "durationSec": 2.93
+      },
+      {
+        "id": 9,
+        "tier": "standard",
+        "text": "Do you sssleep well... murderer?",
+        "audioFile": "/audio/streak/phantom/phantom_09.mp3",
+        "durationSec": 2.93
+      },
+      {
+        "id": 10,
+        "tier": "standard",
+        "text": "They keep falling. You keep sssmiling.",
+        "audioFile": "/audio/streak/phantom/phantom_10.mp3",
+        "durationSec": 4.47
+      },
+      {
+        "id": 11,
+        "tier": "standard",
+        "text": "Finished? Sssuch a pity.",
+        "audioFile": "/audio/streak/phantom/phantom_11.mp3",
+        "durationSec": 3.76
+      },
+      {
+        "id": 12,
+        "tier": "standard",
+        "text": "Run along, murderer. I ssshall be watching.",
+        "audioFile": "/audio/streak/phantom/phantom_12.mp3",
+        "durationSec": 5.11
+      },
+      {
+        "id": 13,
+        "tier": "ultra",
+        "text": "Magnificent. And monssstrous.",
+        "audioFile": "/audio/streak/phantom/phantom_13.mp3",
+        "durationSec": 3.47
+      },
+      {
+        "id": 14,
+        "tier": "ultra",
+        "text": "Even the dead are impressssed. And appalled.",
+        "audioFile": "/audio/streak/phantom/phantom_14.mp3",
+        "durationSec": 3.58
+      }
+    ],
+    "whisperer": [
+      {
+        "id": 1,
+        "text": "I can see you.",
+        "audioFile": "/audio/streak/whisperer/whisperer_01.mp3",
+        "durationSec": 1.58
+      },
+      {
+        "id": 2,
+        "text": "Stand still... there you are.",
+        "audioFile": "/audio/streak/whisperer/whisperer_02.mp3",
+        "durationSec": 2.91
+      },
+      {
+        "id": 3,
+        "text": "You walk so loudly.",
+        "audioFile": "/audio/streak/whisperer/whisperer_03.mp3",
+        "durationSec": 2.08
+      },
+      {
+        "id": 4,
+        "text": "The discs sing. I follow the song.",
+        "audioFile": "/audio/streak/whisperer/whisperer_04.mp3",
+        "durationSec": 4.04
+      },
+      {
+        "id": 5,
+        "text": "Do not turn around.",
+        "audioFile": "/audio/streak/whisperer/whisperer_05.mp3",
+        "durationSec": 1.94
+      },
+      {
+        "id": 6,
+        "text": "Your light betrays you.",
+        "audioFile": "/audio/streak/whisperer/whisperer_06.mp3",
+        "durationSec": 2.06
+      },
+      {
+        "id": 7,
+        "text": "I only want to stand with you.",
+        "audioFile": "/audio/streak/whisperer/whisperer_07.mp3",
+        "durationSec": 2.53
+      },
+      {
+        "id": 8,
+        "text": "Shhh. Listen. That is your heart.",
+        "audioFile": "/audio/streak/whisperer/whisperer_08.mp3",
+        "durationSec": 3.59
+      },
+      {
+        "id": 9,
+        "text": "You breathe. I listen.",
+        "audioFile": "/audio/streak/whisperer/whisperer_09.mp3",
+        "durationSec": 2.25
+      },
+      {
+        "id": 10,
+        "text": "The dark is not empty. I am in it.",
+        "audioFile": "/audio/streak/whisperer/whisperer_10.mp3",
+        "durationSec": 3.85
+      },
+      {
+        "id": 11,
+        "text": "Freeze. Yes. Just like that.",
+        "audioFile": "/audio/streak/whisperer/whisperer_11.mp3",
+        "durationSec": 3.23
+      },
+      {
+        "id": 12,
+        "text": "Your footsteps count you down.",
+        "audioFile": "/audio/streak/whisperer/whisperer_12.mp3",
+        "durationSec": 2.18
+      },
+      {
+        "id": 13,
+        "text": "I was here before the doors.",
+        "audioFile": "/audio/streak/whisperer/whisperer_13.mp3",
+        "durationSec": 2.13
+      },
+      {
+        "id": 14,
+        "text": "Move, and I cannot touch you. So... stay.",
+        "audioFile": "/audio/streak/whisperer/whisperer_14.mp3",
+        "durationSec": 4.36
+      },
+      {
+        "id": 15,
+        "text": "The archive keeps what it catches.",
+        "audioFile": "/audio/streak/whisperer/whisperer_15.mp3",
+        "durationSec": 2.11
+      },
+      {
+        "id": 16,
+        "text": "Closer. Closer. Perfect.",
+        "audioFile": "/audio/streak/whisperer/whisperer_16.mp3",
+        "durationSec": 3.05
+      },
+      {
+        "id": 17,
+        "text": "I counted your steps. All of them.",
+        "audioFile": "/audio/streak/whisperer/whisperer_17.mp3",
+        "durationSec": 2.73
+      },
+      {
+        "id": 18,
+        "text": "The light will not save you.",
+        "audioFile": "/audio/streak/whisperer/whisperer_18.mp3",
+        "durationSec": 2.69
+      },
+      {
+        "id": 19,
+        "text": "You are slower than you think.",
+        "audioFile": "/audio/streak/whisperer/whisperer_19.mp3",
+        "durationSec": 3.42
+      },
+      {
+        "id": 20,
+        "text": "I stand where the dark is thickest.",
+        "audioFile": "/audio/streak/whisperer/whisperer_20.mp3",
+        "durationSec": 3.41
+      },
+      {
+        "id": 21,
+        "text": "Every door you open, I am nearer.",
+        "audioFile": "/audio/streak/whisperer/whisperer_21.mp3",
+        "durationSec": 3.95
+      },
+      {
+        "id": 22,
+        "text": "Your shadow moves. I do not.",
+        "audioFile": "/audio/streak/whisperer/whisperer_22.mp3",
+        "durationSec": 3.22
+      },
+      {
+        "id": 23,
+        "text": "Breathe quieter. It will not help.",
+        "audioFile": "/audio/streak/whisperer/whisperer_23.mp3",
+        "durationSec": 3.67
+      },
+      {
+        "id": 24,
+        "text": "The song brings you. The dark keeps you.",
+        "audioFile": "/audio/streak/whisperer/whisperer_24.mp3",
+        "durationSec": 3.57
+      },
+      {
+        "id": 25,
+        "text": "I have waited longer than you have lived.",
+        "audioFile": "/audio/streak/whisperer/whisperer_25.mp3",
+        "durationSec": 3.04
+      },
+      {
+        "id": 26,
+        "text": "Turn the light off. Join me.",
+        "audioFile": "/audio/streak/whisperer/whisperer_26.mp3",
+        "durationSec": 3.16
+      },
+      {
+        "id": 27,
+        "text": "You feel me, do you not?",
+        "audioFile": "/audio/streak/whisperer/whisperer_27.mp3",
+        "durationSec": 2.41
+      },
+      {
+        "id": 28,
+        "text": "One more step. Then rest. Forever.",
+        "audioFile": "/audio/streak/whisperer/whisperer_28.mp3",
+        "durationSec": 4.05
+      },
+      {
+        "id": 29,
+        "text": "The cold you feel is me.",
+        "audioFile": "/audio/streak/whisperer/whisperer_29.mp3",
+        "durationSec": 2.01
+      },
+      {
+        "id": 30,
+        "text": "I do not chase. I arrive.",
+        "audioFile": "/audio/streak/whisperer/whisperer_30.mp3",
+        "durationSec": 3.74
+      },
+      {
+        "id": 31,
+        "text": "Your name is written here. In dust.",
+        "audioFile": "/audio/streak/whisperer/whisperer_31.mp3",
+        "durationSec": 3.71
+      },
+      {
+        "id": 32,
+        "text": "Stand still, and it is painless.",
+        "audioFile": "/audio/streak/whisperer/whisperer_32.mp3",
+        "durationSec": 2.99
+      },
+      {
+        "id": 33,
+        "text": "The discs will not play for you much longer.",
+        "audioFile": "/audio/streak/whisperer/whisperer_33.mp3",
+        "durationSec": 3.22
+      },
+      {
+        "id": 34,
+        "text": "I am the pause between your heartbeats.",
+        "audioFile": "/audio/streak/whisperer/whisperer_34.mp3",
+        "durationSec": 2.92
+      },
+      {
+        "id": 35,
+        "text": "Look at the wall. I am beside it.",
+        "audioFile": "/audio/streak/whisperer/whisperer_35.mp3",
+        "durationSec": 3.01
+      },
+      {
+        "id": 36,
+        "text": "You run in circles. I walk in lines.",
+        "audioFile": "/audio/streak/whisperer/whisperer_36.mp3",
+        "durationSec": 3.11
+      },
+      {
+        "id": 37,
+        "text": "Hush now. Almost.",
+        "audioFile": "/audio/streak/whisperer/whisperer_37.mp3",
+        "durationSec": 2.18
+      },
+      {
+        "id": 38,
+        "text": "The floor remembers your feet.",
+        "audioFile": "/audio/streak/whisperer/whisperer_38.mp3",
+        "durationSec": 2.5
+      },
+      {
+        "id": 39,
+        "text": "I could whisper forever. Could you listen?",
+        "audioFile": "/audio/streak/whisperer/whisperer_39.mp3",
+        "durationSec": 3.92
+      },
+      {
+        "id": 40,
+        "text": "When the lights flicker, that is me, passing.",
+        "audioFile": "/audio/streak/whisperer/whisperer_40.mp3",
+        "durationSec": 4.61
+      },
+      {
+        "id": 41,
+        "text": "You are not lost. You are found.",
+        "audioFile": "/audio/streak/whisperer/whisperer_41.mp3",
+        "durationSec": 3.41
+      },
+      {
+        "id": 42,
+        "text": "Keep the light. It makes you easier.",
+        "audioFile": "/audio/streak/whisperer/whisperer_42.mp3",
+        "durationSec": 3.54
+      },
+      {
+        "id": 43,
+        "text": "I do not knock.",
+        "audioFile": "/audio/streak/whisperer/whisperer_43.mp3",
+        "durationSec": 1.82
+      },
+      {
+        "id": 44,
+        "text": "Your courage is loud. Delicious.",
+        "audioFile": "/audio/streak/whisperer/whisperer_44.mp3",
+        "durationSec": 2.86
+      },
+      {
+        "id": 45,
+        "text": "Rest your legs. I will do the standing.",
+        "audioFile": "/audio/streak/whisperer/whisperer_45.mp3",
+        "durationSec": 3.87
+      },
+      {
+        "id": 46,
+        "text": "The archive is patient. So am I.",
+        "audioFile": "/audio/streak/whisperer/whisperer_46.mp3",
+        "durationSec": 3.72
+      },
+      {
+        "id": 47,
+        "text": "One day the song stops. I will be there.",
+        "audioFile": "/audio/streak/whisperer/whisperer_47.mp3",
+        "durationSec": 3.56
+      },
+      {
+        "id": 48,
+        "text": "You looked right at me. And saw nothing.",
+        "audioFile": "/audio/streak/whisperer/whisperer_48.mp3",
+        "durationSec": 3.28
+      },
+      {
+        "id": 49,
+        "text": "Almost touching. Almost.",
+        "audioFile": "/audio/streak/whisperer/whisperer_49.mp3",
+        "durationSec": 2.62
+      },
+      {
+        "id": 50,
+        "text": "Stay. Stay. Stay.",
+        "audioFile": "/audio/streak/whisperer/whisperer_50.mp3",
+        "durationSec": 2.39
+      }
+    ]
+  }
+}

@@ -72,6 +72,7 @@ import {
 } from './engine/localAssetBudget.js';
 import { PlayerQuipsController } from './game/playerQuipsController.js';
 import { KillTauntsController, TAUNT_POOLS } from './audio/killTaunts.js';
+import { StreakSystem } from './audio/streakSystem.js';
 import {
   LEVEL_ONE_STEPS,
   ADS_TUTORIAL_PHASE,
@@ -263,6 +264,15 @@ hudRoot.innerHTML = `
       <span id="interact-text" class="horror-text text-4xl text-[#efe7d8]"></span>
     </div>
 
+    <!-- Kill-Streak Combo (Street Fighter-style count + blood splatter).
+         MILESTONES ONLY: StreakSystem fires onCombo on counts 3-10, never
+         on kills 1, 2 or 11+ (QUIPS_LIBRARY.md, Lotty, Nov 24, 2026). -->
+    <div id="streak-combo" class="fixed top-[34%] right-[9%] text-center pointer-events-none opacity-0 z-30">
+      <div class="streak-splat"></div>
+      <div id="streak-combo-count" class="streak-combo-text">3 HITS!</div>
+      <div class="streak-combo-sub">hit streak</div>
+    </div>
+
     <!-- Subtle Transient Whisper (vinyl drop/silence/pickup/effect notice) -->
     <div id="whisper-banner" class="fixed top-20 left-1/2 -translate-x-1/2 text-center opacity-0 transition-opacity duration-200">
       <span id="whisper-text" class="horror-text text-3xl text-[#d7cbb6]"></span>
@@ -390,6 +400,8 @@ const dom = {
   discCounterWrap: document.getElementById('disc-counter-wrap'),
   bruteReadout: document.getElementById('brute-readout'),
   bruteReadoutFill: document.getElementById('brute-readout-fill'),
+  streakCombo: document.getElementById('streak-combo'),
+  streakComboCount: document.getElementById('streak-combo-count'),
   discCounterLabel: document.getElementById('disc-counter-label'),
   interactPrompt: document.getElementById('interact-prompt'),
   interactText: document.getElementById('interact-text'),
@@ -467,6 +479,18 @@ function showWhisper(text, duration = 2.4) {
   whisperTimer = duration;
 }
 
+let streakComboTimer = 0;
+function showStreakCombo(count) {
+  if (!dom.streakCombo || !dom.streakComboCount) return;
+  dom.streakComboCount.textContent = `${count} HITS!`;
+  // Restart the pop animation on every milestone, even back-to-back.
+  dom.streakCombo.classList.remove('streak-pop');
+  void dom.streakCombo.offsetWidth;
+  dom.streakCombo.classList.add('streak-pop');
+  dom.streakCombo.style.opacity = '1';
+  streakComboTimer = 0.95;
+}
+
 let hitFeedbackTimer = 0;
 function triggerCrosshairFeedback(kind) {
   dom.crosshair.classList.remove('hit-zombie', 'hit-ghost');
@@ -499,6 +523,7 @@ const vinylPlayer = new VinylPlayer(camera, showWhisper);
 cathedralBus.attachContext(vinylPlayer.getAudioContext());
 let playerQuips = null;
 let killTaunts = null;
+let streakSystem = null;
 
 // Audio diagnostics (only with ?audiodebug=1): lets the playtest rig prove
 // the context stays running and the loops stay alive end to end.
@@ -1784,6 +1809,18 @@ async function bootstrap() {
     console.warn('[KillTauntsController] Non-fatal load failure:', err);
   });
 
+  // Kill-streak counter + voice lanes (QUIPS_LIBRARY.md): announcer counts,
+  // narrator quips, phantom candies, whisperer scarcity — fed by the
+  // EnemyManager kill callbacks and onPlayerDamaged below.
+  streakSystem = new StreakSystem({
+    onCaption: (text, dur) => showWhisper(text, dur),
+    onCombo: (count) => showStreakCombo(count),
+    audioBus: cathedralBus,
+  });
+  streakSystem.load().catch((err) => {
+    console.warn('[StreakSystem] Non-fatal load failure:', err);
+  });
+
   // Pass 2 (Nov 20, 2026): Batch 2 collectibles + case-lock controller.
   // The bus adapter maps the controller's dryNode name onto the bus's
   // dryGain; the key-turn rumble routes through the convolver like every
@@ -1902,29 +1939,38 @@ async function bootstrap() {
 
       if (gameState.hp <= 0) {
         gameState.dyingDelay = 0.55;
+        streakSystem?.reset();
         killTaunts?.trigger(TAUNT_POOLS.PLAYER_DEATH);
+      } else {
+        // A survived hit ends the streak — and a streak >= 8 ended by hits
+        // is the phantom's one trigger (the candies).
+        streakSystem?.onPlayerHit();
       }
     },
     onZombieKilled: () => {
       levelOneState = advanceLevelOne(levelOneState, 'lesser_enemy_killed').state;
       killTaunts?.trigger(TAUNT_POOLS.KILL);
+      streakSystem?.onKill();
       updateHudReadouts();
     },
     onGhostKilled: () => {
       levelOneState = advanceLevelOne(levelOneState, 'lesser_enemy_killed').state;
       killTaunts?.trigger(TAUNT_POOLS.KILL);
+      streakSystem?.onKill();
       updateHudReadouts();
     },
     onGhoulKilled: () => {
       // Single decrement path: MazeOneGhoul.die() fires onGhoulKilled once (enemies.js does NOT double-call onZombieKilled).
       levelOneState = advanceLevelOne(levelOneState, 'lesser_enemy_killed').state;
       killTaunts?.trigger(TAUNT_POOLS.KILL);
+      streakSystem?.onKill();
       updateHudReadouts();
     },
     onLionKilled: () => {
       // Boss death NEVER decrements lesser-enemy count; LionBoss.die() already invokes levelOneZones.notifyLionDefeated().
       levelOneState = advanceLevelOne(levelOneState, 'lion_sword_smite').state;
       killTaunts?.trigger(TAUNT_POOLS.KILL);
+      streakSystem?.onKill();
       updateHudReadouts();
     },
     onDropLoot: (x, z, itemId) => {
@@ -2963,6 +3009,12 @@ function stepSimulation(dt) {
       dom.whisperBanner.style.opacity = '0';
     }
   }
+  if (streakComboTimer > 0) {
+    streakComboTimer -= dt;
+    if (streakComboTimer <= 0 && dom.streakCombo) {
+      dom.streakCombo.style.opacity = '0';
+    }
+  }
   if (hitFeedbackTimer > 0) {
     hitFeedbackTimer -= dt;
     if (hitFeedbackTimer <= 0) {
@@ -2987,6 +3039,7 @@ function tick() {
 
   chromebookProfiler.update();
   resScaler.update(rawDt);
+  streakSystem?.update();
   stepSimulation(dt);
 
   let renderedWebGl = false;

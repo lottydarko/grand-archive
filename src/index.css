@@ -723,3 +723,54 @@ body {
 #bottom-right-track-title.is-fading-out { opacity: 0; }
 #first-play-collectible-toast { opacity: 0; transform: translate(-50%, 8px); transition: opacity 0.5s ease, transform 0.5s ease; }
 #first-play-collectible-toast.is-shown { opacity: 1; transform: translate(-50%, 0); }
+
+/* Kill-streak combo (StreakSystem milestones): Street Fighter energy —
+   heavy italic, skewed, blood-red with a hard black outline — over a
+   CSS blood splatter. Fires on counts 3-10 only. */
+.streak-combo-text {
+  position: relative;
+  font-family: var(--font-horror);
+  font-size: 3.4rem;
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  color: #d8232a;
+  transform: skewX(-8deg) rotate(-4deg);
+  text-shadow:
+    2px 0 0 #0a0505, -2px 0 0 #0a0505, 0 2px 0 #0a0505, 0 -2px 0 #0a0505,
+    3px 3px 0 #0a0505, 0 6px 18px rgba(0, 0, 0, 0.9);
+}
+.streak-combo-sub {
+  position: relative;
+  margin-top: 0.15rem;
+  font-family: var(--font-horror);
+  font-size: 1.05rem;
+  font-style: italic;
+  letter-spacing: 0.34em;
+  color: #e8dcc2;
+  transform: skewX(-8deg) rotate(-4deg);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95);
+}
+.streak-splat {
+  position: absolute;
+  inset: -46px -70px;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 46%, rgba(122, 14, 18, 0.88) 0%, rgba(96, 10, 14, 0.62) 26%, transparent 58%),
+    radial-gradient(circle at 24% 30%, rgba(110, 12, 16, 0.75) 0%, transparent 30%),
+    radial-gradient(circle at 76% 62%, rgba(110, 12, 16, 0.7) 0%, transparent 28%),
+    radial-gradient(circle at 64% 18%, rgba(90, 8, 12, 0.65) 0%, transparent 20%),
+    radial-gradient(circle at 34% 74%, rgba(90, 8, 12, 0.6) 0%, transparent 18%);
+}
+#streak-combo { transition: opacity 180ms ease; }
+#streak-combo.streak-pop .streak-combo-text { animation: streak-pop 260ms cubic-bezier(0.16, 1.4, 0.3, 1); }
+#streak-combo.streak-pop .streak-splat { animation: streak-splat-pop 320ms ease-out; }
+@keyframes streak-pop {
+  0% { transform: skewX(-8deg) rotate(-4deg) scale(1.9); }
+  100% { transform: skewX(-8deg) rotate(-4deg) scale(1); }
+}
+@keyframes streak-splat-pop {
+  0% { transform: scale(0.55); opacity: 0.4; }
+  100% { transform: scale(1); opacity: 1; }
+}
