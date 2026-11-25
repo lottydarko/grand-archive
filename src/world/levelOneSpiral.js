@@ -315,6 +315,151 @@ export function buildLevelOneCorridor(scene) {
     roughness: 0.55,
     metalness: 0.75,
   });
+
+  // PORTAL SURFACES (Lotty, Nov 24, 2026 — director ruling "make it
+  // purple like the one in Minecraft and make it move" + HL/Halo portal
+  // trace adopts #1–#4). Every gate doorway carries a Nether-style
+  // portal surface: translucent PURPLE, always swirling, never absent
+  // while the gate is closed. State reads inside the purple family
+  // (trace adopt #2): sealed = deep violet, slow churn, NO core;
+  // ready = bright lavender, near-white core, fast swirl — speed and
+  // brightness announce the gate before the whisper signpost is in
+  // range. One shared shader program and one shared time uniform for
+  // all six gates; per-gate materials differ only in uState
+  // (0 sealed → 1 ready), smoothed by updatePortalSurfaces() below.
+  // Chromebook budget: 3 sine octaves, no texture fetches, no loops,
+  // no new lights, no per-frame allocations.
+  const portalTimeUniform = { value: 0 };
+  const PORTAL_VERTEX_SHADER = `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `;
+  const PORTAL_FRAGMENT_SHADER = `
+    varying vec2 vUv;
+    uniform float uTime;
+    uniform float uState;
+    void main() {
+      float speed = mix(0.22, 1.0, uState);
+      float t = uTime * speed;
+      // Upward-flowing wavy columns — the Nether portal read.
+      vec2 p = vec2(vUv.x * 6.0, vUv.y * 3.0 - t * 0.55);
+      float w1 = sin(p.x * 2.4 + sin(p.y * 3.1 + t * 0.9) * 1.6 + t * 0.7);
+      float w2 = sin(p.x * 5.2 - t * 1.1 + sin(p.y * 6.3 - t * 1.3) * 1.3);
+      float w3 = sin((p.x + p.y) * 3.4 + t * 1.9);
+      float n = (w1 + w2 * 0.6 + w3 * 0.45) / 2.05 * 0.5 + 0.5;
+      vec3 deep = vec3(0.298, 0.114, 0.584); // #4c1d95
+      vec3 mid = vec3(0.545, 0.361, 0.965);  // #8b5cf6
+      vec3 lite = vec3(0.769, 0.710, 1.000); // lavender #c4b5fd
+      vec3 col = mix(deep, mid, smoothstep(0.22, 0.78, n));
+      col = mix(col, lite, smoothstep(0.76, 0.97, n) * 0.8);
+      // Near-white core exists ONLY in the ready state (adopt #2).
+      vec2 c = vUv - 0.5;
+      float core = exp(-dot(c, c) * 7.0) * uState;
+      col = mix(col, vec3(0.97, 0.95, 1.0), core * (0.45 + 0.35 * n));
+      float bright = mix(0.34, 1.3, uState);
+      // Edge falloff so the surface settles into its iron frame.
+      vec2 e = abs(vUv - 0.5) * 2.0;
+      float edge = smoothstep(1.0, 0.8, max(e.x, e.y));
+      float alpha = mix(0.9, 0.97, uState) * (0.72 + 0.28 * edge);
+      gl_FragColor = vec4(col * bright, alpha);
+    }
+  `;
+  const portalSurfaces = [];
+  let lastPortalTime = 0;
+  function makePortalMaterial() {
+    return new THREE.ShaderMaterial({
+      vertexShader: PORTAL_VERTEX_SHADER,
+      fragmentShader: PORTAL_FRAGMENT_SHADER,
+      uniforms: { uTime: portalTimeUniform, uState: { value: 0 } },
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+  }
+  // Frame emitter strips (trace adopt #3 — Halo's two emitters): bars
+  // at the top and bottom of the gate frame, dark while sealed, lit
+  // lavender when the gate's conditions are met. The shader says
+  // "portal"; the lit frame says "this one is open." Basic materials —
+  // no lights added to the scene.
+  const PORTAL_STRIP_SEALED = new THREE.Color(0x14081f);
+  const PORTAL_STRIP_READY = new THREE.Color(0xc4b5fd);
+  function addPortalSurface(gateId, gateMesh, faceW, faceH, axis, depth, exitDir) {
+    const material = makePortalMaterial();
+    const innerW = Math.max(0.6, faceW - 0.5);
+    const innerH = Math.max(0.6, faceH - 0.5);
+    const geo = new THREE.PlaneGeometry(innerW, innerH);
+    const off = depth / 2 + 0.012;
+    for (const s of [-1, 1]) {
+      const plane = new THREE.Mesh(geo, material);
+      if (axis === 'z') plane.position.set(0, 0, s * off);
+      else {
+        plane.rotation.y = Math.PI / 2;
+        plane.position.set(s * off, 0, 0);
+      }
+      plane.renderOrder = 2;
+      plane.userData = { dynamic: true, isPortalSurface: true, gate: gateId };
+      gateMesh.add(plane);
+    }
+    const stripMat = new THREE.MeshBasicMaterial({
+      color: PORTAL_STRIP_SEALED.clone(),
+      transparent: true,
+      opacity: 0.55,
+    });
+    const stripY = innerH / 2 + 0.06;
+    for (const sy of [-1, 1]) {
+      const strip =
+        axis === 'z'
+          ? new THREE.Mesh(new THREE.BoxGeometry(innerW + 0.06, 0.13, depth + 0.06), stripMat)
+          : new THREE.Mesh(new THREE.BoxGeometry(depth + 0.06, 0.13, innerW + 0.06), stripMat);
+      strip.position.set(0, sy * stripY, 0);
+      strip.userData = { dynamic: true, isPortalStrip: true, gate: gateId };
+      gateMesh.add(strip);
+    }
+    // Destination-side floor glyph (trace adopt #4 — Halo's receiver
+    // base polygon): a small shimmer ring on the floor past the gate
+    // marking the exit side. Child of the gate mesh — no new level
+    // geometry; it hides with the gate when the gate opens.
+    const glyphMat = new THREE.MeshBasicMaterial({
+      color: 0x8b5cf6,
+      transparent: true,
+      opacity: 0.3,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const glyph = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.6, 28), glyphMat);
+    glyph.rotation.x = -Math.PI / 2;
+    const floorLocalY = -gateMesh.position.y + 0.03;
+    if (axis === 'z') glyph.position.set(0, floorLocalY, exitDir * 1.45);
+    else glyph.position.set(exitDir * 1.45, floorLocalY, 0);
+    glyph.renderOrder = 2;
+    glyph.userData = { dynamic: true, isPortalGlyph: true, gate: gateId };
+    gateMesh.add(glyph);
+    portalSurfaces.push({ gate: gateId, material, stripMat, glyphMat, state: 0 });
+  }
+  // Driven once per frame from main.js with the sim clock and each
+  // gate's ready flag. uState eases toward its target (~1.4/s) so a
+  // gate flares up instead of snapping; strip light and glyph shimmer
+  // follow the same state value.
+  function updatePortalSurfaces(timeSeconds, targets) {
+    portalTimeUniform.value = timeSeconds;
+    const dt = Math.min(0.1, Math.max(0, timeSeconds - lastPortalTime));
+    lastPortalTime = timeSeconds;
+    for (let i = 0; i < portalSurfaces.length; i++) {
+      const s = portalSurfaces[i];
+      const target = targets && targets[s.gate] ? 1 : 0;
+      const step = dt * 1.4;
+      const diff = target - s.state;
+      s.state += Math.abs(diff) <= step ? diff : Math.sign(diff) * step;
+      s.material.uniforms.uState.value = s.state;
+      s.stripMat.color.copy(PORTAL_STRIP_SEALED).lerp(PORTAL_STRIP_READY, s.state);
+      s.stripMat.opacity = 0.55 + 0.45 * s.state;
+      s.glyphMat.opacity =
+        0.22 + 0.38 * s.state + 0.1 * Math.sin(timeSeconds * (1.5 + 2.5 * s.state) + i * 1.7);
+    }
+  }
   const plinthMat = new THREE.MeshStandardMaterial({
     color: 0x2c2824,
     roughness: 0.72,
@@ -415,6 +560,7 @@ export function buildLevelOneCorridor(scene) {
   room1NorthGateMesh.position.set(0, 2.2, 23.0);
   room1NorthGateMesh.userData = { dynamic: true };
   root.add(room1NorthGateMesh);
+  addPortalSurface('G3', room1NorthGateMesh, 4.4, 4.4, 'z', 0.45, 1);
 
   // 3. Castle Room 2 (10 m x 6 m, Z ∈ [23, 29], X ∈ [-5, 5]) — ADS tutorial & brain wipe
   const room2Floor = new THREE.Mesh(new THREE.PlaneGeometry(10, 6), castleStoneMat);
@@ -440,6 +586,7 @@ export function buildLevelOneCorridor(scene) {
   room2GateMesh.position.set(0, 2.3, 29.0);
   room2GateMesh.userData = { dynamic: true };
   root.add(room2GateMesh);
+  addPortalSurface('G4', room2GateMesh, 2.4, 4.6, 'z', 0.45, 1);
 
   // 4. Maze One ("The Spiral", 30 m x 22 m, Z ∈ [29, 51], X ∈ [-15, 15]) — Single InstancedMesh (1 draw call)
   const mazeFloor = new THREE.Mesh(new THREE.PlaneGeometry(30, 22), castleStoneMat);
@@ -587,6 +734,7 @@ export function buildLevelOneCorridor(scene) {
   portalGateMesh.position.set(0, 2.2, 7.15);
   portalGateMesh.userData = { dynamic: true };
   root.add(portalGateMesh);
+  addPortalSurface('G1', portalGateMesh, 4.4, 4.4, 'z', 0.45, 1);
 
   // White Aether North Gate G2 (Z = 15.0) — Lotty, Nov 23, 2026: a portal
   // between EVERY room. Until now the aether passage existed only as a
@@ -596,18 +744,21 @@ export function buildLevelOneCorridor(scene) {
   aetherGateMesh.position.set(0, 2.2, 15.0);
   aetherGateMesh.userData = { dynamic: true };
   root.add(aetherGateMesh);
+  addPortalSurface('G2', aetherGateMesh, 4.4, 4.4, 'z', 0.45, 1);
 
   // Trap-Door Exit from Maze One (Z = 50.8, opens ONLY with all 3 discs)
   const mazeExitGateMesh = new THREE.Mesh(new THREE.BoxGeometry(2.4, 4.6, 0.5), ironGateMat);
   mazeExitGateMesh.position.set(0, 2.3, 50.8);
   mazeExitGateMesh.userData = { dynamic: true };
   root.add(mazeExitGateMesh);
+  addPortalSurface('G5', mazeExitGateMesh, 2.4, 4.6, 'z', 0.5, 1);
 
   // Return Stair Gate on West wall of Lion Room (X = -7.0, Z = 63.5 — stays LOCKED until Lion is dead)
   const returnStairGateMesh = new THREE.Mesh(new THREE.BoxGeometry(0.45, 4.0, 3.0), ironGateMat);
   returnStairGateMesh.position.set(-7.0, 2.0, 63.5);
   returnStairGateMesh.userData = { dynamic: true };
   root.add(returnStairGateMesh);
+  addPortalSurface('G6', returnStairGateMesh, 3.0, 4.0, 'x', 0.45, -1);
 
   // Rising post-boss disc plinth in Lion Room (centered at (0, -2.2, 58))
   const risingCaseMesh = new THREE.Group();
@@ -646,6 +797,8 @@ export function buildLevelOneCorridor(scene) {
     room2GateMesh,
     mazeExitGateMesh,
     returnStairGateMesh,
+    portalSurfaces,
+    updatePortals: updatePortalSurfaces,
     risingCaseMesh,
     getGateColliders({ portalOpen, aetherGateOpen = true, room1NorthOpen = true, room2Open = true, mazeExitOpen, returnStairOpen }) {
       const gates = [];
