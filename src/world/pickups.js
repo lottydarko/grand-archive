@@ -2,8 +2,46 @@ import * as THREE from 'three';
 import { ITEM_CATALOG } from '../player/inventoryLogic.js';
 import { createSoftRadialTexture } from './textures.js';
 import { applyDiscSpinBob } from '../entities/clipAnimator.js';
-import { createRedShellsBoxPickupMesh } from '../player/levelOneWeapons.js';
 import { tryLoadModel } from '../utils/assetLoader.js';
+
+/**
+ * Creates a red shell box ammo pickup mesh (crimson cardboard box with embossed gauge label and brass shell heads).
+ */
+export function createRedShellsBoxPickupMesh() {
+  const g = new THREE.Group();
+
+  const redMat = new THREE.MeshStandardMaterial({
+    color: 0x9b1b1b, // Rich crimson
+    roughness: 0.65,
+    metalness: 0.08,
+  });
+  const labelMat = new THREE.MeshStandardMaterial({
+    color: 0xd9b35b, // Embossed gold
+    roughness: 0.35,
+    metalness: 0.65,
+  });
+  const brassMat = new THREE.MeshStandardMaterial({
+    color: 0xc89d3d,
+    roughness: 0.28,
+    metalness: 0.9,
+  });
+
+  const box = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.22), redMat);
+  box.position.y = 0.06;
+
+  const topLabel = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.004, 0.18), labelMat);
+  topLabel.position.set(0, 0.122, 0);
+
+  // Four visible brass rimmed shell ends peaking slightly out
+  for (let i = 0; i < 4; i++) {
+    const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.04, 10), brassMat);
+    shell.position.set(-0.045 + (i % 2) * 0.09, 0.11, -0.045 + Math.floor(i / 2) * 0.09);
+    g.add(shell);
+  }
+
+  g.add(box, topLabel);
+  return g;
+}
 
 /**
  * Composite 3D Alice-in-Wonderland Gothic World Pickups:
