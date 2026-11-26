@@ -19,6 +19,7 @@ import {
   shouldThrottleEnemyMixer,
 } from './clipAnimator.js';
 import { LionBoss, MazeOneGhoul, validateEnemyDamage } from './lionAndGhoulController.js';
+import { ShadowWhisperer } from './whisperer.js';
 import { ZOMBIE_PARAMS } from './enemySchedules.js';
 import { getSpiralMazeLayout, LEVEL_ONE_SPAWNS } from '../world/levelOneSpiral.js';
 
@@ -122,6 +123,104 @@ export class EnemyManager {
     this.enemies.push(entry);
     this.hitboxes.push(lion.hitboxMesh, lion.headHitboxMesh);
     return lion;
+  }
+
+  /**
+   * Spawn the Shadow Whisperer (Draft 1, Nov 25, 2026). NOT wired into any
+   * level spawn table yet — placement is Draft 2 integration work. Callers:
+   * the ?whisperer=1 playtest debug path in main.js, and Draft 2's level
+   * flow. Mirrors the LionBoss roster-entry split: the controller owns
+   * presentation + behavior logic; this manager owns hitboxes, the
+   * phantom-damage guard, and kill callbacks.
+   */
+  spawnWhisperer(x, z, opts = {}) {
+    const id = this.nextId++;
+    const ctrl = new ShadowWhisperer(this.scene, new THREE.Vector3(x, 0, z), {
+      whispererOpts: opts,
+    });
+    ctrl.assignId(id);
+    const entry = {
+      id,
+      kind: 'whisperer',
+      tags: ['spirit'],
+      hp: ctrl.totalHp,
+      maxHp: ctrl.totalHp,
+      alive: true,
+      dying: false,
+      group: ctrl.group,
+      controller: ctrl,
+      hitMeshes: [],
+      _hitSetForm: null,
+    };
+    this.enemies.push(entry);
+    this._syncWhispererHitboxes(entry);
+    if (!this._whispererSpawnedOnce) {
+      this._whispererSpawnedOnce = true;
+      // TODO(Draft 2): first-encounter intro cutscene hooks here — no
+      // generic archetype-intro system exists yet (see whisperer.js).
+      this.callbacks.onWhispererFirstSpawn?.(entry);
+    }
+    return entry;
+  }
+
+  /** Keep manager.hitboxes in step with the Whisperer's current form. */
+  _syncWhispererHitboxes(entry) {
+    const ctrl = entry.controller;
+    if (!ctrl || entry._hitSetForm === ctrl.form) return;
+    for (const m of entry.hitMeshes || []) {
+      const idx = this.hitboxes.indexOf(m);
+      if (idx >= 0) this.hitboxes.splice(idx, 1);
+    }
+    entry.hitMeshes = entry.alive && !entry.dying ? ctrl.activeHitMeshes() : [];
+    for (const m of entry.hitMeshes) this.hitboxes.push(m);
+    entry._hitSetForm = ctrl.form;
+  }
+
+  _killWhisperer(entry) {
+    // Evaporates — no corpse, no blood, no loot (it was never really here).
+    // Draft 1: deliberately does NOT call _checkLevelCleared — the
+    // Whisperer is not part of any level's lesser-enemy count until
+    // Draft 2 places it; the kill still counts for the streak system via
+    // callbacks.onWhispererKilled (wired in main.js).
+    entry.alive = false;
+    entry.dying = true;
+    for (const m of entry.hitMeshes || []) {
+      const idx = this.hitboxes.indexOf(m);
+      if (idx >= 0) this.hitboxes.splice(idx, 1);
+    }
+    entry.hitMeshes = [];
+    const pt = entry.group.position.clone().add(new THREE.Vector3(0, 1.3, 0));
+    this.spawnBurst(pt, 26, 0xcfc4e8, 2.8, -1.2);
+    this.spawnBurst(pt, 16, 0x14141f, 2.0, -0.8);
+    this.callbacks.onWhispererKilled?.(entry);
+  }
+
+  _updateWhisperer(e, dt, elapsed, playerPos, colliders) {
+    const ctrl = e.controller;
+    if (!ctrl) return;
+    if (e.dying) {
+      const events = ctrl.update(dt, elapsed, playerPos, colliders, this._playerYaw, this._worldBounds);
+      if (events.some((ev) => ev.type === 'evaporated')) {
+        ctrl.dispose();
+        const idx = this.enemies.indexOf(e);
+        if (idx >= 0) this.enemies.splice(idx, 1);
+      }
+      return;
+    }
+    const events = ctrl.update(dt, elapsed, playerPos, colliders, this._playerYaw, this._worldBounds);
+    e.hp = ctrl.totalHp;
+    for (const ev of events) {
+      if (ev.type === 'strike') {
+        // The ONLY door player damage walks through — range, LOS, and
+        // facing are all re-verified at land time (phantom-damage guard).
+        this._dealPlayerDamage(e, ev.damage, 'whisperer', playerPos, colliders);
+        const pt = new THREE.Vector3(ev.fromX, 1.2, ev.fromZ);
+        this.spawnBurst(pt, 18, 0x14141f, 2.6, -1.0);
+      } else if (ev.type === 'whisper_cue') {
+        this.callbacks.onWhisperCue?.(ev.reason, e);
+      }
+    }
+    this._syncWhispererHitboxes(e);
   }
 
   /**
@@ -1147,6 +1246,33 @@ export class EnemyManager {
       };
     }
 
+    // Shadow Whisperer: route through its controller like the lion — the
+    // form-cycle (mist ⇄ shadow man) and per-form HP pools live in
+    // whispererLogic, not in mazeLogic.applyWeaponHit.
+    if (enemy.kind === 'whisperer' && enemy.controller) {
+      const wRes = enemy.controller.applyHit(weaponType, isHeadshot);
+      if (!wRes.hit) return wRes;
+      enemy.hp = wRes.remainingHp;
+      for (const ev of wRes.events || []) {
+        if (ev.type === 'whisper_cue') this.callbacks.onWhisperCue?.(ev.reason, enemy);
+      }
+      const pt = hitPoint || enemy.group.position.clone().add(new THREE.Vector3(0, 1.3, 0));
+      this.spawnBurst(pt, wRes.flipped ? 20 : 10, 0xcfc4e8, wRes.flipped ? 2.8 : 1.8, -0.7);
+      if (wRes.killed) {
+        this._killWhisperer(enemy);
+      } else if (wRes.flipped) {
+        this._syncWhispererHitboxes(enemy);
+      }
+      return {
+        hit: true,
+        damaged: wRes.damaged,
+        killed: wRes.killed,
+        phaseRipple: true,
+        flipped: wRes.flipped,
+        remainingHp: enemy.hp,
+      };
+    }
+
     const result = applyWeaponHit(enemy, weaponType, isHeadshot);
     if (!result.hit) return result;
 
@@ -1635,6 +1761,11 @@ export class EnemyManager {
         if (e.controller && e.alive) {
           e.controller.update(aiDt, playerPos, this._animFrame, colliders, playerYaw, worldBounds);
         }
+        continue;
+      }
+
+      if (e.kind === 'whisperer') {
+        this._updateWhisperer(e, aiDt, elapsed, playerPos, colliders);
         continue;
       }
 

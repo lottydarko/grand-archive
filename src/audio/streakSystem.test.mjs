@@ -402,8 +402,12 @@ test('wiring: main.js hooks the streak system at the kill + damage callbacks', (
   assert.ok(mainSrc.includes("from './audio/streakSystem.js'"), 'main.js must import the streak system');
   assert.equal(
     mainSrc.split('streakSystem?.onKill()').length - 1,
-    4,
-    'onKill hooks all four EnemyManager kill callbacks (zombie/ghost/ghoul/lion)'
+    5,
+    'onKill hooks all five EnemyManager kill callbacks (zombie/ghost/ghoul/lion/whisperer)'
+  );
+  assert.ok(
+    mainSrc.includes('streakSystem?.requestWhisper()'),
+    'the Whisperer entity is the first requestWhisper caller (onWhisperCue)'
   );
   assert.ok(mainSrc.includes('streakSystem?.onPlayerHit()'), 'onPlayerDamaged feeds the phantom trigger');
   assert.ok(mainSrc.includes('streakSystem?.reset()'), 'player death resets the streak silently');

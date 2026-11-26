@@ -1336,6 +1336,15 @@ function startNewRun(lockPointer = true, cinemaReel = null) {
     gameState.flashlightOn = playerKit.flashlightOn;
   }
 
+  // Playtest-only Shadow Whisperer debug spawn (opt-in): ?whisperer=1
+  // places one in the hall ahead of the player spawn so the form cycle
+  // (shoot mist -> man runs past -> peek freeze -> shoot man -> mist) can
+  // be exercised without Draft 2's level placement. Without the param,
+  // nothing spawns and production behavior is unchanged.
+  if (enemies && new URLSearchParams(window.location.search).get('whisperer') === '1') {
+    enemies.spawnWhisperer(2.0, 1.5);
+  }
+
   // Always transition to playing immediately so scene is ready underneath the movie reel
   setPhase('playing');
   updateHudReadouts();
@@ -2117,6 +2126,19 @@ async function bootstrap() {
       killTaunts?.trigger(TAUNT_POOLS.KILL);
       streakSystem?.onKill();
       updateHudReadouts();
+    },
+    onWhispererKilled: () => {
+      // Draft 1: the Whisperer is NOT part of Level One's lesser-enemy
+      // count (placement is Draft 2), so no advanceLevelOne here — but the
+      // kill still counts for the streak system like every other enemy.
+      killTaunts?.trigger(TAUNT_POOLS.KILL);
+      streakSystem?.onKill();
+      updateHudReadouts();
+    },
+    onWhisperCue: () => {
+      // The entity asks; streakSystem's scarcity gates decide (most
+      // requests return unplayed by design).
+      streakSystem?.requestWhisper();
     },
     onGhoulKilled: () => {
       // Single decrement path: MazeOneGhoul.die() fires onGhoulKilled once (enemies.js does NOT double-call onZombieKilled).
