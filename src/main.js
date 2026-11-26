@@ -553,6 +553,7 @@ const levelOneSpawnFlags = {
   room2Triggered: false,
   room2TutorialZombie: null,
   mazeOnePopulated: false,
+  mazeDiscsSpawned: false,
   portalGuardsSpawned: false,
   hallBruteSpawned: false,
 };
@@ -1193,6 +1194,7 @@ function startNewRun(lockPointer = true, cinemaReel = null) {
   levelOneSpawnFlags.room2Triggered = false;
   levelOneSpawnFlags.room2TutorialZombie = null;
   levelOneSpawnFlags.mazeOnePopulated = false;
+  levelOneSpawnFlags.mazeDiscsSpawned = false;
   levelOneSpawnFlags.portalGuardsSpawned = false;
   levelOneSpawnFlags.hallBruteSpawned = false;
   portalEntered.G1 = false;
@@ -2037,10 +2039,10 @@ async function bootstrap() {
           levelOneState = advanceLevelOne(levelOneState, 'set_lesser_enemies_count', {
             count: enemies.aliveLesserCount(),
           }).state;
+          // DISC RULE (Lotty, Nov 25, 2026): the maze discs do NOT spawn
+          // here. They show up only once the maze horde is dead — see the
+          // spawn-on-clear in the portal-conditions block. Ammo is unaffected.
           if (worldItems && levelOneCorridor?.spiral) {
-            for (const disc of levelOneCorridor.spiral.discs) {
-              worldItems.spawn('maze_disc', disc.x, 0, disc.z, 1);
-            }
             for (const ammo of levelOneCorridor.spiral.ammoBoxes) {
               worldItems.spawn('red_shells', ammo.x, 0, ammo.z, 6);
             }
@@ -2280,6 +2282,22 @@ function stepSimulation(dt) {
   );
   const g3Ready = swordHeld && guardsSpawned && guardsAlive('G3') === 0;
   const room1NorthOpen = g3Ready && portalEntered.G3;
+  // DISC RULE (Lotty, Nov 25, 2026): the maze discs do not show up until
+  // the maze horde is dead. Kill the horde -> the discs appear -> collect
+  // them -> the trap door opens. The keys wait for the kill.
+  if (
+    !levelOneSpawnFlags.mazeDiscsSpawned &&
+    levelOneSpawnFlags.mazeOnePopulated &&
+    worldItems &&
+    levelOneCorridor?.spiral &&
+    enemies &&
+    enemies.mazeHordeCleared()
+  ) {
+    levelOneSpawnFlags.mazeDiscsSpawned = true;
+    for (const disc of levelOneCorridor.spiral.discs) {
+      worldItems.spawn('maze_disc', disc.x, 0, disc.z, 1);
+    }
+  }
   const mazeExitOpen = Boolean(
     levelOneState &&
       levelOneState.mazeExitUnlocked &&
@@ -2384,9 +2402,11 @@ function stepSimulation(dt) {
         x: 0,
         z: 50.7,
         text:
-          (levelOneState.mazeDiscsCollected || 0) >= (levelOneState.mazeDiscsRequired || 3)
+          !(enemies && enemies.mazeHordeCleared())
             ? 'sealed — what breathes in the maze still stands'
-            : `sealed — the door counts discs: ${levelOneState.mazeDiscsCollected || 0} of ${levelOneState.mazeDiscsRequired || 3}`,
+            : (levelOneState.mazeDiscsCollected || 0) >= (levelOneState.mazeDiscsRequired || 3)
+              ? 'sealed — the door has its discs'
+              : `sealed — the door counts discs: ${levelOneState.mazeDiscsCollected || 0} of ${levelOneState.mazeDiscsRequired || 3}`,
       },
       { id: 'stair', closed: !returnStairOpen, x: -7.15, z: 63.5, text: 'sealed — the lion still lives' },
     ];
