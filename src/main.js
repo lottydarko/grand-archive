@@ -30,6 +30,7 @@ import { WorldItemManager } from './world/pickups.js';
 import { createSoftRadialTexture } from './world/textures.js';
 import { CinematicPostProcessor } from './fps/playerKit.ts';
 import { PlayerKitAdapter } from './player/kitAdapter.js';
+import { SurvivalModeController } from './modes/survivalMode.js';
 import {
   createInventory,
   addItemToInventory,
@@ -237,9 +238,30 @@ hudRoot.innerHTML = `
     <!-- Center Crosshair Dot -->
     <div id="crosshair" class="crosshair-dot"></div>
 
-    <!-- Top-Center Floor Indicator (ONLY visible when Survival Mode is active) -->
+    <!-- Top-Center Floor Indicator (ONLY visible when Basement Survival is active) -->
     <div id="floor-wrap" class="fixed top-6 left-1/2 -translate-x-1/2 text-center hidden">
       <div id="floor-label" class="horror-text text-5xl text-[#e4c2b8] leading-none">floor 1</div>
+    </div>
+
+    <!-- Top-Center Survival HUD ("THE BAILY YARD": POINTS / WAVE / KILLS / REMAINING) -->
+    <div id="survival-hud" class="fixed top-5 left-1/2 -translate-x-1/2 flex items-center gap-8 px-6 py-2 bg-black/55 border border-[#e2d4be]/20 hidden">
+      <div class="text-center">
+        <div class="horror-text text-xl text-[#b9ae9c] leading-none">POINTS</div>
+        <div id="surv-points" class="horror-text text-4xl text-[#f0d590] leading-none">500</div>
+      </div>
+      <div class="text-center">
+        <div class="horror-text text-xl text-[#b9ae9c] leading-none">WAVE</div>
+        <div id="surv-wave" class="horror-text text-4xl text-[#e4c2b8] leading-none">1</div>
+      </div>
+      <div class="text-center">
+        <div class="horror-text text-xl text-[#b9ae9c] leading-none">KILLS</div>
+        <div id="surv-kills" class="horror-text text-4xl text-[#efe7d8] leading-none">0</div>
+      </div>
+      <div class="text-center">
+        <div class="horror-text text-xl text-[#b9ae9c] leading-none">REMAINING</div>
+        <div id="surv-remaining" class="horror-text text-4xl text-[#d66b63] leading-none">9</div>
+      </div>
+      <div id="surv-tonic" class="horror-text text-xl text-[#7ee89c] hidden">DARKO +20%</div>
     </div>
 
     <!-- Top-Right Maze One Disc Counter (visible in Maze One / while collecting discs) -->
@@ -362,25 +384,34 @@ hudRoot.innerHTML = `
 
   <!-- Game Over Overlay -->
   <div id="gameover-overlay" class="fixed inset-0 hidden items-center justify-center bg-black/82 pointer-events-auto z-30">
-    <div class="w-[min(420px,90vw)] bg-[#0b0708]/95 border border-[#c9342b]/40 p-9 flex flex-col items-center gap-5 text-center">
-      <h2 class="horror-text text-7xl text-[#d64237] leading-none m-0">claimed by the stacks</h2>
+    <div class="w-[min(440px,90vw)] bg-[#0b0708]/95 border border-[#c9342b]/40 p-9 flex flex-col items-center gap-5 text-center">
+      <h2 id="go-title" class="horror-text text-7xl text-[#d64237] leading-none m-0">claimed by the stacks</h2>
       <div class="flex items-center justify-center gap-8 py-2">
         <div>
-          <div class="horror-text text-2xl text-[#b9ae9c]">floor</div>
+          <div id="go-floor-label" class="horror-text text-2xl text-[#b9ae9c]">floor</div>
           <div id="go-floor" class="horror-text text-5xl text-[#efe7d8]">1</div>
         </div>
         <div>
           <div class="horror-text text-2xl text-[#b9ae9c]">felled</div>
           <div id="go-kills" class="horror-text text-5xl text-[#efe7d8]">0</div>
         </div>
-        <div>
+        <div id="go-seed-wrap">
           <div class="horror-text text-2xl text-[#b9ae9c]">seed</div>
           <div id="go-seed" class="horror-text text-4xl text-[#d99b43]">---</div>
         </div>
+        <div id="go-points-wrap" class="hidden">
+          <div class="horror-text text-2xl text-[#b9ae9c]">points</div>
+          <div id="go-points" class="horror-text text-4xl text-[#f0d590]">500</div>
+        </div>
       </div>
-      <button id="btn-try-again" data-start="true" type="button" class="horror-btn px-9 py-2.5 text-4xl border-[#c9342b]/60">
-        try again
-      </button>
+      <div class="flex flex-wrap items-center justify-center gap-3">
+        <button id="btn-try-again" data-start="true" type="button" class="horror-btn px-8 py-2.5 text-4xl border-[#c9342b]/60">
+          try again
+        </button>
+        <button id="btn-go-menu" type="button" class="horror-btn px-6 py-2.5 text-3xl text-[#cfc5b4]">
+          menu
+        </button>
+      </div>
     </div>
   </div>
 `;
@@ -394,6 +425,12 @@ const dom = {
   portalFlash: document.getElementById('portal-flash'),
   floorWrap: document.getElementById('floor-wrap'),
   floorLabel: document.getElementById('floor-label'),
+  survivalHud: document.getElementById('survival-hud'),
+  survPoints: document.getElementById('surv-points'),
+  survWave: document.getElementById('surv-wave'),
+  survKills: document.getElementById('surv-kills'),
+  survRemaining: document.getElementById('surv-remaining'),
+  survTonic: document.getElementById('surv-tonic'),
   discCounterWrap: document.getElementById('disc-counter-wrap'),
   bruteReadout: document.getElementById('brute-readout'),
   bruteReadoutFill: document.getElementById('brute-readout-fill'),
@@ -417,7 +454,15 @@ const dom = {
   seedInput: document.getElementById('seed-input'),
   pauseOverlay: document.getElementById('pause-overlay'),
   gameoverOverlay: document.getElementById('gameover-overlay'),
+  goTitle: document.getElementById('go-title'),
+  goFloorLabel: document.getElementById('go-floor-label'),
   goFloor: document.getElementById('go-floor'),
+  goKills: document.getElementById('go-kills'),
+  goSeedWrap: document.getElementById('go-seed-wrap'),
+  goSeed: document.getElementById('go-seed'),
+  goPointsWrap: document.getElementById('go-points-wrap'),
+  goPoints: document.getElementById('go-points'),
+  btnGoMenu: document.getElementById('btn-go-menu'),
   goKills: document.getElementById('go-kills'),
   goSeed: document.getElementById('go-seed'),
 };
@@ -814,6 +859,11 @@ const titleMenu = createCrtMenu(renderer, {
     suspendBackgroundMenuVideo(document.querySelector('video'));
     startNewRun(true, null);
   },
+  onSurvivalConfirmed: () => {
+    blackBox.phase = 'game';
+    suspendBackgroundMenuVideo(document.querySelector('video'));
+    startSurvivalMode(true);
+  },
 });
 const horrorOverlay = createHorrorOverlay(hudRoot);
 const mapOverlay = new MapOverlay(hudRoot);
@@ -881,6 +931,8 @@ let levelOneCorridor = null;
 let worldItems = null;
 let transformer = null;
 let playerKit = null;
+let survivalMode = null;
+let explorationSceneObjects = [];
 // Weapon the HUD readouts last rendered. stepSimulation compares against
 // this every frame so weapon switches refresh the HUD within one frame.
 let lastHudWeapon = null;
@@ -974,9 +1026,13 @@ function getDisplayWeaponName() {
 function syncBodyDataset() {
   const kitState = playerKit ? playerKit.getState() : null;
   const kitWeaponId = kitState ? kitState.weaponId : 'unarmed';
+  const isBailySurvival = Boolean(survivalMode && survivalMode.active);
   document.body.dataset.state = gameState.phase;
-  document.body.dataset.mode = transformer ? transformer.mode : 'exploration';
-  document.body.dataset.floor = transformer ? String(transformer.floor) : '0';
+  document.body.dataset.mode = isBailySurvival ? 'survival' : (transformer ? transformer.mode : 'exploration');
+  document.body.dataset.floor = isBailySurvival ? String(survivalMode.wave) : (transformer ? String(transformer.floor) : '0');
+  document.body.dataset.survivalPoints = String(survivalMode ? survivalMode.points : 0);
+  document.body.dataset.survivalWave = String(survivalMode ? survivalMode.wave : 0);
+  document.body.dataset.survivalKills = String(survivalMode ? survivalMode.kills : 0);
   document.body.dataset.hp = String(Math.round(gameState.hp));
   document.body.dataset.weapon = kitWeaponId;
   document.body.dataset.pistolOwned = 'true';
@@ -1070,7 +1126,19 @@ function updateHudReadouts() {
     }
   }
 
-  if (transformer && transformer.mode === 'survival') {
+  const inBailySurvival = Boolean(survivalMode && survivalMode.active);
+  if (dom.survivalHud) {
+    dom.survivalHud.classList.toggle('hidden', !inBailySurvival);
+    if (inBailySurvival) {
+      if (dom.survPoints) dom.survPoints.textContent = String(survivalMode.points);
+      if (dom.survWave) dom.survWave.textContent = String(survivalMode.wave);
+      if (dom.survKills) dom.survKills.textContent = String(survivalMode.kills);
+      if (dom.survRemaining) dom.survRemaining.textContent = String(survivalMode.getEnemiesRemainingCount());
+      if (dom.survTonic) dom.survTonic.classList.toggle('hidden', !(survivalMode.tonicWavesRemaining > 0));
+    }
+  }
+
+  if (!inBailySurvival && transformer && transformer.mode === 'survival') {
     dom.floorWrap.classList.remove('hidden');
     dom.floorLabel.textContent = `floor ${transformer.floor}`;
   } else {
@@ -1128,7 +1196,60 @@ function setPhase(nextPhase) {
   syncBodyDataset();
 }
 
+function setExplorationSceneVisible(visible) {
+  for (let i = 0; i < explorationSceneObjects.length; i++) {
+    const obj = explorationSceneObjects[i];
+    if (obj) obj.visible = visible;
+  }
+  if (worldItems?.items) {
+    for (let i = 0; i < worldItems.items.length; i++) {
+      if (worldItems.items[i].mesh) worldItems.items[i].mesh.visible = visible;
+    }
+  }
+}
+
+function exitSurvivalMode() {
+  if (survivalMode && survivalMode.active) {
+    survivalMode.stop();
+  }
+  setExplorationSceneVisible(true);
+}
+
+function startSurvivalMode(lockPointer = true) {
+  if (!survivalMode) return;
+  if (document.activeElement instanceof HTMLElement) {
+    document.activeElement.blur();
+  }
+  sfx.ensureContext();
+  sfx.startAmbience('combat');
+  hdriLighting.setZone('hall');
+
+  gameState.hp = gameState.maxHp;
+  gameState.dyingDelay = 0;
+  gameState.damageFlash = 0;
+  gameState.timeSlowTimer = 0;
+  gameState.flashlightOn = true;
+  dom.dmgVig.style.opacity = '0';
+  if (dom.brainSplatterOverlay) dom.brainSplatterOverlay.style.opacity = '0';
+  if (dom.adsTutorialBanner) dom.adsTutorialBanner.style.opacity = '0';
+
+  if (transformer) {
+    transformer.setRoomDarkened(false);
+    transformer.resetToExploration();
+  }
+
+  setExplorationSceneVisible(false);
+  survivalMode.start();
+  setPhase('playing');
+  updateHudReadouts();
+
+  if (lockPointer && playerKit) {
+    playerKit.requestPointerLock();
+  }
+}
+
 function startNewRun(lockPointer = true, cinemaReel = null) {
+  exitSurvivalMode();
   if (document.activeElement instanceof HTMLElement) {
     document.activeElement.blur();
   }
@@ -1287,8 +1408,26 @@ function triggerTrapdoorDescent() {
 
 // Wire overlay buttons
 document.getElementById('btn-try-again').addEventListener('click', () => {
+  if (survivalMode && survivalMode.active) {
+    startSurvivalMode(true);
+    return;
+  }
   startNewRun(true, CINEMA_REELS.restart);
 });
+if (dom.btnGoMenu) {
+  dom.btnGoMenu.addEventListener('click', () => {
+    cinemaLoader.cancel();
+    vinylPlayer.stopAll();
+    cathedralBus.stopLoop('hall-theme', 0.45);
+    sfx.stopAmbience();
+    exitSurvivalMode();
+    hdriLighting.setZone('hall');
+    transformer?.setRoomDarkened(false);
+    transformer?.resetToExploration();
+    enemies?.resetStats();
+    setPhase('title');
+  });
+}
 document.getElementById('btn-resume').addEventListener('click', () => {
   setPhase('playing');
   playerKit?.requestPointerLock();
@@ -1297,6 +1436,10 @@ document.getElementById('btn-pause-drive').addEventListener('click', () => {
   openDriveVault('paused');
 });
 document.getElementById('btn-restart').addEventListener('click', () => {
+  if (survivalMode && survivalMode.active) {
+    startSurvivalMode(true);
+    return;
+  }
   startNewRun(true, CINEMA_REELS.restart);
 });
 document.getElementById('btn-return-title').addEventListener('click', () => {
@@ -1304,6 +1447,7 @@ document.getElementById('btn-return-title').addEventListener('click', () => {
   vinylPlayer.stopAll();
   cathedralBus.stopLoop('hall-theme', 0.45);
   sfx.stopAmbience();
+  exitSurvivalMode();
   hdriLighting.setZone('hall');
   transformer?.setRoomDarkened(false);
   transformer?.resetToExploration();
@@ -1486,6 +1630,18 @@ window.__archiveTest = {
     mazeDiscsRequired: levelOneState ? levelOneState.mazeDiscsRequired : 3,
     mazeExitUnlocked: levelOneState ? Boolean(levelOneState.mazeExitUnlocked) : false,
     ammo: playerKit ? `${playerKit.ammo}/${playerKit.maxAmmo}` : '0/0',
+    survival: survivalMode
+      ? {
+          active: survivalMode.active,
+          points: survivalMode.points,
+          wave: survivalMode.wave,
+          kills: survivalMode.kills,
+          remaining: survivalMode.getEnemiesRemainingCount(),
+          tonicWavesRemaining: survivalMode.tonicWavesRemaining,
+          breaches: survivalMode.breaches.map((b) => ({ id: b.id, planks: b.planks })),
+          ownedWeapons: Array.from(survivalMode.ownedWeapons),
+        }
+      : null,
     postProcess: {
       active: Boolean(postProcessor),
       renderCount: postProcessRenderCount,
@@ -1525,6 +1681,12 @@ window.__archiveTest = {
   getTitleState: () => titleMenu.getStateSnapshot(),
   getAudioDiagnostics: () => cathedralBus.getDiagnostics(),
   activateSurvival: (seed = 'CHECK-PASS') => submitTerminalSeed(seed),
+  startSurvivalMode: () => {
+    blackBox.phase = 'game';
+    startSurvivalMode(false);
+  },
+  setPose: (pose) => playerKit?.setPose?.(pose),
+  triggerInteract: () => handlePlayerInteract(),
   aimAtNearestZombie: (placeAtDist = null, zombieId = null) => {
     if (!enemies || !playerKit) return false;
     const z =
@@ -1827,6 +1989,8 @@ async function bootstrap() {
     updateHudReadouts();
   };
 
+  explorationSceneObjects = scene.children.filter((c) => c !== camera);
+
   playerKit = new PlayerKitAdapter({
     scene,
     camera,
@@ -1836,6 +2000,9 @@ async function bootstrap() {
       if (kind === 'kill') {
         gameState.hitstop = 0.045;
       }
+    },
+    onDamageResult: (ev) => {
+      survivalMode?.onDamageEvent(ev);
     },
     onBarrelShot: handleBarrelShot,
     onInteract: () => {
@@ -1909,8 +2076,11 @@ async function bootstrap() {
   enemies = new EnemyManager(scene, {
     controls: playerKit,
     get levelOneZones() { return levelOneZones; },
-    onPlayerDamaged: (amount) => {
+    onPlayerDamaged: (amount, _src, meta) => {
       if (gameState.phase !== 'playing' || gameState.dyingDelay > 0) return;
+      if (survivalMode && survivalMode.active && typeof meta?.distance === 'number' && meta.distance > 2.6) {
+        return;
+      }
       gameState.hp = Math.max(0, gameState.hp - amount);
       gameState.damageFlash = 0.95;
       horrorOverlay.triggerDamage(1.0);
@@ -1972,6 +2142,22 @@ async function bootstrap() {
     },
   });
   enemies.levelOneMode = true;
+
+  survivalMode = new SurvivalModeController({
+    scene,
+    renderer,
+    enemies,
+    playerKit,
+    sfx,
+    cathedralBus,
+    showWhisper,
+    isSoftwareGl,
+    onHealFull: () => {
+      gameState.hp = gameState.maxHp;
+      updateHudReadouts();
+    },
+    onHudSync: () => updateHudReadouts(),
+  });
 
   levelOneZones = new LevelOneZoneController({
     risingCaseMesh: levelOneCorridor.risingCaseMesh,
@@ -2113,6 +2299,10 @@ let _prevGpMenu = false;
 
 function handlePlayerInteract() {
   if (gameState.phase !== 'playing') return;
+  if (survivalMode && survivalMode.active) {
+    survivalMode.handleInteract();
+    return;
+  }
   if (levelOneState && levelOneState.villainCutsceneActive) return;
   const interactable = findActiveInteractable();
   if (!interactable) return;
@@ -2338,11 +2528,105 @@ function stepSimulation(dt) {
     camera.position.y = THREE.MathUtils.damp(camera.position.y, 0.42, 6, dt);
     camera.rotation.z = THREE.MathUtils.damp(camera.rotation.z, 0.45, 6, dt);
     if (gameState.dyingDelay <= 0) {
-      dom.goFloor.textContent = String(Math.max(1, transformer.floor));
-      dom.goKills.textContent = String(enemies.zombiesFelled);
-      dom.goSeed.textContent = transformer.seed || '---';
+      if (survivalMode && survivalMode.active) {
+        if (dom.goTitle) dom.goTitle.textContent = 'overrun in the baily yard';
+        if (dom.goFloorLabel) dom.goFloorLabel.textContent = 'waves';
+        dom.goFloor.textContent = String(survivalMode.wave);
+        dom.goKills.textContent = String(survivalMode.kills);
+        if (dom.goPoints) dom.goPoints.textContent = String(survivalMode.points);
+        if (dom.goSeedWrap) dom.goSeedWrap.classList.add('hidden');
+        if (dom.goPointsWrap) dom.goPointsWrap.classList.remove('hidden');
+      } else {
+        if (dom.goTitle) dom.goTitle.textContent = 'claimed by the stacks';
+        if (dom.goFloorLabel) dom.goFloorLabel.textContent = 'floor';
+        dom.goFloor.textContent = String(Math.max(1, transformer.floor));
+        dom.goKills.textContent = String(enemies.zombiesFelled);
+        dom.goSeed.textContent = transformer.seed || '---';
+        if (dom.goSeedWrap) dom.goSeedWrap.classList.remove('hidden');
+        if (dom.goPointsWrap) dom.goPointsWrap.classList.add('hidden');
+      }
       setPhase('gameover');
     }
+    return;
+  }
+
+  if (survivalMode && survivalMode.active) {
+    if (playerKit) {
+      playerKit.updateBounds({});
+      _shootableScratch.length = 0;
+      if (enemies) {
+        const targets = enemies.getRaycastTargets();
+        for (let i = 0; i < targets.length; i++) _shootableScratch.push(targets[i]);
+      }
+      playerKit.setShootableMeshes(_shootableScratch);
+      playerKit.update(simDt);
+      playerKit.setViewmodelVisible(true);
+      gameState.flashlightOn = playerKit.flashlightOn;
+    }
+
+    let survUseXbox = false;
+    const survPads = navigator.getGamepads ? navigator.getGamepads() : null;
+    if (survPads) {
+      for (let i = 0; i < survPads.length; i++) {
+        const pad = survPads[i];
+        if (!pad || !pad.connected) continue;
+        survUseXbox = true;
+        if (pad.buttons?.[9]?.pressed && !_prevGpMenu) {
+          _prevGpMenu = true;
+          setPhase('paused');
+          return;
+        }
+        _prevGpMenu = Boolean(pad.buttons?.[9]?.pressed);
+        break;
+      }
+    }
+
+    survivalMode.update(simDt, elapsed);
+    const survPrompt = survivalMode.getActivePrompt();
+    if (survPrompt) {
+      dom.interactText.innerHTML = formatPromptHtml(survPrompt, survUseXbox);
+      dom.interactPrompt.style.opacity = '1';
+    } else {
+      dom.interactPrompt.style.opacity = '0';
+    }
+
+    let hudDirty = false;
+    if (playerKit) {
+      const st = playerKit.getState();
+      if (st.weaponId !== lastHudWeapon || st.ammo !== lastHudAmmo || st.isReloading !== lastHudReloading) {
+        lastHudWeapon = st.weaponId;
+        lastHudAmmo = st.ammo;
+        lastHudReloading = st.isReloading;
+        hudDirty = true;
+      }
+    }
+    if (hudDirty) updateHudReadouts();
+
+    enemies.update(
+      simDt,
+      elapsed,
+      playerKit ? playerKit.groundPosition : camera.position,
+      survivalMode.colliders,
+      1.0,
+      playerKit ? playerKit.getStealth() : null,
+      playerKit ? playerKit.yaw : 0,
+      null
+    );
+    updateHudReadouts();
+
+    if (gameState.damageFlash > 0) {
+      gameState.damageFlash = Math.max(0, gameState.damageFlash - dt * 2.4);
+      dom.dmgVig.style.opacity = String(gameState.damageFlash);
+    }
+    if (whisperTimer > 0) {
+      whisperTimer -= dt;
+      if (whisperTimer <= 0) dom.whisperBanner.style.opacity = '0';
+    }
+    if (hitFeedbackTimer > 0) {
+      hitFeedbackTimer -= dt;
+      if (hitFeedbackTimer <= 0) dom.crosshair.classList.remove('hit-zombie', 'hit-ghost');
+    }
+    dom.crosshair.classList.toggle('ads-hidden', Boolean(playerKit?.isAds));
     return;
   }
 

@@ -18,7 +18,7 @@ import * as THREE from 'three';
 //    restored on hide(); the menu runs at the prototype's ACES 1.15.
 // =============================================================================
 
-export function createCrtMenu(renderer, { onEnterConfirmed } = {}) {
+export function createCrtMenu(renderer, { onEnterConfirmed, onSurvivalConfirmed } = {}) {
   const canvas = renderer.domElement;
   const statusReadout = { textContent: '' };
   let menuVisible = false;
@@ -616,6 +616,7 @@ export function createCrtMenu(renderer, { onEnterConfirmed } = {}) {
           case 'MAIN':
             return [
               { label: 'NEW FILE', action: () => startGameLaunch() },
+              { label: 'SURVIVAL', action: () => startSurvivalLaunch() },
               { label: 'CONTINUE', action: () => switchScreen('FILES', 1) },
               { label: 'OPTIONS', action: () => switchScreen('OPTIONS', 1) },
               { label: 'GALLERY', action: () => switchScreen('GALLERY', 1) },
@@ -804,17 +805,17 @@ export function createCrtMenu(renderer, { onEnterConfirmed } = {}) {
         const items = getMenuItemsForCurrentScreen();
         appState.hitboxes = [];
 
-        const startY = appState.screen === 'MAIN' ? 345 : appState.screen === 'GALLERY' ? 515 : 250;
-        const rowStep = appState.screen === 'MAIN' ? 66 : 78;
+        const startY = appState.screen === 'MAIN' ? 338 : appState.screen === 'GALLERY' ? 515 : 250;
+        const rowStep = appState.screen === 'MAIN' ? 58 : 78;
 
         items.forEach((item, idx) => {
           const y = startY + idx * rowStep;
           const isSelected = idx === appState.selectedIndex;
 
           const boxW = 640;
-          const boxH = 52;
+          const boxH = appState.screen === 'MAIN' ? 46 : 52;
           const boxX = (W - boxW) * 0.5;
-          const boxY = y - 36;
+          const boxY = y - (appState.screen === 'MAIN' ? 33 : 36);
 
           appState.hitboxes.push({
             uMin: boxX / W,
@@ -1009,12 +1010,20 @@ export function createCrtMenu(renderer, { onEnterConfirmed } = {}) {
         completed: false,
         timer: 0,
         label: '',
-        toGame: false
+        toGame: false,
+        mode: 'story'
       };
 
       function startGameLaunch() {
         launchState.toGame = true;
+        launchState.mode = 'story';
         startLaunchSequence('NEW FILE // THE BASEMENT');
+      }
+
+      function startSurvivalLaunch() {
+        launchState.toGame = true;
+        launchState.mode = 'survival';
+        startLaunchSequence('SURVIVAL // THE BAILY YARD');
       }
 
       function startLaunchSequence(label) {
@@ -1283,7 +1292,12 @@ export function createCrtMenu(renderer, { onEnterConfirmed } = {}) {
               launchState.completed = true;
               if (launchState.toGame) {
                 launchState.active = false;
-                if (typeof onEnterConfirmed === 'function') onEnterConfirmed();
+                menuVisible = false;
+                if (launchState.mode === 'survival') {
+                  if (typeof onSurvivalConfirmed === 'function') onSurvivalConfirmed();
+                } else if (typeof onEnterConfirmed === 'function') {
+                  onEnterConfirmed();
+                }
               } else {
                 statusReadout.textContent = `${launchState.label} // CLICK OR PRESS ANY KEY TO RETURN`;
               }
@@ -1359,6 +1373,9 @@ export function createCrtMenu(renderer, { onEnterConfirmed } = {}) {
       return {
         get visible() { return menuVisible; },
         show() {
+          if (launchState.completed || launchState.active) {
+            resetFromLaunchSequence();
+          }
           menuVisible = true;
           savedToneMapping = renderer.toneMapping;
           savedExposure = renderer.toneMappingExposure;

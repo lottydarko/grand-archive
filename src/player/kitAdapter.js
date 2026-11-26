@@ -227,6 +227,7 @@ export class PlayerKitAdapter {
     onSoundEvent = null,
     onInteract = null,
     onHitFeedback = null,
+    onDamageResult = null,
     onBarrelShot = null,
   }) {
     this.scene = scene;
@@ -239,14 +240,19 @@ export class PlayerKitAdapter {
     this._onSoundEvent = onSoundEvent;
     this._onInteract = onInteract;
     this._onHitFeedback = onHitFeedback;
+    this._onDamageResult = onDamageResult;
     this._onBarrelShot = onBarrelShot;
 
     this._playing = false;
     this._movementLocked = false;
     this._lastBounds = null;
+    this._customBounds = null;
     this._lastInteractMs = -Infinity;
+    this._interactKeyHeld = false;
     this._firedThisFrame = false;
     this._lastFireWeaponId = initialWeapon;
+    this._sprintMultiplier = 1;
+    this._baseSprintSpeed = DEFAULT_PLAYER_CONFIG.movement.sprintSpeed;
 
     this._raycaster = new THREE.Raycaster();
     this._centerNdc = new THREE.Vector2(0, 0);
@@ -265,12 +271,24 @@ export class PlayerKitAdapter {
     };
     this._guardKeyDown = (e) => {
       if (!this._playing) {
+        this._interactKeyHeld = false;
         e.stopImmediatePropagation();
         return;
+      }
+      if (e.code === 'KeyE' || e.code === 'KeyF') {
+        this._interactKeyHeld = true;
       }
       if (e.repeat && (e.code === 'KeyE' || e.code === 'KeyG')) {
         e.stopImmediatePropagation();
       }
+    };
+    this._guardKeyUp = (e) => {
+      if (e.code === 'KeyE' || e.code === 'KeyF') {
+        this._interactKeyHeld = false;
+      }
+    };
+    this._guardWindowBlur = () => {
+      this._interactKeyHeld = false;
     };
     this._onPointerLockChange = () => {
       if (typeof document !== 'undefined') {
@@ -281,6 +299,8 @@ export class PlayerKitAdapter {
 
     this.domElement.addEventListener('mousedown', this._guardMouseDown, true);
     window.addEventListener('keydown', this._guardKeyDown, false);
+    window.addEventListener('keyup', this._guardKeyUp, false);
+    window.addEventListener('blur', this._guardWindowBlur, false);
     document.addEventListener('pointerlockchange', this._onPointerLockChange);
 
     this._origRequestPointerLock =
@@ -321,6 +341,11 @@ export class PlayerKitAdapter {
       onInteract: (source) => this._handleInteract(source),
     });
     this.kit.setViewmodelLayer?.(1);
+    const cfg = this.kit.getConfig?.();
+    if (cfg?.movement) {
+      this._baseSprintSpeed = cfg.movement.sprintSpeed;
+      cfg.movement.sprintSpeed = this._baseSprintSpeed * this._sprintMultiplier;
+    }
     this._syncViewmodelVisibility();
   }
 
@@ -469,13 +494,73 @@ export class PlayerKitAdapter {
     this.kit.setBounds(bounds);
   }
 
+  setCustomBounds(bounds) {
+    this._customBounds = bounds ? { ...bounds } : null;
+    if (this._customBounds) {
+      this.setBounds(this._customBounds);
+    }
+  }
+
   updateBounds(gateFlags) {
     const pos = this.kit.getState().position;
+    if (this._customBounds) {
+      const next = this._movementLocked
+        ? { minX: pos.x, maxX: pos.x, minZ: pos.z, maxZ: pos.z }
+        : this._customBounds;
+      this.setBounds(next);
+      return;
+    }
     const next = computeLevelOneKitBounds(pos, {
       ...gateFlags,
       movementLocked: this._movementLocked,
     });
     this.setBounds(next);
+  }
+
+  setSprintMultiplier(mult = 1) {
+    this._sprintMultiplier = Math.max(0.5, Number(mult) || 1);
+    const cfg = this.kit?.getConfig?.();
+    if (cfg?.movement) {
+      cfg.movement.sprintSpeed = this._baseSprintSpeed * this._sprintMultiplier;
+    }
+  }
+
+  refillWeaponAmmo(weaponId = this.weaponId) {
+    const kit = this.kit;
+    if (!kit || !kit.ammoByWeapon) return false;
+    const maxMap = { pistol9mm: 15, futuristic: 8, rustSmg: 71, retroSmg: 30, rustShotgun: 6 };
+    const maxVal = maxMap[weaponId];
+    if (!maxVal) return false;
+    kit.ammoByWeapon[weaponId] = maxVal;
+    if (kit.activeWeaponId === weaponId) {
+      kit.isReloading = false;
+      kit.reloadTime = 0;
+    }
+    return true;
+  }
+
+  refillAllAmmo() {
+    const kit = this.kit;
+    if (!kit || !kit.ammoByWeapon) return false;
+    const maxMap = { pistol9mm: 15, futuristic: 8, rustSmg: 71, retroSmg: 30, rustShotgun: 6 };
+    for (const [id, maxVal] of Object.entries(maxMap)) {
+      kit.ammoByWeapon[id] = maxVal;
+    }
+    kit.isReloading = false;
+    kit.reloadTime = 0;
+    return true;
+  }
+
+  isInteractHeld() {
+    if (!this._playing) return false;
+    if (this._interactKeyHeld) return true;
+    const pads = typeof navigator !== 'undefined' ? navigator.getGamepads?.() : null;
+    if (pads) {
+      for (let i = 0; i < pads.length; i++) {
+        if (pads[i]?.connected && pads[i].buttons?.[2]?.pressed) return true;
+      }
+    }
+    return false;
   }
 
   setShootableMeshes(meshes) {
@@ -553,12 +638,19 @@ export class PlayerKitAdapter {
     );
   }
 
-  resetSpawn({ position = this.initialPosition, yaw = Math.PI, pitch = -0.02, flashlightOn = true } = {}) {
+  resetSpawn({
+    position = this.initialPosition,
+    yaw = Math.PI,
+    pitch = -0.02,
+    flashlightOn = true,
+    initialWeapon = this.initialWeapon,
+  } = {}) {
     this._movementLocked = false;
     this._firedThisFrame = false;
     this._externalTrauma = 0;
+    this._interactKeyHeld = false;
     this.setExternalShake(null);
-    this._createKit(position, this.initialWeapon);
+    this._createKit(position, initialWeapon);
     this.setPose({ position, yaw, pitch });
     if (flashlightOn && !this.kit.getState().flashlightOn) {
       this.kit.toggleFlashlight('ui');
@@ -623,6 +715,16 @@ export class PlayerKitAdapter {
             pulseRumble('sword_hit', null);
           }
           this._onHitFeedback?.(result.killed ? 'kill' : result.phaseRipple ? 'ghost' : 'hit');
+          this._onDamageResult?.({
+            hit: true,
+            damaged: Boolean(result.damaged),
+            killed: Boolean(result.killed),
+            isHeadshot: isHead,
+            isMelee: true,
+            weaponId,
+            enemyId,
+            isBoss: Boolean(result.isBoss),
+          });
           return true;
         }
       }
@@ -637,6 +739,7 @@ export class PlayerKitAdapter {
 
     let anyHit = false;
     let barrelHitFired = false;
+    const hitByEnemy = new Map();
 
     for (let p = 0; p < pelletCount; p++) {
       const ndcX = isShotgun ? (Math.random() - 0.5) * spreadRad : 0;
@@ -678,6 +781,21 @@ export class PlayerKitAdapter {
         if (!result || !result.hit) continue;
 
         anyHit = true;
+        const prev = hitByEnemy.get(enemyId) || {
+          hit: true,
+          damaged: false,
+          killed: false,
+          isHeadshot: false,
+          isMelee: false,
+          weaponId,
+          enemyId,
+          isBoss: Boolean(result.isBoss),
+        };
+        prev.damaged = prev.damaged || Boolean(result.damaged);
+        prev.killed = prev.killed || Boolean(result.killed);
+        prev.isHeadshot = prev.isHeadshot || isHead;
+        hitByEnemy.set(enemyId, prev);
+
         if (result.phaseRipple) {
           this._onHitFeedback?.('ghost');
           if (isShotgun) break;
@@ -691,6 +809,12 @@ export class PlayerKitAdapter {
           this._onHitFeedback?.(result.killed ? 'kill' : 'zombie');
           break;
         }
+      }
+    }
+
+    if (this._onDamageResult && hitByEnemy.size > 0) {
+      for (const summary of hitByEnemy.values()) {
+        this._onDamageResult(summary);
       }
     }
 
@@ -723,6 +847,8 @@ export class PlayerKitAdapter {
   dispose() {
     this.domElement.removeEventListener('mousedown', this._guardMouseDown, true);
     window.removeEventListener('keydown', this._guardKeyDown, false);
+    window.removeEventListener('keyup', this._guardKeyUp, false);
+    window.removeEventListener('blur', this._guardWindowBlur, false);
     document.removeEventListener('pointerlockchange', this._onPointerLockChange);
     if (this._origRequestPointerLock && this.domElement) {
       this.domElement.requestPointerLock = this._origRequestPointerLock;
