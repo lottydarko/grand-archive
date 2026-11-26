@@ -2069,6 +2069,14 @@ async function bootstrap() {
         sfx.playFlashlightClick();
         gameState.flashlightOn = ev === 'flashlight_on';
         updateHudReadouts();
+      } else if (ev === 'ads_in') {
+        sfx.playAdsClick(true);
+      } else if (ev === 'ads_out') {
+        sfx.playAdsClick(false);
+      } else if (ev === 'weapon_raise') {
+        sfx.playWeaponHandle(true);
+      } else if (ev === 'weapon_lower') {
+        sfx.playWeaponHandle(false);
       }
     },
   });
@@ -2312,6 +2320,7 @@ function handlePlayerInteract() {
     interactable.active = false;
     portalFlashLevel = 0.9;
     sfx.playTrapdoorMechanism();
+    sfx.playPortalTransit();
   } else if (interactable.type === 'pickup') {
     if (interactable.itemId === 'first_disc') {
       worldItems.removeById(interactable.id);

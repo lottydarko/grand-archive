@@ -987,6 +987,82 @@ class SoundEffects {
     osc.stop(now + 0.026);
   }
 
+  playAdsClick(isIn) {
+    if (this.muted) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const tick = (t0, f0, f1, vol) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(f0, t0);
+      osc.frequency.exponentialRampToValueAtTime(f1, t0 + 0.014);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(vol, t0);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.02);
+      osc.connect(g).connect(this._getBusInput());
+      osc.start(t0);
+      osc.stop(t0 + 0.024);
+    };
+    if (isIn) {
+      tick(now, 1500, 700, 0.07);
+      tick(now + 0.045, 2100, 950, 0.09);
+    } else {
+      tick(now, 1100, 550, 0.07);
+    }
+  }
+
+  playWeaponHandle(isRaise) {
+    if (this.muted) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const thump = (t0, freq, vol, dur) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, t0);
+      osc.frequency.exponentialRampToValueAtTime(Math.max(60, freq * 0.55), t0 + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(vol, t0);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+      osc.connect(g).connect(this._getBusInput());
+      osc.start(t0);
+      osc.stop(t0 + dur + 0.01);
+    };
+    thump(now, isRaise ? 260 : 210, 0.1, 0.07);
+    thump(now + 0.055, isRaise ? 390 : 300, 0.06, 0.05);
+  }
+
+  playPortalTransit() {
+    if (this.muted) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(0.22, now + 0.07);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
+    g.connect(this._getBusInput());
+    const sweep = ctx.createOscillator();
+    sweep.type = 'sawtooth';
+    sweep.frequency.setValueAtTime(160, now);
+    sweep.frequency.exponentialRampToValueAtTime(2300, now + 0.3);
+    sweep.connect(g);
+    sweep.start(now);
+    sweep.stop(now + 0.45);
+    const shimmer = ctx.createOscillator();
+    shimmer.type = 'sine';
+    shimmer.frequency.setValueAtTime(2300, now);
+    shimmer.frequency.exponentialRampToValueAtTime(3600, now + 0.34);
+    const sg = ctx.createGain();
+    sg.gain.setValueAtTime(0.0001, now);
+    sg.gain.exponentialRampToValueAtTime(0.07, now + 0.09);
+    sg.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+    shimmer.connect(sg).connect(this._getBusInput());
+    shimmer.start(now);
+    shimmer.stop(now + 0.42);
+  }
+
   playShoveGrunt() {
     if (this.muted) return;
     const ctx = this.ensureContext();
