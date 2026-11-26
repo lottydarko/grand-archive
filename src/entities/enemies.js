@@ -1433,15 +1433,14 @@ export class EnemyManager {
 
     if (Math.random() < 0.55) {
       const roll = Math.random();
-      const dropId =
-        roll < 0.45
-          ? 'brass_ammo'
-          : roll < 0.78
-            ? 'drink_me'
-            : roll < 0.91
-              ? 'eat_me'
-              : 'pocket_watch';
-      if (this.callbacks.onDropLoot) {
+      // Playtest fix round (Nov 25, 2026): the "eat me" wafer and the
+      // White Rabbit pocket watch were removed from the game. Their
+      // share of the roll now drops nothing — the brass-ammo and
+      // DARKO-can rates are unchanged (no rebalance).
+      const dropId = roll < 0.45 ? 'brass_ammo' : roll < 0.78 ? 'drink_me' : null;
+      if (dropId === null) {
+        // no drop this kill
+      } else if (this.callbacks.onDropLoot) {
         this.callbacks.onDropLoot(enemy.group.position.x, enemy.group.position.z, dropId);
       } else {
         this._spawnAmmoPickup(enemy.group.position.x, enemy.group.position.z);

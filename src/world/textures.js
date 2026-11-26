@@ -413,7 +413,7 @@ export function createHandwrittenTitleTexture(title, isPlaying = false) {
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = '126px "Reenie Beanie", "Nothing You Could Do", cursive';
+    ctx.font = '126px "Cinzel", serif';
 
     // Subtle dark ink halo so handwritten title pops cleanly against bookshelves & moonlight
     ctx.lineWidth = 10;
@@ -480,10 +480,10 @@ export function createCRTScreenTexture() {
     ctx.shadowColor = isSurvival ? 'rgba(220, 45, 35, 0.85)' : 'rgba(90, 230, 125, 0.8)';
     ctx.shadowBlur = 12;
 
-    ctx.font = '62px "Reenie Beanie", "Nothing You Could Do", cursive';
+    ctx.font = '62px "Cinzel", serif';
     ctx.fillText(isSurvival ? `floor ${floor}` : 'open the floor', 256, 145);
 
-    ctx.font = '42px "Reenie Beanie", "Nothing You Could Do", cursive';
+    ctx.font = '42px "Cinzel", serif';
     ctx.fillStyle = isSurvival ? '#f3b2a6' : '#c8f5d0';
     ctx.fillText(isSurvival ? seed || 'shifting...' : '[e] wake archive', 256, 228);
 

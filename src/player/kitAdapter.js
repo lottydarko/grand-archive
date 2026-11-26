@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { createPlayerKit, DEFAULT_PLAYER_CONFIG } from '../fps/playerKit.ts';
 import { DEFAULT_LEVEL_ONE_ZONE_BOUNDS } from '../world/levelOneZones.js';
+import { computeSurvivalPlayerBounds } from '../modes/survivalLogic.js';
+
+export { computeSurvivalPlayerBounds as computeSurvivalKitBounds } from '../modes/survivalLogic.js';
 import {
   LEVEL_ONE_SPAWNS,
   SPIRAL_MAZE_GRID,
@@ -247,6 +250,7 @@ export class PlayerKitAdapter {
     this._movementLocked = false;
     this._lastBounds = null;
     this._customBounds = null;
+    this._survivalCollisionFn = null;
     this._lastInteractMs = -Infinity;
     this._interactKeyHeld = false;
     this._firedThisFrame = false;
@@ -501,8 +505,25 @@ export class PlayerKitAdapter {
     }
   }
 
+  /**
+   * Survival collision hook: while set, updateBounds windows the arena
+   * rect around the yard's obstacles + planked breaches (see
+   * computeSurvivalKitBounds) instead of using a static custom rect.
+   * @param {null | (() => Array<{id:string, planks:number}>)} getBreaches
+   */
+  setSurvivalCollision(getBreaches) {
+    this._survivalCollisionFn = typeof getBreaches === 'function' ? getBreaches : null;
+  }
+
   updateBounds(gateFlags) {
     const pos = this.kit.getState().position;
+    if (this._survivalCollisionFn) {
+      const next = this._movementLocked
+        ? { minX: pos.x, maxX: pos.x, minZ: pos.z, maxZ: pos.z }
+        : computeSurvivalPlayerBounds(pos, this._survivalCollisionFn() || []);
+      this.setBounds(next);
+      return;
+    }
     if (this._customBounds) {
       const next = this._movementLocked
         ? { minX: pos.x, maxX: pos.x, minZ: pos.z, maxZ: pos.z }

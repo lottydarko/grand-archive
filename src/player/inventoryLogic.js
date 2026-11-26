@@ -6,11 +6,19 @@
 export const MAX_INVENTORY_SLOTS = 6;
 
 export const ITEM_CATALOG = {
+  // Lotty, Nov 25, 2026 (playtest fix round): the health pickup IS the
+  // DARKO can now — the Studio kit's D-lightning energy drink
+  // (src/fps/groundPickups.ts), ported GA-side in src/world/darkoCan.js.
+  // The id stays 'drink_me' (save/drop wiring is keyed on it); only the
+  // player-facing name, description, and world visual changed. The
+  // "eat me" wafer and the White Rabbit pocket watch were removed from
+  // the game entirely in the same round (items + their shrink/slow
+  // effects), per the director's call.
   drink_me: {
     id: 'drink_me',
-    name: '"drink me" vial',
+    name: 'DARKO can',
     tag: 'curative',
-    description: 'crimson tincture in a corked phial. mends +40 vitality.',
+    description: 'ice-cold D-lightning can. mends +40 vitality.',
     maxStack: 3,
     kind: 'health',
     healAmount: 40,
@@ -23,25 +31,6 @@ export const ITEM_CATALOG = {
     maxStack: 4,
     kind: 'ammo',
     ammoAmount: 15,
-  },
-  eat_me: {
-    id: 'eat_me',
-    name: '"eat me" wafer',
-    tag: 'looking-glass',
-    description: 'dusted spiced biscuit. shrinks your stature for 8s and heals +15.',
-    maxStack: 2,
-    kind: 'shrink',
-    healAmount: 15,
-    shrinkDuration: 8.0,
-  },
-  pocket_watch: {
-    id: 'pocket_watch',
-    name: 'white rabbit watch',
-    tag: 'chronometer',
-    description: 'cracked brass timepiece. slows husks and wraiths for 6s.',
-    maxStack: 2,
-    kind: 'slow',
-    slowDuration: 6.0,
   },
   level_disc: {
     id: 'level_disc',
@@ -259,8 +248,6 @@ export function useInventoryItem(inv, slotIndex, playerState) {
     effects: {
       heal: def.healAmount || 0,
       ammo: def.ammoAmount || 0,
-      shrinkDuration: def.shrinkDuration || 0,
-      slowDuration: def.slowDuration || 0,
     },
   };
 }

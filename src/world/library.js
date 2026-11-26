@@ -644,15 +644,12 @@ export function buildGrandLibrary(scene, renderer, tracks = [], isSoftwareGl = f
   deskTop.position.set(0, 0.84, 0);
   deskGroup.add(deskTop, crtBox, crtGlass);
 
-  const terminalInteractable = {
-    type: 'terminal',
-    id: 'crt-terminal',
-    position: new THREE.Vector3(-6.0, 1.25, -5.4),
-    radius: 2.4,
-    active: false, // Disabled during Level One scripted run so player cannot bypass gates
-    getPrompt: () => '[x]',
-  };
-  interactables.push(terminalInteractable);
+  // The CRT desk is scenery now (playtest fix round, Nov 25, 2026):
+  // its seed-entry interactable is GONE with the hall seed generator —
+  // the desk and its screen stay, but nothing can be typed into it and
+  // the shelves never rearrange. The Drive vault lives on the pause
+  // menu and the game-over screen instead.
+  const terminalInteractable = null;
 
   // Circling gothic bats under rafters
   const bats = [];

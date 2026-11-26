@@ -153,6 +153,7 @@ export function createLevelOneState(initialParams = {}) {
     },
     hasFirstDisc: false,
     discInCase: false,
+    firstDiscConsumed: false, // set when the G1 transit spends the disc (one disc, one passage)
     discPlacementAnim: 0, // 0 to 1 progress of unskippable placement animation
     loadout: 'level1', // 'level1' (unarmed -> Balistucia + Sword)
     weaponsUnlocked: {
@@ -255,6 +256,19 @@ export function advanceLevelOne(state, event, payload = {}) {
         next.step = LEVEL_ONE_STEPS.WHITE_AETHER;
         queueVo('line05'); // aether doors
         events.push({ type: 'white_aether_entered' });
+      }
+      break;
+    }
+
+    case 'consume_first_disc': {
+      // Canon (Lotty, Nov 25, 2026): one disc, one passage. The transit
+      // through the disc-opened G1 gate spends the disc — the case is
+      // empty again and the gate re-seals behind the player. The way
+      // back is the west Return Stair, not the portal.
+      if (next.discInCase) {
+        next.discInCase = false;
+        next.firstDiscConsumed = true;
+        events.push({ type: 'disc_consumed' });
       }
       break;
     }

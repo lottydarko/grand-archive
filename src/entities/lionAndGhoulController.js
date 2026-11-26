@@ -732,19 +732,48 @@ export class MazeOneGhoul {
     this._animT += dt;
     const t = this._animT;
 
-    // Keep Ghoul feet strictly grounded at floor Y = 0 (zero hover bob)
-    this._glbHolder.position.y = 0;
-    if (this.state === GHOUL_STATES.CHASE) {
-      // Hunched stalking gait + predatory sway (grounded)
-      this._glbHolder.rotation.x = 0.16 + Math.sin(t * 7.2) * 0.05;
-      this._glbHolder.rotation.z = Math.sin(t * 3.6) * 0.08;
+    // PROCEDURAL LOCOMOTION (playtest fix round, Lotty Nov 25, 2026 —
+    // "the ghouls just slide"). ghoul.glb is an UNRIGGED static mesh:
+    // parsed GLB header shows 0 skins, 0 animation clips, 1 node — the
+    // Meshy humanoid auto-rig was paywalled, so there is no skeleton to
+    // bind the zombie's Mixamo walk clip to. Until a rigged ghoul
+    // exists, the gait is procedural — but it must move WITH the body:
+    // the stride phase advances by REAL ground speed (measured from
+    // the group's own displacement), driving a footfall bob, a stride
+    // rock, and a weight-shift sway. The old version pinned Y to 0 and
+    // wiggled on a fixed clock, which read as a statue gliding.
+    const pos = this.group.position;
+    let groundSpeed = 0;
+    if (this._lastAnimPos && dt > 0) {
+      groundSpeed =
+        Math.hypot(pos.x - this._lastAnimPos.x, pos.z - this._lastAnimPos.z) / dt;
+      this._lastAnimPos.set(pos.x, 0, pos.z);
+    } else {
+      this._lastAnimPos = new THREE.Vector3(pos.x, 0, pos.z);
+    }
+    const STRIDE_LENGTH_M = 1.15;
+    this._stridePhase =
+      (this._stridePhase || 0) + (groundSpeed / STRIDE_LENGTH_M) * Math.PI * 2 * dt;
+    const ph = this._stridePhase;
+    const strideAmt = Math.min(1.15, Math.max(0, groundSpeed / 3.9));
+
+    if (this.state === GHOUL_STATES.CHASE && strideAmt > 0.03) {
+      // Footfall bob (one pulse per step) + stride rock + sway.
+      this._glbHolder.position.y = Math.abs(Math.sin(ph)) * 0.055 * strideAmt;
+      this._glbHolder.rotation.x = 0.16 + Math.sin(ph) * 0.05 * strideAmt;
+      this._glbHolder.rotation.z = Math.sin(ph) * 0.065 * strideAmt;
+      this._glbHolder.rotation.y = Math.sin(ph) * 0.045 * strideAmt;
     } else if (this.state === GHOUL_STATES.MELEE) {
       // Claw-swipe forward lunge pulse (grounded)
+      this._glbHolder.position.y = 0;
+      this._glbHolder.rotation.y = 0;
       const swipe = Math.sin(t * 14.0);
       this._glbHolder.rotation.x = 0.24 + swipe * 0.18;
       this._glbHolder.rotation.z = swipe * 0.14;
     } else {
       // Idle hunched breathing (grounded)
+      this._glbHolder.position.y = 0;
+      this._glbHolder.rotation.y = 0;
       this._glbHolder.rotation.x = 0.1 + Math.sin(t * 1.4) * 0.03;
       this._glbHolder.rotation.z = Math.sin(t * 1.1) * 0.04;
     }

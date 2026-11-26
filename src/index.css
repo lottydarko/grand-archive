@@ -1,8 +1,13 @@
 @import "tailwindcss";
 
 :root {
-  --font-horror: "Reenie Beanie", "Nothing You Could Do", cursive;
-  --font-horror-alt: "Nothing You Could Do", "Reenie Beanie", cursive;
+  /* Playtest fix round (Lotty, Nov 25, 2026): the handwriting families
+     (Reenie Beanie + Nothing You Could Do) are DELETED game-wide at the
+     director's word — "that stupid fucking test font that this thing
+     keeps using." HUD text now runs on Cinzel, a Roman capitals serif
+     ("Times New Roman or something better"), self-hosted. */
+  --font-horror: "Cinzel", "Times New Roman", serif;
+  --font-horror-alt: "Cinzel", "Times New Roman", serif;
   --ink-pale: #e8e1d4;
   --ink-dim: rgba(226, 217, 200, 0.72);
   --ink-crimson: #c9342b;
@@ -65,6 +70,21 @@ body {
 
 .horror-btn:focus-visible {
   box-shadow: 0 0 0 2px rgba(217, 155, 67, 0.65);
+}
+
+/* Playtest fix round (Nov 25, 2026): the Survival HUD bar and the
+   game-over screen render in Cinzel with yellow values — the
+   director's serif + yellow ruling. The game-over TITLE keeps its red
+   (set inline in the markup). */
+#survival-hud .horror-text {
+  font-family: "Cinzel", "Times New Roman", serif;
+}
+#gameover-overlay .horror-text,
+#gameover-overlay .horror-btn {
+  font-family: "Cinzel", "Times New Roman", serif;
+}
+#gameover-overlay .horror-btn {
+  color: #facc15;
 }
 
 .crt-panel {
@@ -539,7 +559,7 @@ body {
 
 /* White chalky freaky handwriting — chalk dust on a blackboard */
 .chalk-white-text {
-  font-family: "Rock Salt", "Reenie Beanie", cursive;
+  font-family: "Rock Salt", cursive;
   color: #ffffff;
   -webkit-text-stroke: 1.1px rgba(255, 255, 255, 0.22);
   paint-order: stroke fill;
@@ -729,7 +749,7 @@ body {
    CSS blood splatter. Fires on counts 3-10 only. */
 .streak-combo-text {
   position: relative;
-  font-family: var(--font-horror);
+  font-family: "Cinzel", "Times New Roman", serif;
   font-size: 3.4rem;
   font-weight: 900;
   font-style: italic;
@@ -744,7 +764,7 @@ body {
 .streak-combo-sub {
   position: relative;
   margin-top: 0.15rem;
-  font-family: var(--font-horror);
+  font-family: "Cinzel", "Times New Roman", serif;
   font-size: 1.05rem;
   font-style: italic;
   letter-spacing: 0.34em;

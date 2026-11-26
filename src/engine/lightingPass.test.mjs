@@ -34,7 +34,9 @@ test('lighting pass: environment fill targets come from lightingConfig', () => {
   // (the literal 0.30/0.20 values this test used to pin were the numbers
   // that shipped the game dark). The config values themselves are guarded
   // by lightingConfig.test.mjs floors.
-  assert.match(mainSrc, /mode === 'survival'\s*\?\s*ENV_SURVIVAL\s*:\s*ENV_PLAYING/);
+  // Nov 25, 2026: the seeded-floor transformer is deleted — Survival
+  // is the Baily Yard mode, so the switch reads survivalMode.active.
+  assert.match(mainSrc, /survivalMode\.active\s*\?\s*ENV_SURVIVAL\s*:\s*ENV_PLAYING/);
 });
 
 test('lighting pass: zombie, ghoul and lion cast shadows; ghost stays unlit by design', () => {

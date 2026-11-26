@@ -1056,43 +1056,9 @@ export function createCrtMenu(renderer, { onEnterConfirmed, onSurvivalConfirmed 
       }
 
       // =========================================================================
-      // 10. 3D RAYCASTING (INVERSE CRT BARREL DISTORTION) & INPUT HANDLERS
+      // 10. INPUT HANDLERS (keyboard + gamepad only — mouse removed
+      // Nov 25, 2026; the raycast hover/click hit-testing went with it)
       // =========================================================================
-      const raycaster = new THREE.Raycaster();
-      const mouseNDC = new THREE.Vector2();
-
-      function inverseWarpUv(uvX, uvY) {
-        if (!appState.warpEnabled) return { x: uvX, y: uvY };
-        const cx = uvX * 2.0 - 1.0;
-        const cy = uvY * 2.0 - 1.0;
-        const r2 = cx * cx + cy * cy;
-        const wx = cx * (1.0 + 0.16 * r2);
-        const wy = cy * (1.0 + 0.16 * r2);
-        return { x: wx * 0.5 + 0.5, y: wy * 0.5 + 0.5 };
-      }
-
-      function getHitboxAtClientXY(clientX, clientY) {
-        const rect = canvas.getBoundingClientRect();
-        const rawU = (clientX - rect.left) / rect.width;
-        const rawV = 1.0 - (clientY - rect.top) / rect.height;
-        const warped = inverseWarpUv(rawU, rawV);
-
-        mouseNDC.x = warped.x * 2.0 - 1.0;
-        mouseNDC.y = warped.y * 2.0 - 1.0;
-
-        raycaster.setFromCamera(mouseNDC, camera);
-        const hits = raycaster.intersectObject(crtScreenMesh, false);
-        if (!hits.length || !hits[0].uv) return -1;
-
-        const uv = hits[0].uv;
-        for (let i = 0; i < appState.hitboxes.length; i++) {
-          const hb = appState.hitboxes[i];
-          if (uv.x >= hb.uMin && uv.x <= hb.uMax && uv.y >= hb.vMin && uv.y <= hb.vMax) {
-            return i;
-          }
-        }
-        return -1;
-      }
 
       // Shared menu actions — keyboard and the Xbox controller drive the
       // SAME code paths (Lotty, Nov 25, 2026: the main screen reacts to
@@ -1158,41 +1124,11 @@ export function createCrtMenu(renderer, { onEnterConfirmed, onSurvivalConfirmed 
         }
       }
 
-      window.addEventListener('mousemove', (e) => {
-        if (!menuVisible) return;
-        if (launchState.active) return;
-        const hitIdx = getHitboxAtClientXY(e.clientX, e.clientY);
-        if (hitIdx !== -1 && hitIdx !== appState.selectedIndex) {
-          appState.selectedIndex = hitIdx;
-          const items = getMenuItemsForCurrentScreen();
-          updateCursorCameraOffset(hitIdx, items.length);
-          initAudio();
-          playRelayClick(290, 0.03, 0.05);
-          triggerGlitch(0.45, false);
-          renderCRTCanvas();
-        }
-        canvas.style.cursor = hitIdx !== -1 ? 'pointer' : 'crosshair';
-      });
-
-      window.addEventListener('click', (e) => {
-        if (!menuVisible) return;
-        initAudio();
-        if (launchState.completed) {
-          resetFromLaunchSequence();
-          return;
-        }
-        if (launchState.active) return;
-        const hitIdx = getHitboxAtClientXY(e.clientX, e.clientY);
-        const items = getMenuItemsForCurrentScreen();
-        if (hitIdx !== -1 && items[hitIdx]) {
-          appState.selectedIndex = hitIdx;
-          updateCursorCameraOffset(hitIdx, items.length);
-          playRelayClick(190, 0.055, 0.11);
-          playStabSound(1.0);
-          items[hitIdx].action();
-          renderCRTCanvas();
-        }
-      });
+      // Mouse input REMOVED (Lotty, Nov 25, 2026 — "remove mouse
+      // capabilities plz"; he plays on an Xbox controller). The old
+      // mousemove hover-select and click-confirm listeners are gone:
+      // the menu is driven by keyboard + gamepad only, through the
+      // shared moveSelection/confirmSelection/backToMainScreen actions.
 
       window.addEventListener('keydown', (e) => {
         if (!menuVisible) return;

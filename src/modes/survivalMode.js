@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { createStoneTextures, createWalnutTextures, createNeroMarquinaTextures } from '../world/textures.js';
+import { createDarkoCanMesh, createAmmoTinMesh } from '../world/darkoCan.js';
+import { pickupAnimPose } from '../world/pickupAnimLogic.js';
 import {
   SURVIVAL_POINTS,
   SURVIVAL_SPAWN,
@@ -113,6 +115,8 @@ export class SurvivalModeController {
     this.stations = SURVIVAL_STATIONS;
     this.brazierLights = [];
     this.dropMeshes = { maxAmmo: null, fullHealth: null };
+    /** In-flight boss-drop pickup animations (fly to hand, then hide). */
+    this.dropAnims = [];
     this.group = null;
     // Was 8 placeholder routings; all replaced with purpose-built synths in
     // sfx.js by Muse's SFX pass (Nov 25, 2026). Empty = no placeholders left.
@@ -404,21 +408,28 @@ export class SurvivalModeController {
       backPlaque.rotation.y += Math.PI;
       sGroup.add(backPlaque);
 
+      if (st.id === 'S-4') {
+        // Ammo Cache wears the kit's Soviet ammo tin (playtest fix
+        // round, Nov 25, 2026 — "import the ammo packs").
+        const tin = createAmmoTinMesh();
+        tin.position.y = 1.05;
+        tin.rotation.y = 0.5;
+        sGroup.add(tin);
+      }
+
       g.add(sGroup);
     });
 
-    // Boss wave drop visuals (hidden until Lion dies)
-    const maxAmmoMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.62, 0.42, 0.45),
-      new THREE.MeshStandardMaterial({ color: 0xd4af37, emissive: 0x6b4e10, emissiveIntensity: 0.7 })
-    );
+    // Boss wave drop visuals (hidden until Lion dies). Playtest fix
+    // round (Nov 25, 2026): Max Ammo is the kit's ammo tin and Full
+    // Health is the DARKO can — the gold box and red cylinder are gone.
+    const maxAmmoMesh = createAmmoTinMesh();
+    maxAmmoMesh.scale.setScalar(2.1);
     maxAmmoMesh.visible = false;
     g.add(maxAmmoMesh);
 
-    const fullHealthMesh = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.18, 0.22, 0.55, 10),
-      new THREE.MeshStandardMaterial({ color: 0xc92c2c, emissive: 0x7a1212, emissiveIntensity: 0.8 })
-    );
+    const fullHealthMesh = createDarkoCanMesh('volt');
+    fullHealthMesh.scale.setScalar(2.0);
     fullHealthMesh.visible = false;
     g.add(fullHealthMesh);
 
@@ -505,7 +516,11 @@ export class SurvivalModeController {
 
     if (this.playerKit) {
       this.playerKit.setSprintMultiplier?.(1);
-      this.playerKit.setCustomBounds?.(SURVIVAL_KIT_BOUNDS);
+      // Playtest fix round (Nov 25, 2026): windowed obstacle collision
+      // (altar / pillars / bastions / stations / planked breaches)
+      // instead of one static arena rect the player clipped through.
+      this.playerKit.setSurvivalCollision?.(() => this.breaches);
+      this.playerKit.setCustomBounds?.(null);
       this.playerKit.resetSpawn({
         position: new THREE.Vector3(SURVIVAL_SPAWN.x, this.playerKit.standEyeHeight, SURVIVAL_SPAWN.z),
         yaw: SURVIVAL_SPAWN.yaw,
@@ -526,6 +541,7 @@ export class SurvivalModeController {
     this.repairTargetBreachId = null;
     this._clearSurvivalEnemies();
     this.playerKit?.setSprintMultiplier?.(1);
+    this.playerKit?.setSurvivalCollision?.(null);
     this.playerKit?.setCustomBounds?.(null);
   }
 
@@ -825,7 +841,7 @@ export class SurvivalModeController {
       this.dropMeshes.maxAmmo.rotation.y = elapsed * 2.1;
       if (Math.hypot(p.x - this.maxAmmoDropPos.x, p.z - this.maxAmmoDropPos.z) <= 1.8) {
         this.maxAmmoDropPos = null;
-        this.dropMeshes.maxAmmo.visible = false;
+        this._startDropAnim(this.dropMeshes.maxAmmo);
         this.playerKit.refillAllAmmo?.();
         this._playSfx('buy_success');
         this.showWhisper?.('MAX AMMO!', 2.2);
@@ -835,10 +851,48 @@ export class SurvivalModeController {
       this.dropMeshes.fullHealth.rotation.y = -elapsed * 2.4;
       if (Math.hypot(p.x - this.fullHealthDropPos.x, p.z - this.fullHealthDropPos.z) <= 1.8) {
         this.fullHealthDropPos = null;
-        this.dropMeshes.fullHealth.visible = false;
+        this._startDropAnim(this.dropMeshes.fullHealth);
         this.onHealFull?.();
         this._playSfx('buy_success');
         this.showWhisper?.('FULL HEALTH!', 2.2);
+      }
+    }
+  }
+
+  /**
+   * Boss drops play the same pickup animation as every other pickup
+   * (Studio kit timing, pickupAnimLogic.js): fly to the hand, pocket,
+   * hide. Effects were already applied at the collect moment.
+   */
+  _startDropAnim(mesh) {
+    if (!mesh) return;
+    this.dropAnims.push({
+      mesh,
+      t: 0,
+      from: mesh.position.clone(),
+      baseScale: mesh.scale.x,
+    });
+  }
+
+  _updateDropAnims(dt) {
+    if (!this.playerKit || this.dropAnims.length === 0) return;
+    const eye = this.playerKit.position;
+    const yaw = this.playerKit.yaw || 0;
+    const pitch = this.playerKit.pitch || 0;
+    const fx = -Math.sin(yaw) * Math.cos(pitch);
+    const fy = Math.sin(pitch);
+    const fz = -Math.cos(yaw) * Math.cos(pitch);
+    const hand = new THREE.Vector3(eye.x + fx * 0.5, eye.y + fy * 0.5 - 0.24, eye.z + fz * 0.5);
+    for (let i = this.dropAnims.length - 1; i >= 0; i--) {
+      const anim = this.dropAnims[i];
+      anim.t += dt;
+      const pose = pickupAnimPose(anim.t, 'item');
+      anim.mesh.position.copy(anim.from).lerp(hand, pose.lift);
+      anim.mesh.scale.setScalar(Math.max(0.05, anim.baseScale * pose.scale));
+      if (pose.done) {
+        anim.mesh.visible = false;
+        anim.mesh.scale.setScalar(anim.baseScale);
+        this.dropAnims.splice(i, 1);
       }
     }
   }
@@ -866,6 +920,7 @@ export class SurvivalModeController {
     // Hold E repair check
     this._updateBreachesAndHoldRepair(dt);
     this._updateBossDrops(elapsed);
+    this._updateDropAnims(dt);
 
     // Wave spawning & progression
     if (this.betweenWaveTimer > 0) {

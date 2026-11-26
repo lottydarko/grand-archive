@@ -158,6 +158,81 @@ export const SURVIVAL_STATIONS = Object.freeze([
   }),
 ]);
 
+/**
+ * Survival ("The Baily Yard") player bounds — playtest fix round
+ * (Lotty, Nov 25, 2026: "clipping through a barricade or two").
+ *
+ * The kit collides against ONE AABB, and Survival used to hand it the
+ * full arena rect, so the player walked straight through the altar,
+ * the pillars, the bastions, the station pedestals, and the planked
+ * breach gates. This windows the arena rect around every obstacle the
+ * same way computeLevelOneKitBounds windows the maze: for each
+ * obstacle the player is currently beside, the bound on that side is
+ * pulled in to the obstacle's expanded edge. Breach gates only bar the
+ * player while they still hold planks (a ripped-open breach is a
+ * doorway to the wall face, same as the campaign gates).
+ *
+ * @param {{x:number, z:number}} pos player ground position
+ * @param {Array<{id:string, planks:number}>} breaches live breach state
+ * @returns {{minX:number, maxX:number, minZ:number, maxZ:number}}
+ */
+const SURVIVAL_BOUNDS_INSET = 0.35;
+
+export function computeSurvivalPlayerBounds(pos, breaches = []) {
+  let { minX, maxX, minZ, maxZ } = {
+    minX: SURVIVAL_PLAYABLE_RECT.minX + SURVIVAL_BOUNDS_INSET,
+    maxX: SURVIVAL_PLAYABLE_RECT.maxX - SURVIVAL_BOUNDS_INSET,
+    minZ: SURVIVAL_PLAYABLE_RECT.minZ + SURVIVAL_BOUNDS_INSET,
+    maxZ: SURVIVAL_PLAYABLE_RECT.maxZ - SURVIVAL_BOUNDS_INSET,
+  };
+
+  const obstacles = [{ ...SURVIVAL_ALTAR_RECT }];
+  for (const p of SURVIVAL_PILLARS) {
+    obstacles.push({ minX: p.x - 0.85, maxX: p.x + 0.85, minZ: p.z - 0.85, maxZ: p.z + 0.85 });
+  }
+  for (const b of SURVIVAL_BASTIONS) {
+    obstacles.push({ minX: b.x - 1.5, maxX: b.x + 1.5, minZ: b.z - 1.5, maxZ: b.z + 1.5 });
+  }
+  for (const s of SURVIVAL_STATIONS) {
+    obstacles.push({ minX: s.pos.x - 0.7, maxX: s.pos.x + 0.7, minZ: s.pos.z - 0.55, maxZ: s.pos.z + 0.55 });
+  }
+  const planksById = new Map((breaches || []).map((b) => [b.id, b.planks]));
+  for (const spec of SURVIVAL_BREACHES) {
+    if (!((planksById.get(spec.id) ?? 3) > 0)) continue;
+    const g = spec.gatePos;
+    obstacles.push(
+      spec.axis === 'z'
+        ? { minX: g.x - 1.6, maxX: g.x + 1.6, minZ: g.z - 0.2, maxZ: g.z + 0.2 }
+        : { minX: g.x - 0.2, maxX: g.x + 0.2, minZ: g.z - 1.6, maxZ: g.z + 1.6 }
+    );
+  }
+
+  for (const o of obstacles) {
+    const e = {
+      minX: o.minX - SURVIVAL_BOUNDS_INSET,
+      maxX: o.maxX + SURVIVAL_BOUNDS_INSET,
+      minZ: o.minZ - SURVIVAL_BOUNDS_INSET,
+      maxZ: o.maxZ + SURVIVAL_BOUNDS_INSET,
+    };
+    const insideX = pos.x > e.minX && pos.x < e.maxX;
+    const insideZ = pos.z > e.minZ && pos.z < e.maxZ;
+    if (insideX && insideZ) continue; // already inside: no side to clamp from
+    if (insideX) {
+      if (pos.z >= e.maxZ) minZ = Math.max(minZ, e.maxZ);
+      else if (pos.z <= e.minZ) maxZ = Math.min(maxZ, e.minZ);
+    }
+    if (insideZ) {
+      if (pos.x >= e.maxX) minX = Math.max(minX, e.maxX);
+      else if (pos.x <= e.minX) maxX = Math.min(maxX, e.minX);
+    }
+  }
+
+  // Never invert the rect (defensive; the kit clamps into it).
+  if (minX > maxX) { const c = (minX + maxX) / 2; minX = c; maxX = c; }
+  if (minZ > maxZ) { const c = (minZ + maxZ) / 2; minZ = c; maxZ = c; }
+  return { minX, maxX, minZ, maxZ };
+}
+
 export function computeWaveSize(wave) {
   const w = Math.max(1, Math.floor(Number(wave) || 1));
   return Math.min(48, 6 + w * 3);

@@ -2,15 +2,13 @@ import './index.css';
 import * as THREE from 'three';
 import { buildGrandLibrary } from './world/library.js';
 import { HdriLightingManager } from './world/hdriLighting.js';
-import { MazeTransformer } from './world/mazeTransform.js';
+import { SHELF_WIDTH, SHELF_DEPTH } from './world/mazeLogic.js';
 import {
   applyChromebookRendererProfile,
   createAdaptiveResolutionScaler,
   optimizeStaticArchiveScene,
-  refreshArchiveShadows,
   suspendBackgroundMenuVideo,
 } from './utils/chromebookOptimizer.js';
-import { generateSeedString } from './world/mazeLogic.js';
 import {
   EXPOSURE_MENU,
   EXPOSURE_PLAYING,
@@ -27,6 +25,7 @@ import {
   AURA_FLASHLIGHT_OFF,
 } from './world/lightingConfig.js';
 import { WorldItemManager } from './world/pickups.js';
+import { createOverlayTimers, tickOverlayTimers } from './ui/overlayTimers.js';
 import { createSoftRadialTexture } from './world/textures.js';
 import { CinematicPostProcessor } from './fps/playerKit.ts';
 import { PlayerKitAdapter } from './player/kitAdapter.js';
@@ -243,23 +242,21 @@ hudRoot.innerHTML = `
       <div id="floor-label" class="horror-text text-5xl text-[#e4c2b8] leading-none">floor 1</div>
     </div>
 
-    <!-- Top-Center Survival HUD ("THE BAILY YARD": POINTS / WAVE / KILLS / REMAINING) -->
-    <div id="survival-hud" class="fixed top-5 left-1/2 -translate-x-1/2 flex items-center gap-8 px-6 py-2 bg-black/55 border border-[#e2d4be]/20 hidden">
+    <!-- Bottom-Center Survival HUD ("THE BAILY YARD": POINTS / WAVE / REMAINING).
+         Moved to the bottom + KILLS column removed + Cinzel/yellow values:
+         playtest fix round, Lotty Nov 25, 2026. -->
+    <div id="survival-hud" class="fixed bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-8 px-6 py-2 bg-black/55 border border-[#e2d4be]/20 hidden">
       <div class="text-center">
         <div class="horror-text text-xl text-[#b9ae9c] leading-none">POINTS</div>
-        <div id="surv-points" class="horror-text text-4xl text-[#f0d590] leading-none">500</div>
+        <div id="surv-points" class="horror-text text-4xl text-[#facc15] leading-none">500</div>
       </div>
       <div class="text-center">
         <div class="horror-text text-xl text-[#b9ae9c] leading-none">WAVE</div>
-        <div id="surv-wave" class="horror-text text-4xl text-[#e4c2b8] leading-none">1</div>
-      </div>
-      <div class="text-center">
-        <div class="horror-text text-xl text-[#b9ae9c] leading-none">KILLS</div>
-        <div id="surv-kills" class="horror-text text-4xl text-[#efe7d8] leading-none">0</div>
+        <div id="surv-wave" class="horror-text text-4xl text-[#facc15] leading-none">1</div>
       </div>
       <div class="text-center">
         <div class="horror-text text-xl text-[#b9ae9c] leading-none">REMAINING</div>
-        <div id="surv-remaining" class="horror-text text-4xl text-[#d66b63] leading-none">9</div>
+        <div id="surv-remaining" class="horror-text text-4xl text-[#facc15] leading-none">9</div>
       </div>
       <div id="surv-tonic" class="horror-text text-xl text-[#7ee89c] hidden">DARKO +20%</div>
     </div>
@@ -337,37 +334,9 @@ hudRoot.innerHTML = `
     </div>
   </div>
 
-  <!-- CRT Archive Terminal Overlay (Survival Mode Activation with Seed) -->
-  <div id="terminal-overlay" class="fixed inset-0 hidden items-center justify-center bg-black/70 pointer-events-auto z-20">
-    <form id="terminal-form" class="crt-panel relative z-10 pointer-events-auto w-[min(460px,92vw)] p-8 flex flex-col gap-5">
-      <h2 class="horror-text text-5xl text-[#9be8ad] leading-none m-0">archive terminal</h2>
-      <p class="horror-text text-3xl text-[#cbead1]/85 leading-snug m-0">
-        enter a seed to shift the stacks and unseal the floor, or leave empty for a drawn code.
-      </p>
-      <div class="flex flex-col gap-1">
-        <label for="seed-input" class="horror-text text-2xl text-[#9be8ad]/80">seed</label>
-        <input
-          id="seed-input"
-          type="text"
-          maxlength="24"
-          autocomplete="off"
-          placeholder="auto-generate..."
-          class="horror-text text-4xl bg-black/60 border border-[#92d89f]/40 px-4 py-2 text-[#d8f7de] placeholder:text-[#92d89f]/35 focus:outline-none focus:border-[#92d89f]"
-        />
-      </div>
-      <div class="flex flex-wrap items-center gap-3 pt-2">
-        <button id="btn-awaken" type="submit" class="horror-btn px-7 py-2 text-4xl text-[#c8f5d0] border-[#92d89f]/45">
-          unseal floor
-        </button>
-        <button id="btn-terminal-drive" type="button" class="horror-btn px-5 py-2 text-3xl text-[#e2d4be]">
-          drive vault
-        </button>
-        <button id="btn-terminal-cancel" type="button" class="horror-btn px-5 py-2 text-3xl text-[#cfc5b4]">
-          step back
-        </button>
-      </div>
-    </form>
-  </div>
+  <!-- The CRT archive terminal seed overlay was DELETED with the hall
+       seed generator (playtest fix round, Nov 25, 2026). The Drive vault
+       lives on the pause overlay + game-over flow. -->
 
   <!-- Pause Overlay (No sensitivity sliders or settings menus) -->
   <div id="pause-overlay" class="fixed inset-0 hidden items-center justify-center bg-black/72 pointer-events-auto z-20">
@@ -388,27 +357,23 @@ hudRoot.innerHTML = `
       <h2 id="go-title" class="horror-text text-7xl text-[#d64237] leading-none m-0">claimed by the stacks</h2>
       <div class="flex items-center justify-center gap-8 py-2">
         <div>
-          <div id="go-floor-label" class="horror-text text-2xl text-[#b9ae9c]">floor</div>
-          <div id="go-floor" class="horror-text text-5xl text-[#efe7d8]">1</div>
+          <div id="go-floor-label" class="horror-text text-2xl text-[#facc15]">floor</div>
+          <div id="go-floor" class="horror-text text-5xl text-[#facc15]">1</div>
         </div>
-        <div>
-          <div class="horror-text text-2xl text-[#b9ae9c]">felled</div>
-          <div id="go-kills" class="horror-text text-5xl text-[#efe7d8]">0</div>
-        </div>
-        <div id="go-seed-wrap">
-          <div class="horror-text text-2xl text-[#b9ae9c]">seed</div>
-          <div id="go-seed" class="horror-text text-4xl text-[#d99b43]">---</div>
+        <div id="go-kills-wrap">
+          <div class="horror-text text-2xl text-[#facc15]">felled</div>
+          <div id="go-kills" class="horror-text text-5xl text-[#facc15]">0</div>
         </div>
         <div id="go-points-wrap" class="hidden">
-          <div class="horror-text text-2xl text-[#b9ae9c]">points</div>
-          <div id="go-points" class="horror-text text-4xl text-[#f0d590]">500</div>
+          <div class="horror-text text-2xl text-[#facc15]">points</div>
+          <div id="go-points" class="horror-text text-4xl text-[#facc15]">500</div>
         </div>
       </div>
       <div class="flex flex-wrap items-center justify-center gap-3">
         <button id="btn-try-again" data-start="true" type="button" class="horror-btn px-8 py-2.5 text-4xl border-[#c9342b]/60">
           try again
         </button>
-        <button id="btn-go-menu" type="button" class="horror-btn px-6 py-2.5 text-3xl text-[#cfc5b4]">
+        <button id="btn-go-menu" type="button" class="horror-btn px-6 py-2.5 text-3xl">
           menu
         </button>
       </div>
@@ -428,7 +393,6 @@ const dom = {
   survivalHud: document.getElementById('survival-hud'),
   survPoints: document.getElementById('surv-points'),
   survWave: document.getElementById('surv-wave'),
-  survKills: document.getElementById('surv-kills'),
   survRemaining: document.getElementById('surv-remaining'),
   survTonic: document.getElementById('surv-tonic'),
   discCounterWrap: document.getElementById('disc-counter-wrap'),
@@ -449,22 +413,16 @@ const dom = {
   adsTutorialBanner: document.getElementById('ads-tutorial-banner'),
   adsTutorialText: document.getElementById('ads-tutorial-text'),
   brainSplatterOverlay: document.getElementById('brain-splatter-overlay'),
-  terminalOverlay: document.getElementById('terminal-overlay'),
-  terminalForm: document.getElementById('terminal-form'),
-  seedInput: document.getElementById('seed-input'),
   pauseOverlay: document.getElementById('pause-overlay'),
   gameoverOverlay: document.getElementById('gameover-overlay'),
   goTitle: document.getElementById('go-title'),
   goFloorLabel: document.getElementById('go-floor-label'),
   goFloor: document.getElementById('go-floor'),
+  goKillsWrap: document.getElementById('go-kills-wrap'),
   goKills: document.getElementById('go-kills'),
-  goSeedWrap: document.getElementById('go-seed-wrap'),
-  goSeed: document.getElementById('go-seed'),
   goPointsWrap: document.getElementById('go-points-wrap'),
   goPoints: document.getElementById('go-points'),
   btnGoMenu: document.getElementById('btn-go-menu'),
-  goKills: document.getElementById('go-kills'),
-  goSeed: document.getElementById('go-seed'),
 };
 
 function renderHealthScratches(hp) {
@@ -510,7 +468,12 @@ function formatPromptHtml(rawText, useXboxIcons) {
   return out;
 }
 
-let whisperTimer = 0;
+// Transient HUD overlay countdowns live in ONE shared state object,
+// ticked by ONE helper from every simulation path (campaign + Survival).
+// Playtest bug (Nov 25, 2026 — "the hit counter just stays up"): the
+// Survival step ticked its own copy of this logic and never ticked the
+// streak combo, so "N HITS!" froze on screen forever in Survival.
+const overlayTimers = createOverlayTimers();
 const gateSignpostAt = {};
 let aetherFlashLevel = 0;
 let aetherFlashFired = false;
@@ -518,10 +481,9 @@ let portalFlashLevel = 0;
 function showWhisper(text, duration = 2.4) {
   dom.whisperText.textContent = text;
   dom.whisperBanner.style.opacity = '1';
-  whisperTimer = duration;
+  overlayTimers.whisper = duration;
 }
 
-let streakComboTimer = 0;
 function showStreakCombo(count) {
   if (!dom.streakCombo || !dom.streakComboCount) return;
   dom.streakComboCount.textContent = `${count} HITS!`;
@@ -530,10 +492,9 @@ function showStreakCombo(count) {
   void dom.streakCombo.offsetWidth;
   dom.streakCombo.classList.add('streak-pop');
   dom.streakCombo.style.opacity = '1';
-  streakComboTimer = 0.95;
+  overlayTimers.streakCombo = 0.95;
 }
 
-let hitFeedbackTimer = 0;
 function triggerCrosshairFeedback(kind) {
   dom.crosshair.classList.remove('hit-zombie', 'hit-ghost');
   if (kind === 'ghost') {
@@ -541,7 +502,16 @@ function triggerCrosshairFeedback(kind) {
   } else {
     dom.crosshair.classList.add('hit-zombie');
   }
-  hitFeedbackTimer = 0.12;
+  overlayTimers.hitFeedback = 0.12;
+}
+
+/** Applies the DOM hides for whichever overlay timers expired. */
+function applyExpiredOverlays(expired) {
+  for (const key of expired) {
+    if (key === 'whisper') dom.whisperBanner.style.opacity = '0';
+    else if (key === 'streakCombo' && dom.streakCombo) dom.streakCombo.style.opacity = '0';
+    else if (key === 'hitFeedback') dom.crosshair.classList.remove('hit-zombie', 'hit-ghost');
+  }
 }
 
 // ============================================================================
@@ -554,7 +524,6 @@ const gameState = {
   hitstop: 0,
   damageFlash: 0,
   dyingDelay: 0,
-  timeSlowTimer: 0,
   flashlightOn: true,
   currentInteractable: null,
 };
@@ -883,10 +852,14 @@ const driveVaultUI = new DriveVaultUI(hudRoot, {
     vinylPlayer.loadExternalAudioToCase(caseIndex, arrBuf, title),
   onLoadCoverToCase: (caseIndex, blob) =>
     vinylPlayer.loadExternalCoverToCase(caseIndex, blob),
+  // Snapshot schema keeps mode/seed/floor fields (driveLogic payloads
+  // in the wild carry them) but they are inert constants now: the hall
+  // seed generator was deleted Nov 25, 2026 — the hall is one fixed
+  // authored space, restored as-is.
   getRunSnapshot: () => ({
-    mode: transformer ? transformer.mode : 'exploration',
-    seed: transformer ? transformer.seed : '',
-    floor: transformer ? transformer.floor : 0,
+    mode: 'exploration',
+    seed: '',
+    floor: 0,
     hp: gameState.hp,
     zombiesFelled: enemies ? enemies.zombiesFelled : 0,
     inventory,
@@ -900,18 +873,11 @@ const driveVaultUI = new DriveVaultUI(hudRoot, {
         addItemToInventory(inventory, snap.slots[i].id, snap.slots[i].qty);
       }
     }
-    if (snap.mode === 'survival' && snap.seed) {
-      transformer.activateSurvival(snap.seed);
-      refreshArchiveShadows(renderer); // trapdoor opened — re-bake static shadows once
-      while (transformer.floor < snap.floor) {
-        transformer.descendCooldown = 0;
-        transformer.transforming = false;
-        transformer.advanceFloor();
-      }
-      if (enemies) enemies.zombiesFelled = snap.zombiesFelled;
+    if (enemies && typeof snap.zombiesFelled === 'number') {
+      enemies.zombiesFelled = snap.zombiesFelled;
     }
     updateHudReadouts();
-    showWhisper(`restored from drive · floor ${transformer.floor}`, 3.0);
+    showWhisper('restored from drive', 3.0);
   },
   onClose: () => {
     if (gameState.phase === 'drive') {
@@ -929,7 +895,6 @@ function openDriveVault(fromPhase) {
 let library = null;
 let levelOneCorridor = null;
 let worldItems = null;
-let transformer = null;
 let playerKit = null;
 let survivalMode = null;
 let explorationSceneObjects = [];
@@ -980,18 +945,11 @@ function handleUseInventorySlot(slotIndex) {
       showWhisper('magazines reload freely [r]', 2.0);
     }
   }
-  if (eff.shrinkDuration > 0) {
-    // No shrink equivalent in PlayerKit — keep item's heal effect only
-    sfx.playWaferCrunch();
-    showWhisper(eff.heal > 0 ? `ate wafer · +${eff.heal} vitality` : 'ate wafer', 2.2);
-  } else if (eff.heal > 0 && eff.ammo === 0) {
+  if (eff.heal > 0 && eff.ammo === 0) {
+    // The heal item is the DARKO can now (the vial/wafer/watch and
+    // their shrink + slow effects were removed Nov 25, 2026).
     sfx.playPotionDrink();
-    showWhisper(`drank vial · +${eff.heal} vitality`, 2.2);
-  }
-  if (eff.slowDuration > 0) {
-    gameState.timeSlowTimer = Math.max(gameState.timeSlowTimer, eff.slowDuration);
-    sfx.playPocketWatchChime();
-    showWhisper('time stretches thin...', 2.6);
+    showWhisper(`cracked a DARKO can · +${eff.heal} vitality`, 2.2);
   }
 
   satchelUI.render(inventory);
@@ -1023,13 +981,38 @@ function getDisplayWeaponName() {
   return playerKit.displayWeaponName;
 }
 
+/**
+ * Enemy-collision AABBs for the hall's movable bookshelves, from their
+ * live group transforms. The shelves never move now (the seed
+ * transformer that slid them was deleted Nov 25, 2026), but the boxes
+ * are still derived from the actual placements, not a copied table.
+ */
+function getShelfColliders() {
+  if (!library) return [];
+  const boxes = [];
+  for (const sh of library.movableShelves) {
+    const rotY = sh.group.rotation.y;
+    const c = Math.abs(Math.cos(rotY));
+    const s = Math.abs(Math.sin(rotY));
+    const halfW = (SHELF_WIDTH * c + SHELF_DEPTH * s) * 0.5;
+    const halfD = (SHELF_WIDTH * s + SHELF_DEPTH * c) * 0.5;
+    boxes.push({
+      minX: sh.group.position.x - halfW,
+      maxX: sh.group.position.x + halfW,
+      minZ: sh.group.position.z - halfD,
+      maxZ: sh.group.position.z + halfD,
+    });
+  }
+  return boxes;
+}
+
 function syncBodyDataset() {
   const kitState = playerKit ? playerKit.getState() : null;
   const kitWeaponId = kitState ? kitState.weaponId : 'unarmed';
   const isBailySurvival = Boolean(survivalMode && survivalMode.active);
   document.body.dataset.state = gameState.phase;
-  document.body.dataset.mode = isBailySurvival ? 'survival' : (transformer ? transformer.mode : 'exploration');
-  document.body.dataset.floor = isBailySurvival ? String(survivalMode.wave) : (transformer ? String(transformer.floor) : '0');
+  document.body.dataset.mode = isBailySurvival ? 'survival' : 'exploration';
+  document.body.dataset.floor = isBailySurvival ? String(survivalMode.wave) : '0';
   document.body.dataset.survivalPoints = String(survivalMode ? survivalMode.points : 0);
   document.body.dataset.survivalWave = String(survivalMode ? survivalMode.wave : 0);
   document.body.dataset.survivalKills = String(survivalMode ? survivalMode.kills : 0);
@@ -1055,7 +1038,7 @@ function syncBodyDataset() {
       ? 'true'
       : 'false';
   document.body.dataset.trapdoor =
-    transformer && transformer.trapdoorOpenAmount > 0.5 ? 'open' : 'closed';
+    library && library.trapdoor?.group?.visible ? 'open' : 'closed';
   document.body.dataset.inventory = gameState.phase === 'inventory' ? 'open' : 'closed';
   document.body.dataset.satchelCount = String(countUsedSlots(inventory));
   document.body.dataset.climbing = 'false';
@@ -1079,7 +1062,6 @@ function updateHudReadouts() {
     else if (st.isCrouching) cues.push('crouching');
     else if (st.isSprinting) cues.push('sprinting');
     if (!gameState.flashlightOn) cues.push('light off');
-    if (gameState.timeSlowTimer > 0) cues.push(`time slowed ${gameState.timeSlowTimer.toFixed(0)}s`);
     dom.postureLabel.textContent = cues.join(' · ');
 
     const label = playerKit.displayWeaponName;
@@ -1132,18 +1114,14 @@ function updateHudReadouts() {
     if (inBailySurvival) {
       if (dom.survPoints) dom.survPoints.textContent = String(survivalMode.points);
       if (dom.survWave) dom.survWave.textContent = String(survivalMode.wave);
-      if (dom.survKills) dom.survKills.textContent = String(survivalMode.kills);
       if (dom.survRemaining) dom.survRemaining.textContent = String(survivalMode.getEnemiesRemainingCount());
       if (dom.survTonic) dom.survTonic.classList.toggle('hidden', !(survivalMode.tonicWavesRemaining > 0));
     }
   }
 
-  if (!inBailySurvival && transformer && transformer.mode === 'survival') {
-    dom.floorWrap.classList.remove('hidden');
-    dom.floorLabel.textContent = `floor ${transformer.floor}`;
-  } else {
-    dom.floorWrap.classList.add('hidden');
-  }
+  // The top-center floor label belonged to the deleted seeded-floor
+  // mode; the authored hall has no floor counter. Always hidden.
+  dom.floorWrap.classList.add('hidden');
 
   syncBodyDataset();
 }
@@ -1159,13 +1137,10 @@ function setPhase(nextPhase) {
 
   dom.playingHud.classList.toggle('hidden', nextPhase !== 'playing');
 
-  dom.terminalOverlay.classList.toggle('hidden', nextPhase !== 'terminal');
-  dom.terminalOverlay.classList.toggle('flex', nextPhase === 'terminal');
-
   satchelUI.setVisible(nextPhase === 'inventory', inventory);
   mapOverlay.setVisible(nextPhase === 'map');
   if (nextPhase === 'map') {
-    mapOverlay.render({ library, transformer, controls: playerKit });
+    mapOverlay.render({ library, controls: playerKit });
   }
 
   dom.pauseOverlay.classList.toggle('hidden', nextPhase !== 'paused');
@@ -1227,16 +1202,10 @@ function startSurvivalMode(lockPointer = true) {
   gameState.hp = gameState.maxHp;
   gameState.dyingDelay = 0;
   gameState.damageFlash = 0;
-  gameState.timeSlowTimer = 0;
   gameState.flashlightOn = true;
   dom.dmgVig.style.opacity = '0';
   if (dom.brainSplatterOverlay) dom.brainSplatterOverlay.style.opacity = '0';
   if (dom.adsTutorialBanner) dom.adsTutorialBanner.style.opacity = '0';
-
-  if (transformer) {
-    transformer.setRoomDarkened(false);
-    transformer.resetToExploration();
-  }
 
   setExplorationSceneVisible(false);
   survivalMode.start();
@@ -1261,15 +1230,10 @@ function startNewRun(lockPointer = true, cinemaReel = null) {
   gameState.hp = gameState.maxHp;
   gameState.dyingDelay = 0;
   gameState.damageFlash = 0;
-  gameState.timeSlowTimer = 0;
   gameState.flashlightOn = true;
   dom.dmgVig.style.opacity = '0';
 
   resetStarterInventory();
-  if (transformer) {
-    transformer.setRoomDarkened(true);
-    transformer.resetToExploration();
-  }
   levelOneState = createLevelOneState({
     villainCutsceneSeenCount: levelOneState ? levelOneState.villainCutsceneSeenCount : 0,
   });
@@ -1353,32 +1317,13 @@ function startNewRun(lockPointer = true, cinemaReel = null) {
   }
 }
 
-function openTerminalModal() {
-  if (!transformer || transformer.mode === 'survival') return;
-  dom.seedInput.value = '';
-  setPhase('terminal');
-  setTimeout(() => dom.seedInput.focus(), 20);
-}
-
-function submitTerminalSeed(rawSeed) {
-  const chosenSeed = (rawSeed || '').trim() || generateSeedString();
-  // STRICT TURN 1 RULE: NO black cut or full-screen loader on Floor 1 activation!
-  // Watch the lights flicker crimson, trapdoor split open, and bookshelves slide in real time!
-  setPhase('playing');
-  if (playerKit) playerKit.requestPointerLock();
-  sfx.setAmbienceMode('survival');
-  transformer.activateSurvival(chosenSeed);
-  refreshArchiveShadows(renderer); // trapdoor opened — re-bake static shadows once
-  showWhisper(`floor 1 · ${chosenSeed}`, 3.2);
-  updateHudReadouts();
-}
-
 let lastTrapdoorDescentAt = -Infinity;
 function triggerTrapdoorDescent() {
-  // One descent per trigger moment (overlap O9, Nov 24, 2026): the
-  // interact press and the position check can both fire in the same
-  // frame — without this latch, advanceFloor() runs twice and skips a
-  // floor. The latch makes every trigger path share one descent.
+  // The hall trapdoor is Level One's EXIT, not a floor generator
+  // (playtest fix round, Nov 25, 2026 — the seed generator is deleted;
+  // the hall is one fixed authored space with no Floor 2). The latch
+  // (overlap O9, Nov 24, 2026) still guards the trigger: the interact
+  // press and the position check can both fire in the same frame.
   const now = Date.now();
   if (now - lastTrapdoorDescentAt < 1500) return;
   lastTrapdoorDescentAt = now;
@@ -1386,24 +1331,17 @@ function triggerTrapdoorDescent() {
     showWhisper('the way forward is sealed until the boss falls and the disc is seated', 2.6);
     return;
   }
-  if (!transformer.advanceFloor()) return;
-  refreshArchiveShadows(renderer); // new floor layout — re-bake static shadows once
-  if (transformer.floor >= 2) {
-    hdriLighting.setZone('basement');
-  }
-  if (playerKit) {
-    playerKit.setPose({ position: { x: 0, y: playerKit.standEyeHeight, z: 3.1 } });
-  }
-  updateHudReadouts();
-
-  // Play cinematic movie chapter intertitle for Floor 2+ descents!
-  playerKit?.setPlaying(false);
-  cinemaLoader.play(CINEMA_REELS.floorDescent(transformer.floor), () => {
-    if (gameState.phase === 'playing') {
-      playerKit?.setPlaying(true);
-      showWhisper(`floor ${transformer.floor} · ${transformer.seed}`, 2.8);
-    }
-  });
+  // Level One complete: the descent ends the run and returns to title,
+  // with the same cleanup as the menu exit.
+  cinemaLoader.cancel();
+  vinylPlayer.stopAll();
+  cathedralBus.stopLoop('hall-theme', 0.45);
+  sfx.stopAmbience();
+  exitSurvivalMode();
+  hdriLighting.setZone('hall');
+  enemies?.resetStats();
+  setPhase('title');
+  showWhisper('level one complete — the archive keeps the song', 3.2);
 }
 
 // Wire overlay buttons
@@ -1422,8 +1360,6 @@ if (dom.btnGoMenu) {
     sfx.stopAmbience();
     exitSurvivalMode();
     hdriLighting.setZone('hall');
-    transformer?.setRoomDarkened(false);
-    transformer?.resetToExploration();
     enemies?.resetStats();
     setPhase('title');
   });
@@ -1449,21 +1385,8 @@ document.getElementById('btn-return-title').addEventListener('click', () => {
   sfx.stopAmbience();
   exitSurvivalMode();
   hdriLighting.setZone('hall');
-  transformer?.setRoomDarkened(false);
-  transformer?.resetToExploration();
   enemies?.resetStats();
   setPhase('title');
-});
-document.getElementById('btn-terminal-drive').addEventListener('click', () => {
-  openDriveVault('terminal');
-});
-document.getElementById('btn-terminal-cancel').addEventListener('click', () => {
-  setPhase('playing');
-  playerKit?.requestPointerLock();
-});
-dom.terminalForm.addEventListener('submit', (e) => {
-  e.preventDefault();
-  submitTerminalSeed(dom.seedInput.value);
 });
 
 // Global hotkeys
@@ -1612,8 +1535,8 @@ window.__archiveTest = {
     loadingReady: startupSequence.loadingReady,
     title: titleMenu.getStateSnapshot(),
     audio: cathedralBus.getDiagnostics(),
-    mode: transformer ? transformer.mode : 'exploration',
-    floor: transformer ? transformer.floor : 0,
+    mode: 'exploration',
+    floor: 0,
     hp: gameState.hp,
     flashlightOn: gameState.flashlightOn,
     envIntensity: scene.environmentIntensity,
@@ -1680,7 +1603,12 @@ window.__archiveTest = {
   },
   getTitleState: () => titleMenu.getStateSnapshot(),
   getAudioDiagnostics: () => cathedralBus.getDiagnostics(),
-  activateSurvival: (seed = 'CHECK-PASS') => submitTerminalSeed(seed),
+  // Was the seeded-floor activation; the seed generator is deleted —
+  // Survival now means the Baily Yard mode (same as startSurvivalMode).
+  activateSurvival: () => {
+    blackBox.phase = 'game';
+    startSurvivalMode(false);
+  },
   startSurvivalMode: () => {
     blackBox.phase = 'game';
     startSurvivalMode(false);
@@ -1942,9 +1870,8 @@ async function bootstrap() {
       if (entry) flashCaseCrack(entry.slotIndex);
     },
     onSpawnFirstLevelEnemies: () => {
-      if (transformer && transformer.currentMaze && playerKit) {
-        enemies.spawnFloorWave(transformer.currentMaze, playerKit.groundPosition);
-      }
+      // Seeded-floor waves went with the deleted seed generator;
+      // Level One enemies spawn from the authored gate/guard system.
     },
     onEnterLevel: () => {
       if (pendingCaseSlotId) {
@@ -1955,6 +1882,7 @@ async function bootstrap() {
   });
 
   worldItems = new WorldItemManager(scene);
+  worldItems.setCamera(camera);
   worldItems.spawnArchiveStashes();
 
   worldRayMeshes = library.movableShelves.map((s) => s.group);
@@ -2252,17 +2180,6 @@ async function bootstrap() {
     },
   });
 
-  transformer = new MazeTransformer(scene, library, {
-    onShake: (amt) => playerKit?.addTrauma(amt),
-    onDustBurst: (pos, count) => enemies.spawnBurst(pos, count, 0x9b9488, 3.2, 4.2),
-    onFloorReady: (maze) => {
-      enemies.spawnFloorWave(maze, playerKit.groundPosition);
-      const lesserCount = enemies.enemies.filter((e) => e.kind !== 'lion' && e.alive).length;
-      levelOneState = advanceLevelOne(levelOneState, 'set_lesser_enemies_count', { count: lesserCount }).state;
-      updateHudReadouts();
-    },
-  });
-
   if (!isSoftwareGl) {
     renderer.compile(scene, camera);
   }
@@ -2354,12 +2271,12 @@ function handlePlayerInteract() {
         );
       }
     } else if (interactable.itemId === 'pistol_pickup' || interactable.itemId === 'glock_pickup') {
-      worldItems.removeById(interactable.id);
+      worldItems.beginPickupAnim(interactable, 'weapon');
       sfx.playAmmoPickup();
       playerKit?.switchWeapon('pistol9mm', 'ui');
       showWhisper('acquired 9mm pistol', 2.6);
     } else if (interactable.itemId === 'shotgun_pickup') {
-      worldItems.removeById(interactable.id);
+      worldItems.beginPickupAnim(interactable, 'weapon');
       sfx.playAmmoPickup();
       showWhisper('acquired shotgun', 2.6);
       playerKit?.switchWeapon('futuristic', 'ui');
@@ -2369,7 +2286,7 @@ function handlePlayerInteract() {
         playLevelOneEvents(res.events);
       }
     } else if (interactable.itemId === 'sword_pickup') {
-      worldItems.removeById(interactable.id);
+      worldItems.beginPickupAnim(interactable, 'weapon');
       sfx.playAmmoPickup();
       showWhisper('acquired sword', 2.6);
       playerKit?.switchWeapon('sword', 'ui');
@@ -2379,7 +2296,7 @@ function handlePlayerInteract() {
         playLevelOneEvents(res.events);
       }
     } else if (interactable.itemId === 'red_shells' || interactable.itemId === 'shotgun_ammo') {
-      worldItems.removeById(interactable.id);
+      worldItems.beginPickupAnim(interactable, 'item');
       const shells = interactable.qty || 6;
       if (playerKit && playerKit.maxAmmo > 0 && playerKit.ammo < playerKit.maxAmmo) {
         playerKit.triggerReload('ui');
@@ -2389,7 +2306,7 @@ function handlePlayerInteract() {
     } else {
       const addRes = addItemToInventory(inventory, interactable.itemId, interactable.qty);
       if (addRes.added > 0) {
-        worldItems.removeById(interactable.id);
+        worldItems.beginPickupAnim(interactable, 'item');
         sfx.playAmmoPickup();
         if (interactable.itemId === 'darko_drink') {
           if (levelOneState) {
@@ -2409,8 +2326,6 @@ function handlePlayerInteract() {
     updateHudReadouts();
   } else if (interactable.type === 'vinyl') {
     handleVinylCaseInteract(interactable.id);
-  } else if (interactable.type === 'terminal') {
-    openTerminalModal();
   } else if (interactable.type === 'trapdoor') {
     triggerTrapdoorDescent();
     updateHudReadouts();
@@ -2430,7 +2345,7 @@ function stepSimulation(dt) {
     return;
   }
 
-  if (!library || !transformer || !worldItems) {
+  if (!library || !worldItems) {
     return;
   }
 
@@ -2451,7 +2366,7 @@ function stepSimulation(dt) {
   // Motivated lighting: low HDRI PBR fill + player Flashlight leads in the darkened archive
   const targetExposure = !isPlayingActive
     ? EXPOSURE_MENU
-    : transformer && transformer.mode === 'survival'
+    : survivalMode && survivalMode.active
       ? EXPOSURE_SURVIVAL
       : EXPOSURE_PLAYING;
   renderer.toneMappingExposure = THREE.MathUtils.damp(
@@ -2462,7 +2377,7 @@ function stepSimulation(dt) {
   );
   const targetEnvInt = !isPlayingActive
     ? ENV_MENU
-    : transformer && transformer.mode === 'survival'
+    : survivalMode && survivalMode.active
       ? ENV_SURVIVAL
       : ENV_PLAYING;
   scene.environmentIntensity = THREE.MathUtils.damp(
@@ -2509,12 +2424,11 @@ function stepSimulation(dt) {
       11.2 + Math.cos(tourAngle) * 2.2
     );
     camera.lookAt(0, 1.9, -4.5);
-    transformer.update(dt, elapsed);
     return;
   }
 
   if (gameState.phase === 'map') {
-    mapOverlay.render({ library, transformer, controls: playerKit });
+    mapOverlay.render({ library, controls: playerKit });
     return;
   }
 
@@ -2528,10 +2442,6 @@ function stepSimulation(dt) {
     simDt = 0;
   }
 
-  if (gameState.timeSlowTimer > 0) {
-    gameState.timeSlowTimer = Math.max(0, gameState.timeSlowTimer - dt);
-  }
-
   if (gameState.dyingDelay > 0) {
     gameState.dyingDelay -= dt;
     camera.position.y = THREE.MathUtils.damp(camera.position.y, 0.42, 6, dt);
@@ -2541,17 +2451,18 @@ function stepSimulation(dt) {
         if (dom.goTitle) dom.goTitle.textContent = 'overrun in the baily yard';
         if (dom.goFloorLabel) dom.goFloorLabel.textContent = 'waves';
         dom.goFloor.textContent = String(survivalMode.wave);
-        dom.goKills.textContent = String(survivalMode.kills);
+        // No kill count on the Survival game-over (Lotty, Nov 25,
+        // 2026 — "I don't need a damn kill count"): waves + points only.
+        // Internal kill tracking is untouched (streak/wave math use it).
+        if (dom.goKillsWrap) dom.goKillsWrap.classList.add('hidden');
         if (dom.goPoints) dom.goPoints.textContent = String(survivalMode.points);
-        if (dom.goSeedWrap) dom.goSeedWrap.classList.add('hidden');
         if (dom.goPointsWrap) dom.goPointsWrap.classList.remove('hidden');
       } else {
         if (dom.goTitle) dom.goTitle.textContent = 'claimed by the stacks';
         if (dom.goFloorLabel) dom.goFloorLabel.textContent = 'floor';
-        dom.goFloor.textContent = String(Math.max(1, transformer.floor));
+        dom.goFloor.textContent = '1';
         dom.goKills.textContent = String(enemies.zombiesFelled);
-        dom.goSeed.textContent = transformer.seed || '---';
-        if (dom.goSeedWrap) dom.goSeedWrap.classList.remove('hidden');
+        if (dom.goKillsWrap) dom.goKillsWrap.classList.remove('hidden');
         if (dom.goPointsWrap) dom.goPointsWrap.classList.add('hidden');
       }
       setPhase('gameover');
@@ -2627,19 +2538,13 @@ function stepSimulation(dt) {
       gameState.damageFlash = Math.max(0, gameState.damageFlash - dt * 2.4);
       dom.dmgVig.style.opacity = String(gameState.damageFlash);
     }
-    if (whisperTimer > 0) {
-      whisperTimer -= dt;
-      if (whisperTimer <= 0) dom.whisperBanner.style.opacity = '0';
-    }
-    if (hitFeedbackTimer > 0) {
-      hitFeedbackTimer -= dt;
-      if (hitFeedbackTimer <= 0) dom.crosshair.classList.remove('hit-zombie', 'hit-ghost');
-    }
+    // ALL overlay timers tick here too — this shared helper is the fix
+    // for the stuck "N HITS!" counter (the old Survival copy of this
+    // block never ticked the streak combo).
+    applyExpiredOverlays(tickOverlayTimers(overlayTimers, dt));
     dom.crosshair.classList.toggle('ads-hidden', Boolean(playerKit?.isAds));
     return;
   }
-
-  transformer.update(simDt, elapsed);
 
   // PORTAL CONDITIONS (Lotty, Nov 23, 2026): every gate's full condition
   // is its OWN condition AND its guards dead — the guard rule adds to the
@@ -2658,6 +2563,26 @@ function stepSimulation(dt) {
   if (!aetherFlashFired && portalOpen && playerKit && playerKit.position.z > 7.2) {
     aetherFlashFired = true;
     aetherFlashLevel = 0.95;
+  }
+  // DISC CONSUMPTION (Lotty, Nov 25, 2026 — "once it's in there, the
+  // portal status stays open"): one disc, one passage. Once the player
+  // is well through the disc-opened G1 gate (past the doorway band, so
+  // the re-seal can never clamp them back into the hall), the disc is
+  // spent: discInCase clears, the entry latch resets, the gate mesh
+  // returns and the portal surface falls back to sealed violet. The
+  // way back is the west Return Stair — portals are the forward route.
+  // Guard-gated portals (G2/G3) keep their own logic untouched.
+  if (
+    portalOpen &&
+    levelOneState &&
+    levelOneState.discInCase &&
+    playerKit &&
+    playerKit.position.z > 8.6
+  ) {
+    const res = advanceLevelOne(levelOneState, 'consume_first_disc');
+    levelOneState = res.state;
+    portalEntered.G1 = false;
+    showWhisper('the disc is spent — the portal seals behind you', 3.0);
   }
   const g2Ready = guardsSpawned && guardsAlive('G2') === 0;
   const aetherGateOpen = g2Ready && portalEntered.G2;
@@ -2759,7 +2684,7 @@ function stepSimulation(dt) {
   // idea what it wanted). A closed gate states its price when the player is
   // close enough to be pushing on it. One whisper at a time, per-gate
   // cooldown so it reminds without nagging.
-  if (levelOneState && playerKit && whisperTimer <= 0) {
+  if (levelOneState && playerKit && overlayTimers.whisper <= 0) {
     const p = playerKit.position;
     const gates = [
       {
@@ -2769,7 +2694,9 @@ function stepSimulation(dt) {
         z: 7.1,
         text: levelOneState.discInCase
           ? 'sealed — its guards still stand'
-          : 'sealed — a disc in the hall case opens the way',
+          : levelOneState.firstDiscConsumed
+            ? 'sealed — the disc is spent; the return stair is the way back'
+            : 'sealed — a disc in the hall case opens the way',
       },
       { id: 'aether', closed: !g2Ready, x: 0, z: 14.9, text: 'sealed — its guards still stand' },
       {
@@ -2808,7 +2735,7 @@ function stepSimulation(dt) {
   }
 
   const allColliders = library.staticColliders.concat(
-    transformer.getLiveShelfColliders(),
+    getShelfColliders(),
     levelOneCorridor ? levelOneCorridor.staticColliders : [],
     levelOneCorridor
       ? levelOneCorridor.getGateColliders({
@@ -3144,7 +3071,14 @@ function stepSimulation(dt) {
     dom.interactPrompt.style.opacity = '0';
   }
 
-  if (playerKit && transformer.isPlayerInTrapdoorDescent(playerKit.groundPosition)) {
+  // Trapdoor position trigger: stepping onto the revealed Level One
+  // exit (trapdoor group at (0, -5.8), shown once the stairs unlock)
+  // fires the same descent/exit as the interact press.
+  if (
+    playerKit &&
+    library?.trapdoor?.group?.visible &&
+    Math.hypot(playerKit.groundPosition.x - 0, playerKit.groundPosition.z - -5.8) < 1.6
+  ) {
     triggerTrapdoorDescent();
     hudDirty = true;
   }
@@ -3159,11 +3093,7 @@ function stepSimulation(dt) {
     }
   }
 
-  const enemyTimeScale = levelOneState.adsPaused
-    ? 0
-    : gameState.timeSlowTimer > 0
-      ? 0.38
-      : 1.0;
+  const enemyTimeScale = levelOneState.adsPaused ? 0 : 1.0;
   enemies.update(
     simDt,
     elapsed,
@@ -3192,24 +3122,7 @@ function stepSimulation(dt) {
     portalFlashLevel = Math.max(0, portalFlashLevel - dt * 1.6);
     if (dom.portalFlash) dom.portalFlash.style.opacity = String(portalFlashLevel);
   }
-  if (whisperTimer > 0) {
-    whisperTimer -= dt;
-    if (whisperTimer <= 0) {
-      dom.whisperBanner.style.opacity = '0';
-    }
-  }
-  if (streakComboTimer > 0) {
-    streakComboTimer -= dt;
-    if (streakComboTimer <= 0 && dom.streakCombo) {
-      dom.streakCombo.style.opacity = '0';
-    }
-  }
-  if (hitFeedbackTimer > 0) {
-    hitFeedbackTimer -= dt;
-    if (hitFeedbackTimer <= 0) {
-      dom.crosshair.classList.remove('hit-zombie', 'hit-ghost');
-    }
-  }
+  applyExpiredOverlays(tickOverlayTimers(overlayTimers, dt));
   // ADS crosshair ruling (Nov 23, 2026): hide the screen-center dot once the
   // sights are mostly up; the sight picture is the reticle in ADS.
   dom.crosshair.classList.toggle('ads-hidden', Boolean(playerKit?.isAds));
@@ -3222,7 +3135,7 @@ function stepSimulation(dt) {
         ? 'crawling'
         : 'standing'
     : 'standing';
-  if (hudDirty || prevPosture !== nextPosture || gameState.timeSlowTimer > 0) {
+  if (hudDirty || prevPosture !== nextPosture) {
     updateHudReadouts();
   }
 }

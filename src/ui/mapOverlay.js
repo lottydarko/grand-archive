@@ -37,14 +37,16 @@ export class MapOverlay {
     this.el.classList.toggle('flex', this.visible);
   }
 
-  render({ library, transformer, controls }) {
+  render({ library, controls }) {
     if (!this.visible || !library || !controls) return;
     const ctx = this.ctx;
     const W = this.canvas.width;
     const H = this.canvas.height;
 
-    const floorNum = transformer && transformer.mode === 'survival' ? transformer.floor : 0;
-    this.titleEl.textContent = floorNum > 0 ? `floor ${floorNum} · ${transformer.seed}` : 'archive plan';
+    // The seeded-floor title went with the hall seed generator
+    // (deleted Nov 25, 2026): the plan is the one authored hall.
+    this.titleEl.textContent = 'archive plan';
+    const trapdoorOpen = Boolean(library.trapdoor?.group?.visible);
 
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#110e0c';
@@ -80,13 +82,9 @@ export class MapOverlay {
     const tx = toX(-TRAPDOOR_HALF_SIZE);
     const ty = toY(-TRAPDOOR_HALF_SIZE);
     const tw = TRAPDOOR_HALF_SIZE * 2 * scaleX;
-    ctx.fillStyle =
-      transformer && transformer.trapdoorOpenAmount > 0.3
-        ? 'rgba(195, 42, 34, 0.55)'
-        : 'rgba(90, 82, 74, 0.35)';
+    ctx.fillStyle = trapdoorOpen ? 'rgba(195, 42, 34, 0.55)' : 'rgba(90, 82, 74, 0.35)';
     ctx.fillRect(tx, ty, tw, tw);
-    ctx.strokeStyle =
-      transformer && transformer.trapdoorOpenAmount > 0.3 ? '#d94438' : 'rgba(180,165,142,0.45)';
+    ctx.strokeStyle = trapdoorOpen ? '#d94438' : 'rgba(180,165,142,0.45)';
     ctx.strokeRect(tx, ty, tw, tw);
 
     // 24 Movable bookshelves (live shifted positions!)
@@ -113,7 +111,7 @@ export class MapOverlay {
     }
 
     // CRT Terminal Desk
-    ctx.fillStyle = transformer && transformer.mode === 'survival' ? '#d94438' : '#7ae896';
+    ctx.fillStyle = '#7ae896';
     ctx.fillRect(toX(-1.2), toY(-11.1), 2.4 * scaleX, 1.0 * scaleZ);
 
     // Player live marker & look cone

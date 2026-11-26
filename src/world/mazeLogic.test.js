@@ -1,49 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  TOTAL_MOVABLE_SHELVES,
   LOCKED_MOUSE_SENSITIVITY,
   LOCKED_GAMEPAD_LOOK_SPEED,
   LOCKED_GAMEPAD_DEADZONE,
-  generateFloorMaze,
-  getFloorDifficulty,
   resolveCircleAABB,
   hasLineOfSight,
   applyWeaponHit,
   computeGamepadLookDelta,
-  getExplorationShelfSlots,
 } from './mazeLogic.js';
 
-test('exploration layout provides all 24 bookshelf slots', () => {
-  const slots = getExplorationShelfSlots();
-  assert.equal(slots.length, TOTAL_MOVABLE_SHELVES);
-});
-
-test('seeded floor maze is deterministic for same seed + floor and varies across floors', () => {
-  const floor1a = generateFloorMaze('VAULT-4091', 1);
-  const floor1b = generateFloorMaze('VAULT-4091', 1);
-  const floor2 = generateFloorMaze('VAULT-4091', 2);
-  const otherSeed = generateFloorMaze('CRYPT-9999', 1);
-
-  assert.equal(floor1a.key, 'VAULT-4091:1');
-  assert.equal(floor1a.shelves.length, TOTAL_MOVABLE_SHELVES);
-  assert.deepEqual(floor1a.shelves, floor1b.shelves);
-  assert.equal(floor1a.connected, true);
-  assert.equal(floor2.connected, true);
-  assert.equal(otherSeed.connected, true);
-  assert.notDeepEqual(floor1a.shelves, floor2.shelves);
-  assert.notDeepEqual(floor1a.shelves, otherSeed.shelves);
-});
-
-test('seeded maze keeps central trapdoor chamber unobstructed across many floors', () => {
-  for (let floor = 1; floor <= 6; floor++) {
-    const maze = generateFloorMaze('NOCT-7712', floor);
-    assert.equal(maze.connected, true, `floor ${floor} must remain fully connected`);
-    for (const s of maze.shelves) {
-      const dist = Math.hypot(s.x, s.z);
-      assert.ok(dist >= 3.2, `shelf at (${s.x}, ${s.z}) should not block center trapdoor`);
-    }
-    assert.ok(maze.spawnPoints.length >= 10);
+test('the seed generator is gone (fixed authored spaces only)', async () => {
+  // Playtest fix round (Nov 25, 2026): the hall seed generator was
+  // deleted at the director's word. Pin its absence so it can never
+  // quietly come back.
+  const mod = await import('./mazeLogic.js');
+  for (const name of [
+    'generateFloorMaze',
+    'generateSeedString',
+    'createRng',
+    'hashSeed',
+    'getFloorDifficulty',
+    'getExplorationShelfSlots',
+    'shelfToAABB',
+  ]) {
+    assert.equal(mod[name], undefined, `${name} must not exist`);
   }
 });
 
@@ -132,15 +113,6 @@ test('locked sensitivity constants and gamepad right-stick deadzone behave accur
   const fullDeflect = computeGamepadLookDelta(1.0, -1.0, 1.0);
   assert.ok(Math.abs(fullDeflect.dYaw + 8.5) < 1e-6);
   assert.ok(Math.abs(fullDeflect.dPitch - 8.5) < 1e-6);
-});
-
-test('survival floors spawn fewer and slower zombies for tense horror pacing', () => {
-  const f1 = getFloorDifficulty(1);
-  const f5 = getFloorDifficulty(5);
-  assert.ok(f1.zombieCount >= 2 && f1.zombieCount <= 4, `expected 2-4 zombies on floor 1, got ${f1.zombieCount}`);
-  assert.ok(f1.zombieSpeed <= 1.35, `expected slow shambling speed on floor 1, got ${f1.zombieSpeed}`);
-  assert.ok(f5.zombieCount <= 7, `expected capped zombie count on floor 5, got ${f5.zombieCount}`);
-  assert.ok(f5.zombieSpeed <= 2.2, `expected controlled zombie speed on floor 5, got ${f5.zombieSpeed}`);
 });
 
 test('line of sight: clear path passes, a bookcase between blocks, endpoint inside a collider blocks', () => {
