@@ -1063,6 +1063,208 @@ class SoundEffects {
     shimmer.stop(now + 0.42);
   }
 
+  playPlankRip() {
+    if (this.muted) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const crack = (t0, f0, f1, vol, dur) => {
+      if (this.noiseBuffer) {
+        const src = ctx.createBufferSource();
+        src.buffer = this.noiseBuffer;
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.setValueAtTime(f0, t0);
+        bp.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+        bp.Q.value = 1.1;
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(vol, t0);
+        g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+        src.connect(bp).connect(g).connect(this._getBusInput());
+        src.start(t0);
+        src.stop(t0 + dur + 0.02);
+      }
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(130, t0);
+      osc.frequency.exponentialRampToValueAtTime(55, t0 + 0.09);
+      const og = ctx.createGain();
+      og.gain.setValueAtTime(vol * 0.5, t0);
+      og.gain.exponentialRampToValueAtTime(0.001, t0 + 0.1);
+      osc.connect(og).connect(this._getBusInput());
+      osc.start(t0);
+      osc.stop(t0 + 0.11);
+    };
+    crack(now, 1500, 320, 0.5, 0.12);
+    crack(now + 0.07, 1100, 260, 0.3, 0.09);
+  }
+
+  playPlankRepair() {
+    if (this.muted) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const knock = (t0, freq, vol) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, t0);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.5, t0 + 0.055);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(vol, t0);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.065);
+      osc.connect(g).connect(this._getBusInput());
+      osc.start(t0);
+      osc.stop(t0 + 0.075);
+    };
+    knock(now, 290, 0.22);
+    knock(now + 0.11, 330, 0.18);
+  }
+
+  playBuySuccess() {
+    if (this.muted) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const partial = (freq, vol, dur) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(vol, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+      osc.connect(g).connect(this._getBusInput());
+      osc.start(now);
+      osc.stop(now + dur + 0.02);
+    };
+    partial(784, 0.12, 0.5);
+    partial(1175, 0.06, 0.35);
+    const tick = ctx.createOscillator();
+    tick.type = 'square';
+    tick.frequency.setValueAtTime(2400, now);
+    const tg = ctx.createGain();
+    tg.gain.setValueAtTime(0.05, now);
+    tg.gain.exponentialRampToValueAtTime(0.001, now + 0.02);
+    tick.connect(tg).connect(this._getBusInput());
+    tick.start(now);
+    tick.stop(now + 0.024);
+  }
+
+  playBuyDenied() {
+    if (this.muted) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const thud = ctx.createOscillator();
+    thud.type = 'sine';
+    thud.frequency.setValueAtTime(120, now);
+    thud.frequency.exponentialRampToValueAtTime(52, now + 0.18);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.25, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    thud.connect(g).connect(this._getBusInput());
+    thud.start(now);
+    thud.stop(now + 0.22);
+    const click = ctx.createOscillator();
+    click.type = 'square';
+    click.frequency.setValueAtTime(800, now);
+    click.frequency.exponentialRampToValueAtTime(300, now + 0.025);
+    const cg = ctx.createGain();
+    cg.gain.setValueAtTime(0.06, now);
+    cg.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+    click.connect(cg).connect(this._getBusInput());
+    click.start(now);
+    click.stop(now + 0.034);
+  }
+
+  playCrateRoll() {
+    if (this.muted) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    let t = now;
+    for (let i = 0; i < 8; i++) {
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(1900, t);
+      osc.frequency.exponentialRampToValueAtTime(900, t + 0.014);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(i % 2 ? 0.05 : 0.08, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.018);
+      osc.connect(g).connect(this._getBusInput());
+      osc.start(t);
+      osc.stop(t + 0.022);
+      t += 0.046 - i * 0.0037;
+    }
+    const clunk = ctx.createOscillator();
+    clunk.type = 'triangle';
+    clunk.frequency.setValueAtTime(240, t);
+    clunk.frequency.exponentialRampToValueAtTime(120, t + 0.06);
+    const cg = ctx.createGain();
+    cg.gain.setValueAtTime(0.15, t);
+    cg.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+    clunk.connect(cg).connect(this._getBusInput());
+    clunk.start(t);
+    clunk.stop(t + 0.08);
+  }
+
+  playRoundStartBell() {
+    if (this.muted) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const partial = (freq, vol, dur) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(vol, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+      osc.connect(g).connect(this._getBusInput());
+      osc.start(now);
+      osc.stop(now + dur + 0.02);
+    };
+    partial(392, 0.16, 1.4);
+    partial(784, 0.07, 0.9);
+    partial(1180, 0.04, 0.5);
+    partial(98, 0.08, 0.5);
+  }
+
+  playRoundClear() {
+    if (this.muted) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    [523.25, 659.25, 783.99].forEach((freq, i) => {
+      const t0 = now + i * 0.09;
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, t0);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.11, t0);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.34);
+      osc.connect(g).connect(this._getBusInput());
+      osc.start(t0);
+      osc.stop(t0 + 0.36);
+    });
+  }
+
+  playPointsTick() {
+    if (this.muted) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(700, now);
+    osc.frequency.exponentialRampToValueAtTime(770, now + 0.04);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.04, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.045);
+    osc.connect(g).connect(this._getBusInput());
+    osc.start(now);
+    osc.stop(now + 0.05);
+  }
+
   playShoveGrunt() {
     if (this.muted) return;
     const ctx = this.ensureContext();

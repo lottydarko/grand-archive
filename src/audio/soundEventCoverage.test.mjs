@@ -31,6 +31,23 @@ test('every kit sound event has a handler branch in main.js', () => {
   }
 });
 
+test('survival mode sounds are real synths, not placeholders', () => {
+  const survival = readFileSync(join(here, '..', 'modes', 'survivalMode.js'), 'utf8');
+  const METHODS = [
+    'playPlankRip', 'playPlankRepair', 'playBuySuccess', 'playBuyDenied',
+    'playCrateRoll', 'playRoundStartBell', 'playRoundClear', 'playPointsTick',
+  ];
+  for (const method of METHODS) {
+    assert.ok(sfx.includes(`${method}(`), `sfx.js defines ${method}`);
+    assert.ok(survival.includes(`this.sfx?.${method}?.()`), `survivalMode calls ${method}`);
+  }
+  assert.ok(
+    /this\._audioPlaceholders = \[\];/.test(survival),
+    'survival placeholder list is empty (all placeholders replaced)',
+  );
+  assert.ok(!survival.includes('_playTone'), 'generic placeholder tone helper is gone');
+});
+
 test('ads, weapon handling, and portal transit sounds exist and are called', () => {
   for (const method of ['playAdsClick', 'playWeaponHandle', 'playPortalTransit']) {
     assert.ok(sfx.includes(`${method}(`), `sfx.js defines ${method}`);

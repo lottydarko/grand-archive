@@ -114,16 +114,9 @@ export class SurvivalModeController {
     this.brazierLights = [];
     this.dropMeshes = { maxAmmo: null, fullHealth: null };
     this.group = null;
-    this._audioPlaceholders = [
-      'plank_rip -> procedural woody snap/zombie attack via cathedralBus/sfx',
-      'plank_repair -> procedural mallet/reload tap via cathedralBus/sfx',
-      'buy_success -> procedural brass chime/ammo pickup via cathedralBus/sfx',
-      'buy_denied -> sfx.playDryFire() + low deny thud via cathedralBus',
-      'crate_roll -> reload ratchet burst via sfx',
-      'round_start -> sfx.playTrapdoorMechanism() + cathedral choir bell tone',
-      'round_clear -> ascending cathedral chime tone via cathedralBus',
-      'points_tick -> subtle tick pulse via cathedralBus',
-    ];
+    // Was 8 placeholder routings; all replaced with purpose-built synths in
+    // sfx.js by Muse's SFX pass (Nov 25, 2026). Empty = no placeholders left.
+    this._audioPlaceholders = [];
 
     this._buildArena();
     this.group.visible = false;
@@ -134,61 +127,36 @@ export class SurvivalModeController {
     return [...this._audioPlaceholders];
   }
 
-  _playTone(freqStart, freqEnd, durSec, type = 'triangle', gainPeak = 0.14) {
-    const ctx = this.sfx?.ensureContext?.();
-    const dest = this.sfx?._getBusInput?.() || this.cathedralBus?.dryGain;
-    if (!ctx || !dest) return;
-    try {
-      const now = ctx.currentTime;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = type;
-      osc.frequency.setValueAtTime(freqStart, now);
-      osc.frequency.exponentialRampToValueAtTime(Math.max(40, freqEnd), now + durSec);
-      gain.gain.setValueAtTime(0.001, now);
-      gain.gain.linearRampToValueAtTime(gainPeak, now + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + durSec);
-      osc.connect(gain).connect(dest);
-      osc.start(now);
-      osc.stop(now + durSec + 0.02);
-    } catch {}
-  }
-
   _playSfx(kind) {
     if (this.sfx?.muted) return;
     switch (kind) {
       case 'plank_rip':
-        this.sfx?.playZombieAttack?.();
-        this._playTone(210, 85, 0.14, 'sawtooth', 0.12);
+        this.sfx?.playPlankRip?.();
         break;
       case 'plank_repair':
-        this.sfx?.playAmmoPickup?.();
-        this._playTone(180, 260, 0.11, 'triangle', 0.13);
+        this.sfx?.playPlankRepair?.();
         break;
       case 'buy_success':
-        this.sfx?.playAmmoPickup?.();
-        this._playTone(520, 780, 0.18, 'triangle', 0.16);
+        this.sfx?.playBuySuccess?.();
         break;
       case 'buy_denied':
-        this.sfx?.playDryFire?.();
-        this._playTone(150, 90, 0.22, 'sawtooth', 0.14);
+        this.sfx?.playBuyDenied?.();
         break;
       case 'crate_roll':
-        this.sfx?.playReload?.();
-        this._playTone(340, 620, 0.25, 'sine', 0.12);
+        this.sfx?.playCrateRoll?.();
         break;
       case 'round_start':
         this.sfx?.playTrapdoorMechanism?.();
-        this._playTone(160, 120, 0.6, 'sawtooth', 0.15);
+        this.sfx?.playRoundStartBell?.();
         break;
       case 'round_clear':
-        this._playTone(330, 520, 0.45, 'triangle', 0.15);
+        this.sfx?.playRoundClear?.();
         break;
       case 'boss_spawn':
         this.sfx?.playLionRoar?.();
         break;
       case 'points_tick':
-        this._playTone(680, 760, 0.05, 'sine', 0.05);
+        this.sfx?.playPointsTick?.();
         break;
       default:
         break;
