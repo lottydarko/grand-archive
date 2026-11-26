@@ -1,5 +1,10 @@
 
 import * as THREE from 'three';
+import {
+  createGamepadMenuState,
+  stepGamepadMenu,
+  snapshotFromGamepad,
+} from './gamepadMenuLogic.js';
 
 // =============================================================================
 // CRT MENU — The Grand Archive (Lotty's ruling, Nov 25, 2026: replaces the old
@@ -1089,6 +1094,70 @@ export function createCrtMenu(renderer, { onEnterConfirmed, onSurvivalConfirmed 
         return -1;
       }
 
+      // Shared menu actions — keyboard and the Xbox controller drive the
+      // SAME code paths (Lotty, Nov 25, 2026: the main screen reacts to
+      // the controller like the quips/first menu do). Sounds and behavior
+      // below are the keyboard handler's originals, factored out verbatim.
+      function moveSelection(delta) {
+        const items = getMenuItemsForCurrentScreen();
+        if (!items.length) return;
+        appState.selectedIndex = (appState.selectedIndex + delta + items.length) % items.length;
+        updateCursorCameraOffset(appState.selectedIndex, items.length);
+        playRelayClick(delta > 0 ? 260 : 280, 0.035, 0.07);
+        playStabSound(0.45);
+        triggerGlitch(0.42, false);
+        renderCRTCanvas();
+      }
+
+      function confirmSelection() {
+        const items = getMenuItemsForCurrentScreen();
+        if (!items.length) return;
+        playRelayClick(175, 0.06, 0.12);
+        playStabSound(1.05);
+        items[appState.selectedIndex].action();
+        renderCRTCanvas();
+      }
+
+      function backToMainScreen() {
+        if (appState.screen === 'MAIN') return;
+        playStabSound(0.85);
+        switchScreen('MAIN', -1);
+      }
+
+      // Xbox controller polling — menus only; during gameplay the
+      // PlayerKit owns the pad. Polled from update() while visible.
+      let gamepadMenuState = createGamepadMenuState();
+
+      function pollGamepadMenu(nowMs) {
+        if (typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') return;
+        let snapshot = null;
+        try {
+          const pads = navigator.getGamepads();
+          if (pads) {
+            for (let i = 0; i < pads.length; i++) {
+              if (pads[i] && pads[i].connected) {
+                snapshot = snapshotFromGamepad(pads[i]);
+                break;
+              }
+            }
+          }
+        } catch (e) { return; }
+        const result = stepGamepadMenu(gamepadMenuState, snapshot, nowMs);
+        gamepadMenuState = result.state;
+        for (const intent of result.intents) {
+          if (launchState.completed) {
+            resetFromLaunchSequence();
+            return;
+          }
+          if (launchState.active) return;
+          initAudio();
+          if (intent === 'up') moveSelection(-1);
+          else if (intent === 'down') moveSelection(1);
+          else if (intent === 'confirm') confirmSelection();
+          else if (intent === 'back') backToMainScreen();
+        }
+      }
+
       window.addEventListener('mousemove', (e) => {
         if (!menuVisible) return;
         if (launchState.active) return;
@@ -1139,20 +1208,10 @@ export function createCrtMenu(renderer, { onEnterConfirmed, onSurvivalConfirmed 
 
         if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
           e.preventDefault();
-          appState.selectedIndex = (appState.selectedIndex + 1) % items.length;
-          updateCursorCameraOffset(appState.selectedIndex, items.length);
-          playRelayClick(260, 0.035, 0.07);
-          playStabSound(0.45);
-          triggerGlitch(0.42, false);
-          renderCRTCanvas();
+          moveSelection(1);
         } else if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
           e.preventDefault();
-          appState.selectedIndex = (appState.selectedIndex - 1 + items.length) % items.length;
-          updateCursorCameraOffset(appState.selectedIndex, items.length);
-          playRelayClick(280, 0.035, 0.07);
-          playStabSound(0.45);
-          triggerGlitch(0.42, false);
-          renderCRTCanvas();
+          moveSelection(-1);
         } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'a' || e.key === 'd' || e.key === 'A' || e.key === 'D') {
           e.preventDefault();
           if (appState.screen === 'GALLERY') {
@@ -1166,15 +1225,11 @@ export function createCrtMenu(renderer, { onEnterConfirmed, onSurvivalConfirmed 
           renderCRTCanvas();
         } else if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          playRelayClick(175, 0.06, 0.12);
-          playStabSound(1.05);
-          items[appState.selectedIndex].action();
-          renderCRTCanvas();
+          confirmSelection();
         } else if (e.key === 'Escape' || e.key === 'Backspace') {
           if (appState.screen !== 'MAIN') {
             e.preventDefault();
-            playStabSound(0.85);
-            switchScreen('MAIN', -1);
+            backToMainScreen();
           }
         }
       });
@@ -1401,6 +1456,7 @@ export function createCrtMenu(renderer, { onEnterConfirmed, onSurvivalConfirmed 
           // in that same unit for both dt and elapsed inside updateMenu.
           const step = (typeof dtSeconds === 'number' && dtSeconds > 0 && dtSeconds < 1) ? dtSeconds : 0.016;
           menuClockMs += step * 1000;
+          pollGamepadMenu(menuClockMs);
           updateMenu(menuClockMs);
         },
         render() {
