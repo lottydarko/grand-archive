@@ -7,7 +7,6 @@ import { readFileSync } from 'node:fs';
 const main = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
 const enemies = readFileSync(new URL('../entities/enemies.js', import.meta.url), 'utf8');
 const zones = readFileSync(new URL('../world/levelOneZones.js', import.meta.url), 'utf8');
-const weapons = readFileSync(new URL('../player/weapons.js', import.meta.url), 'utf8');
 
 test('O4: the mazeExitOpen dataset shadow includes the horde condition', () => {
   const start = main.indexOf('document.body.dataset.mazeExitOpen');
@@ -29,14 +28,6 @@ test('O12: dead discUnlocked writes are gone from enemies.js', () => {
 
 test('O12: uncalled openCastleGate is gone from levelOneZones.js', () => {
   assert.ok(!zones.includes('openCastleGate'), 'openCastleGate had zero callers — removed');
-});
-
-test('O12: weapons fallback spotlight is created from lightingConfig values', () => {
-  const start = weapons.indexOf('new THREE.SpotLight(');
-  assert.ok(start !== -1);
-  const creation = weapons.slice(start, start + 300);
-  assert.ok(creation.includes('FLASHLIGHT_INTENSITY'), 'fallback spotlight must use FLASHLIGHT_INTENSITY, not a private literal');
-  assert.ok(creation.includes('FLASHLIGHT_DISTANCE'), 'fallback spotlight must use FLASHLIGHT_DISTANCE');
 });
 
 test('brute readout: placeholder non-boss health readout exists and is driven by brute HP', () => {

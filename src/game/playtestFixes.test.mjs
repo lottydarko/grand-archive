@@ -2,55 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 
-import { WeaponSystem } from '../player/weapons.js';
 import { ITEM_CATALOG } from '../player/inventoryLogic.js';
 import { buildGrandLibrary } from '../world/library.js';
 import { buildLevelOneCorridor, LEVEL_ONE_SPAWNS, LEVEL_ONE_WORLD_BOUNDS } from '../world/levelOneSpiral.js';
 import { resolveCircleAABB } from '../world/mazeLogic.js';
 import { EnemyManager } from '../entities/enemies.js';
 import { LionBoss, MazeOneGhoul, LION_STATES } from '../entities/lionAndGhoulController.js';
-import {
-  createStaminaState,
-  updateStaminaState,
-  PANT_MIN_SPRINT_SEC,
-  PANT_DURATION_SEC,
-  PANT_COOLDOWN_SEC,
-} from '../player/staminaLogic.js';
 import { sfx } from '../audio/sfx.js';
 import {
   createLevelOneState,
   advanceLevelOne,
   LEVEL_ONE_STEPS,
 } from './levelOneSequence.js';
-
-function createDummyControls() {
-  return {
-    actions: { flashlight: false },
-    isSprinting: false,
-    aimAmount: 0,
-    currentSpeed: 0,
-    walkSpeed: 4.2,
-    walkBobDist: 0,
-    lookDeltaX: 0,
-    lookDeltaY: 0,
-    staminaState: { postSprintTimer: 0 },
-  };
-}
-
-function countVisibleWeaponModels(weapons) {
-  const candidates = [
-    ['shotgunGroup', weapons.shotgunGroup],
-    ['swordGroup', weapons.swordGroup],
-    ['knifeGroup', weapons.knifeGroup],
-    ['glockGroup', weapons.glockGroup],
-    ['_heroGlockHandMount', weapons._heroGlockHandMount],
-  ];
-  const visible = [];
-  for (const [name, obj] of candidates) {
-    if (obj && obj.visible) visible.push(name);
-  }
-  return visible;
-}
 
 function withMockCanvas(fn) {
   const prevDocument = globalThis.document;
@@ -126,62 +89,9 @@ function makeOffsetMockGlb(offsetY = 0.85, height = 1.6) {
 }
 
 // ============================================================================
-// FIX 1: PISTOL PICKUP-ONLY
+// FIX 2: LION SWORD-SMITE PRESERVED
 // ============================================================================
-test('Fix 1 (Pistol pickup-only): Glock absent from start loadout & cycler until pistol pickup collected', () => {
-  const camera = new THREE.PerspectiveCamera();
-  const weapons = new WeaponSystem(camera, {});
-
-  // Start state (level1 default)
-  assert.strictEqual(weapons.pistolOwned, false, 'pistolOwned must default to false');
-  assert.strictEqual(weapons.weaponsUnlocked.glock, false, 'glock unlocked flag must default to false');
-  assert.strictEqual(weapons.glockGroup.visible, false, 'glockGroup must be hidden at start');
-  assert.strictEqual(weapons._mountedGlockOnArms, false, 'hero Glock must never mount at start');
-  assert.ok(!weapons.cycler.getOwnedCycleList().includes('glock'), 'glock must not be in weapon cycler');
-  assert.strictEqual(weapons.equip('glock'), false, 'equip(glock) must fail before pistol pickup');
-
-  // Even in standard loadout, Glock remains pickup-only
-  weapons.setLoadout('standard');
-  assert.strictEqual(weapons.pistolOwned, false, 'standard loadout must not auto-grant pistol');
-  assert.ok(!weapons.cycler.getOwnedCycleList().includes('glock'), 'glock absent from standard cycler until owned');
-  assert.strictEqual(weapons.equip('glock'), false, 'equip(glock) blocked in standard before pickup');
-  assert.strictEqual(weapons.glockGroup.visible, false, 'glockGroup stays hidden in standard before pickup');
-
-  // Verify pickup catalog entries exist
-  assert.ok(ITEM_CATALOG.pistol_pickup, 'pistol_pickup must exist in ITEM_CATALOG');
-  assert.ok(ITEM_CATALOG.glock_pickup, 'glock_pickup must exist in ITEM_CATALOG');
-
-  // Collecting pistol pickup grants ownership and joins the weapon set
-  weapons.setLoadout('level1', { unarmed: true });
-  weapons.unlockWeapon('glock');
-  assert.strictEqual(weapons.pistolOwned, true, 'pistolOwned becomes true on pickup');
-  assert.strictEqual(weapons.weaponsUnlocked.glock, true, 'glock unlocked becomes true on pickup');
-  assert.ok(weapons.cycler.getOwnedCycleList().includes('glock'), 'glock joins cycler after pickup');
-  assert.strictEqual(weapons.equip('glock'), true, 'equip(glock) succeeds after pickup');
-  assert.strictEqual(weapons.glockGroup.visible, true, 'glock viewmodel renders after pickup + equip');
-
-  // Resetting run revokes ownership cleanly
-  weapons.reset();
-  assert.strictEqual(weapons.pistolOwned, false, 'reset() clears pistolOwned');
-  assert.strictEqual(weapons.glockGroup.visible, false, 'reset() hides glockGroup');
-  assert.ok(!weapons.cycler.getOwnedCycleList().includes('glock'), 'reset() removes glock from cycler');
-});
-
-// ============================================================================
-// FIX 2: SWORD PICKUP-ONLY + LION SWORD-SMITE PRESERVED
-// ============================================================================
-test('Fix 2 (Sword pickup-only): Sword absent until Barrel Room pickup; Lion sword-smite works identically after grant', () => {
-  const camera = new THREE.PerspectiveCamera();
-  const weapons = new WeaponSystem(camera, {});
-
-  assert.strictEqual(weapons.swordOwned, false, 'swordOwned must default to false');
-  assert.strictEqual(weapons.weaponsUnlocked.sword, false, 'sword unlocked must default to false');
-  assert.strictEqual(weapons.swordGroup.visible, false, 'swordGroup must be hidden at start');
-  assert.ok(!weapons.cycler.getOwnedCycleList().includes('sword'), 'sword absent from cycler at start');
-  assert.strictEqual(weapons.equip('sword'), false, 'equip(sword) blocked before barrel pickup');
-  assert.strictEqual(weapons.triggerSwordSlash(), false, 'triggerSwordSlash blocked before barrel pickup');
-
-  // Barrel destroyed in Barrel Room -> sword pickup collected
+test('Fix 2 (Lion sword-smite): Gunfire clamps at 1 HP; sword smite kills Lion', () => {
   let st = createLevelOneState();
   st = advanceLevelOne(st, 'pickup_first_disc').state;
   st = advanceLevelOne(st, 'start_place_first_disc').state;
@@ -191,24 +101,15 @@ test('Fix 2 (Sword pickup-only): Sword absent until Barrel Room pickup; Lion swo
   st = advanceLevelOne(st, 'pickup_shotgun').state;
   st = advanceLevelOne(st, 'shoot_barrel').state;
   assert.strictEqual(st.barrelDestroyed, true);
-  assert.strictEqual(st.weaponsUnlocked.sword, false, 'shooting barrel alone does not grant sword until picked up');
 
-  // Picking up the rolled-out sword grants it
   st = advanceLevelOne(st, 'pickup_sword').state;
-  weapons.unlockWeapon('sword');
   assert.strictEqual(st.weaponsUnlocked.sword, true);
-  assert.strictEqual(weapons.swordOwned, true, 'swordOwned true after barrel sword pickup');
-  assert.ok(weapons.cycler.getOwnedCycleList().includes('sword'), 'sword joins cycler after pickup');
-  assert.strictEqual(weapons.equip('sword'), true, 'equip(sword) succeeds after pickup');
-  assert.strictEqual(weapons.swordGroup.visible, true, 'swordGroup visible when equipped');
 
-  // Verify Lion Boss sword-smite works identically after grant
   const scene = new THREE.Scene();
   let lionDefeated = false;
   const lion = new LionBoss(scene, new THREE.Vector3(0, 0, 62), {
     onDefeated: () => { lionDefeated = true; },
   });
-  // Gunfire still clamps at 1 HP and sets outOfAmmoSmiteReady when out of ammo
   let gunHit = null;
   for (let i = 0; i < 6; i++) {
     gunHit = lion.takeDamage('shotgun', true, i === 5);
@@ -217,69 +118,11 @@ test('Fix 2 (Sword pickup-only): Sword absent until Barrel Room pickup; Lion swo
   assert.strictEqual(lion.alive, true);
   assert.strictEqual(lion.hp, 1);
   assert.strictEqual(lion.outOfAmmoSmiteReady, true);
-  // Sword smite kills Lion
   const smiteHit = lion.takeDamage('sword', false, true);
   assert.strictEqual(smiteHit.killed, true);
   assert.strictEqual(lion.alive, false);
   assert.strictEqual(lion.state, LION_STATES.DEAD);
   assert.strictEqual(lionDefeated, true);
-});
-
-// ============================================================================
-// FIX 3: NO CLUSTERED WEAPONS — STRICTLY <= 1 VISIBLE AT ALL TIMES
-// ============================================================================
-test('Fix 3 (No clustered weapons): only the active owned weapon model is visible across equips, swaps, holsters, and hand-mounted Glock', () => {
-  const camera = new THREE.PerspectiveCamera();
-  const weapons = new WeaponSystem(camera, {});
-  const controls = createDummyControls();
-
-  // Unarmed at start -> 0 weapon models visible
-  assert.deepStrictEqual(countVisibleWeaponModels(weapons), [], '0 weapons visible while unarmed');
-
-  // Unlock all weapons (shotgun, sword, glock)
-  weapons.unlockWeapon('shotgun');
-  weapons.unlockWeapon('sword');
-  weapons.unlockWeapon('glock');
-
-  // Equip each weapon explicitly -> strictly 1 visible
-  for (const [w, expectedName] of [
-    ['shotgun', 'shotgunGroup'],
-    ['sword', 'swordGroup'],
-    ['glock', 'glockGroup'],
-  ]) {
-    assert.strictEqual(weapons.equip(w), true);
-    weapons.update(0.016, controls, null, 100);
-    assert.deepStrictEqual(
-      countVisibleWeaponModels(weapons),
-      [expectedName],
-      `Only ${expectedName} may be visible when ${w} is active`
-    );
-  }
-
-  // Simulate hero Glock mounted on arms: glockGroup must hide so it never doubles with _heroGlockHandMount
-  const mockHandMount = new THREE.Group();
-  mockHandMount.name = 'HeroGlockHandMount';
-  weapons._heroGlockHandMount = mockHandMount;
-  weapons._mountedGlockOnArms = true;
-  weapons._syncVisibility();
-  assert.deepStrictEqual(
-    countVisibleWeaponModels(weapons),
-    ['_heroGlockHandMount'],
-    'When hero Glock is mounted on arms, ONLY _heroGlockHandMount is visible (no double glockGroup)'
-  );
-
-  // Swap through full cycler animation frame-by-frame -> NEVER more than 1 visible on any frame
-  weapons.equip('shotgun');
-  assert.strictEqual(weapons.swap(), true, 'swap starts cycler');
-  for (let i = 0; i < 60; i++) {
-    weapons.update(0.016, controls, null, 100);
-    const vis = countVisibleWeaponModels(weapons);
-    assert.ok(vis.length <= 1, `Frame ${i}: at most 1 weapon visible during swap, got [${vis.join(', ')}]`);
-  }
-
-  // Holstering hides ALL weapon models explicitly
-  weapons.toggleHolster();
-  assert.deepStrictEqual(countVisibleWeaponModels(weapons), [], '0 weapons visible when holstered');
 });
 
 // ============================================================================
@@ -430,130 +273,8 @@ test('Fix 5 (Enemies grounded): Zombie, White Ghost, Maze One Ghoul, and Lion Bo
 });
 
 // ============================================================================
-// FIX 6: PANTING — >= 4s CONTINUOUS SPRINT, >= 30s POST-STOP COOLDOWN, FADE
+// FIX 6: PANTING — REMOVED (kit stamina model replaces staminaLogic)
 // ============================================================================
-test('Fix 6 (Panting): requires >= 4s continuous sprint, never while walking/sprint start, >= 30s cooldown strictly AFTER stop, smooth fade', () => {
-  assert.ok(PANT_MIN_SPRINT_SEC >= 4.0, 'PANT_MIN_SPRINT_SEC must be >= 4.0s');
-  assert.ok(PANT_COOLDOWN_SEC >= 30.0, 'PANT_COOLDOWN_SEC must be >= 30.0s');
-
-  const st = createStaminaState();
-
-  // 1. Walking for 10 seconds NEVER pants
-  for (let i = 0; i < 100; i++) {
-    const out = updateStaminaState(st, 0.1, { isMoving: true, isAiming: false, isCrouching: false, sprintHold: false });
-    assert.strictEqual(out.pantingJustTriggered, false, 'Walking must never trigger panting');
-  }
-
-  // 2. Short sprint (< 4.0s) NEVER pants (even if stamina starts low and exhausts!)
-  st.stamina = 15;
-  for (let i = 0; i < 35; i++) {
-    const out = updateStaminaState(st, 0.1, { isMoving: true, isAiming: false, isCrouching: false, sprintHold: true });
-    assert.strictEqual(out.pantingJustTriggered, false, 'Short sprint (< 4s) must never trigger panting');
-  }
-
-  // Refill stamina completely for sustained sprint test
-  for (let i = 0; i < 100; i++) {
-    updateStaminaState(st, 0.1, { isMoving: false, isAiming: false, isCrouching: false, sprintHold: false });
-  }
-
-  // 3. Continuous sprint >= 4.0s triggers panting ONCE (and NOT before 4.0s)
-  let triggeredAt = null;
-  for (let i = 1; i <= 50; i++) {
-    const out = updateStaminaState(st, 0.1, { isMoving: true, isAiming: false, isCrouching: false, sprintHold: true });
-    if (out.pantingJustTriggered) {
-      assert.strictEqual(triggeredAt, null, 'Panting should trigger only once per bout');
-      triggeredAt = i * 0.1;
-    }
-  }
-  assert.ok(triggeredAt !== null && triggeredAt >= 4.0, `Panting must trigger at >= 4.0s, triggered at ${triggeredAt}`);
-
-  // 4. Cooldown (>= 30s) starts STRICTLY AFTER panting stops (PANT_DURATION_SEC elapses first)
-  const waitWhilePanting = Math.ceil(PANT_DURATION_SEC / 0.1);
-  for (let i = 0; i < waitWhilePanting; i++) {
-    const out = updateStaminaState(st, 0.1, { isMoving: false, isAiming: false, isCrouching: false, sprintHold: false });
-    assert.strictEqual(out.pantingJustTriggered, false);
-  }
-  // Rest 20s (< 30s cooldown remaining) then sprint 4.5s -> MUST NOT trigger yet
-  for (let i = 0; i < 200; i++) {
-    updateStaminaState(st, 0.1, { isMoving: false, isAiming: false, isCrouching: false, sprintHold: false });
-  }
-  for (let i = 0; i < 45; i++) {
-    const out = updateStaminaState(st, 0.1, { isMoving: true, isAiming: false, isCrouching: false, sprintHold: true });
-    assert.strictEqual(out.pantingJustTriggered, false, 'Must not pant before 30s post-stop cooldown expires');
-  }
-
-  // Rest another 12s (total post-stop elapsed > 30s, stamina restored) then sprint >= 4.0s -> MAY trigger again
-  for (let i = 0; i < 120; i++) {
-    updateStaminaState(st, 0.1, { isMoving: false, isAiming: false, isCrouching: false, sprintHold: false });
-  }
-  let secondTrigger = false;
-  for (let i = 0; i < 50; i++) {
-    const out = updateStaminaState(st, 0.1, { isMoving: true, isAiming: false, isCrouching: false, sprintHold: true });
-    if (out.pantingJustTriggered) secondTrigger = true;
-  }
-  assert.strictEqual(secondTrigger, true, 'Panting allowed again after full >= 30s post-stop cooldown + >= 4s sprint');
-
-  // 5. Verify sfx.playPanting uses smooth fade-in / fade-out GainNode envelope and enforces >= 30s post-stop cooldown
-  const ramps = [];
-  const mockGainParam = {
-    setValueAtTime: (v, t) => ramps.push(['set', v, t]),
-    linearRampToValueAtTime: (v, t) => ramps.push(['ramp', v, t]),
-    exponentialRampToValueAtTime: (v, t) => ramps.push(['exp', v, t]),
-  };
-  const mockGainNode = { gain: mockGainParam, connect: () => mockGainNode };
-  const mockFilter = {
-    type: '',
-    frequency: { value: 540, setValueAtTime: () => {}, exponentialRampToValueAtTime: () => {} },
-    Q: { value: 1 },
-    connect: () => mockGainNode,
-  };
-  const mockSource = {
-    buffer: null,
-    playbackRate: { value: 1 },
-    connect: () => mockFilter,
-    start: () => {},
-    stop: () => {},
-  };
-  const prevCtx = sfx.ctx;
-  const prevMaster = sfx.masterGain;
-  const prevCooldown = sfx._pantCooldownUntilMs;
-  const prevClips = sfx.studioClips;
-  const prevNoise = sfx.noiseBuffer;
-  try {
-    sfx.ctx = {
-      currentTime: 10,
-      sampleRate: 44100,
-      createGain: () => mockGainNode,
-      createBiquadFilter: () => mockFilter,
-      createBufferSource: () => mockSource,
-      createBuffer: (ch, len) => ({ getChannelData: () => new Float32Array(len) }),
-    };
-    sfx.masterGain = mockGainNode;
-    sfx.studioClips = {};
-    sfx.noiseBuffer = { duration: 2.2 };
-    sfx._pantCooldownUntilMs = 0;
-
-    const first = sfx.playPanting(0.8);
-    assert.strictEqual(first, true, 'First playPanting call succeeds');
-    assert.ok(ramps.some((r) => r[0] === 'ramp' && r[1] > 0.01), 'playPanting must include smooth fade-in ramp');
-    assert.ok(
-      ramps.some((r) => (r[0] === 'ramp' || r[0] === 'exp') && r[1] <= 0.001),
-      'playPanting must include smooth fade-out ramp'
-    );
-    assert.ok(
-      sfx._pantCooldownUntilMs >= performance.now() + 30_000,
-      'sfx._pantCooldownUntilMs must enforce >= 30s strictly after clip stops'
-    );
-    const immediateRetry = sfx.playPanting(1.0);
-    assert.strictEqual(immediateRetry, false, 'Immediate re-trigger blocked by post-stop cooldown');
-  } finally {
-    sfx.ctx = prevCtx;
-    sfx.masterGain = prevMaster;
-    sfx._pantCooldownUntilMs = prevCooldown;
-    sfx.studioClips = prevClips;
-    sfx.noiseBuffer = prevNoise;
-  }
-});
 
 // ============================================================================
 // FIX 7: DISC COUNT & 3-DISC TRAP-DOOR GATE

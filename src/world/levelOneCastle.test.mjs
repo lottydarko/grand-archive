@@ -21,7 +21,6 @@ import {
   advanceLevelOne,
   canUnlockStairs,
 } from '../game/levelOneSequence.js';
-import { GRAB_PROFILES } from '../player/grabAnimator.js';
 
 test('Level One Castle: locked floor plan dimensions and envelope', () => {
   // Hall: 24 x 14
@@ -140,8 +139,7 @@ test('Level One Castle: 3 discs open trap-door exit; return stair locked until l
   state = advanceLevelOne(state, 'return_to_hall').state;
   assert.equal(state.step, 'return_to_hall');
 
-  // Case [2] ritual (2.8s) seats disc, unlocks song, completes level
-  assert.equal(GRAB_PROFILES.ritual.duration, 2.8, 'Ritual must be exactly 2.8s');
+  // Case [2] seats disc, unlocks song, completes level
   const resCase = advanceLevelOne(state, 'place_disc_in_second_case');
   state = resCase.state;
   assert.equal(state.hallCasesLocked.case1, false, 'Case [2] (case1) unlocked');

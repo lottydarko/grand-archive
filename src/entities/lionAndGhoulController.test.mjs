@@ -12,10 +12,8 @@ import {
   LevelOneZoneController,
 } from '../world/levelOneZones.js';
 import {
-  SHOTGUN_CONFIG,
-  SWORD_CONFIG,
   createRedShellsBoxPickupMesh,
-} from '../player/levelOneWeapons.js';
+} from '../world/pickups.js';
 
 let passed = 0;
 function test(name, fn) {
@@ -256,11 +254,7 @@ test('LevelOneZoneController transitions zones and manages post-boss rising case
   assert.equal(risingMesh.position.y, 0.0);
 });
 
-test('Shotgun and Sword weapon configs & red shells pickup mesh', () => {
-  assert.equal(SHOTGUN_CONFIG.magSize, 6);
-  assert.equal(SHOTGUN_CONFIG.pelletCount, 8);
-  assert.equal(SWORD_CONFIG.reach, 3.6);
-
+test('Red shells pickup mesh builds cleanly', () => {
   const redShellsMesh = createRedShellsBoxPickupMesh();
   assert.ok(redShellsMesh instanceof THREE.Group);
   assert.ok(redShellsMesh.children.length >= 2);

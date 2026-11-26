@@ -18,20 +18,20 @@ test('HUD sync: lastHudWeapon is tracked at module scope', () => {
   );
 });
 
-test('HUD sync: stepSimulation dirties the HUD when activeWeapon changes, before the readout gate', () => {
-  const updateAt = main.indexOf('weapons.update(simDt');
-  assert.ok(updateAt !== -1, 'weapons.update call must exist in stepSimulation');
+test('HUD sync: stepSimulation dirties the HUD when kit weapon changes, before the readout gate', () => {
+  const updateAt = main.indexOf('playerKit.update(simDt');
+  assert.ok(updateAt !== -1, 'playerKit.update call must exist in stepSimulation');
   const gateAt = main.indexOf('if (hudDirty || prevPosture !== nextPosture', updateAt);
-  assert.ok(gateAt !== -1, 'the hudDirty readout gate must exist after weapons.update');
+  assert.ok(gateAt !== -1, 'the hudDirty readout gate must exist after playerKit.update');
   const between = main.slice(updateAt, gateAt);
-  const cmpAt = between.indexOf('weapons.activeWeapon !== lastHudWeapon');
+  const cmpAt = between.indexOf('st.weaponId !== lastHudWeapon');
   assert.ok(
     cmpAt !== -1,
-    'stepSimulation must compare weapons.activeWeapon against lastHudWeapon after weapons.update (equip raises no hudDirty event, incl. the grab-done flush)'
+    'stepSimulation must compare st.weaponId against lastHudWeapon after playerKit.update'
   );
-  const block = between.slice(cmpAt, cmpAt + 200);
+  const block = between.slice(cmpAt, cmpAt + 280);
   assert.ok(
-    block.includes('lastHudWeapon = weapons.activeWeapon'),
+    block.includes('lastHudWeapon = st.weaponId'),
     'the comparison must advance the tracker to the new weapon'
   );
   assert.ok(

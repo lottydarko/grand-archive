@@ -28,13 +28,7 @@ import {
 } from './world/lightingConfig.js';
 import { WorldItemManager } from './world/pickups.js';
 import { createSoftRadialTexture } from './world/textures.js';
-import { PlayerControls } from './player/controls.js';
-import { WeaponSystem } from './player/weapons.js';
-import {
-  parseArmsVisibleParam,
-  setArmsVisible as setArmsVisibleFlag,
-  isArmsToggleCombo,
-} from './player/armsVisibility.js';
+import { PlayerKitAdapter } from './player/kitAdapter.js';
 import {
   createInventory,
   addItemToInventory,
@@ -59,7 +53,6 @@ import { createHorrorOverlay } from './shaders/horrorVignette.js';
 import { LEVEL_ONE_ZONES, LevelOneZoneController, DEFAULT_LEVEL_ONE_ZONE_BOUNDS } from './world/levelOneZones.js';
 import { triggerLevelOneRumble, pulseRumble } from './game/levelOneBindings.js';
 import { LionBoss, MazeOneGhoul, validateEnemyDamage, LION_STATES } from './entities/lionAndGhoulController.js';
-import { SHOTGUN_CONFIG, SWORD_CONFIG } from './player/levelOneWeapons.js';
 import {
   ChromebookProfiler,
   detectDeviceProfile,
@@ -246,9 +239,6 @@ hudRoot.innerHTML = `
       <div id="disc-counter-label" class="horror-text text-3xl text-[#e4d5b9] leading-none">discs 0 / 3</div>
     </div>
 
-    <!-- Hands Engine Calibration Verification HUD (?handcheck=1) -->
-    <div id="handcheck-hud" class="fixed top-4 left-4 z-50 font-mono text-xs text-[#5bf587] bg-black/85 p-3 rounded border border-[#5bf587]/40 whitespace-pre pointer-events-none hidden"></div>
-
     <!-- Hall Brute health readout: NON-BOSS (director's ruling, Nov 24, 2026).
          PLACEHOLDER visual on purpose — dashed frame, flat fill; the real
          art direction comes later. Label echoes the shipped whisper. -->
@@ -396,7 +386,6 @@ const dom = {
   portalFlash: document.getElementById('portal-flash'),
   floorWrap: document.getElementById('floor-wrap'),
   floorLabel: document.getElementById('floor-label'),
-  handcheckHud: document.getElementById('handcheck-hud'),
   discCounterWrap: document.getElementById('disc-counter-wrap'),
   bruteReadout: document.getElementById('brute-readout'),
   bruteReadoutFill: document.getElementById('brute-readout-fill'),
@@ -622,8 +611,10 @@ function trySkipVillainCutscene() {
     }
   }
   if (!levelOneState.villainCutsceneActive && levelOneState.bossFightStarted) {
-    if (controls) controls.enabled = true;
-    if (weapons) weapons.root.visible = true;
+    if (playerKit) {
+      playerKit.setMovementLocked(false);
+      playerKit.setViewmodelVisible(true);
+    }
     if (enemies && enemies.lionBoss) {
       enemies.lionBoss.state = LION_STATES.IDLE;
       enemies.lionBoss.setCutsceneStalk(false);
@@ -648,7 +639,7 @@ function startVillainCutscene() {
         LEVEL_ONE_SPAWNS.lionRoom.lionPos.z
       ),
       {
-        controls,
+        controls: playerKit,
         levelOneZones,
       }
     );
@@ -664,8 +655,10 @@ function startVillainCutscene() {
     }
   }
   if (levelOneState.villainCutsceneActive) {
-    if (controls) controls.enabled = false;
-    if (weapons) weapons.root.visible = false;
+    if (playerKit) {
+      playerKit.setMovementLocked(true);
+      playerKit.setViewmodelVisible(false);
+    }
     if (enemies.lionBoss) {
       enemies.lionBoss.state = LION_STATES.IDLE;
       enemies.lionBoss.setCutsceneStalk(false);
@@ -691,7 +684,7 @@ async function handleVinylCaseInteract(caseId) {
   if (!entry) return;
   // Playing cases cannot be toggled off (§B.10 / vinylPlayer rule).
   if (entry.playing) return;
-  if (controls?.movementLocked || weapons?.isGrabActive?.()) return;
+  if (playerKit?.movementLocked) return;
 
   const caseKey = `case${entry.slotIndex}`;
   const isLocked = Boolean(levelOneState?.hallCasesLocked?.[caseKey]);
@@ -723,7 +716,7 @@ async function handleVinylCaseInteract(caseId) {
   }
 
   if (isFirstDiscRitual || isSecondCaseRitual) {
-    if (controls) controls.movementLocked = true;
+    if (playerKit) playerKit.setMovementLocked(true);
     if (isFirstDiscRitual) {
       levelOneState = advanceLevelOne(levelOneState, 'start_place_first_disc').state;
     }
@@ -770,17 +763,11 @@ async function handleVinylCaseInteract(caseId) {
     };
 
     const onDone = () => {
-      if (controls) controls.movementLocked = false;
+      if (playerKit) playerKit.setMovementLocked(false);
     };
 
-    const started =
-      weapons && typeof weapons.startGrab === 'function'
-        ? weapons.startGrab({ profile: 'ritual', pose: 'discPinch', onClose, onDone })
-        : false;
-    if (!started) {
-      onClose();
-      onDone();
-    }
+    onClose();
+    onDone();
     return;
   }
 
@@ -827,7 +814,7 @@ const satchelUI = new SatchelUI(hudRoot, {
   onDrop: (slotIndex) => handleDropInventorySlot(slotIndex),
   onClose: () => {
     setPhase('playing');
-    controls?.requestPointerLock();
+    playerKit?.requestPointerLock();
   },
 });
 
@@ -885,13 +872,12 @@ let library = null;
 let levelOneCorridor = null;
 let worldItems = null;
 let transformer = null;
-let controls = null;
-let weapons = null;
-// Weapon the HUD readouts last rendered. The equip path (incl. the Fix-3
-// grab-done flush) raises no hudDirty event, so stepSimulation compares
-// against this every frame — without it the weapon label trails exactly
-// one equip behind (diagnosis round 2, Q4).
+let playerKit = null;
+// Weapon the HUD readouts last rendered. stepSimulation compares against
+// this every frame so weapon switches refresh the HUD within one frame.
 let lastHudWeapon = null;
+let lastHudAmmo = null;
+let lastHudReloading = false;
 let enemies = null;
 let worldRayMeshes = [];
 
@@ -902,11 +888,11 @@ function resetStarterInventory() {
 }
 
 function handleUseInventorySlot(slotIndex) {
-  if (!weapons || !controls) return;
+  if (!playerKit) return;
   const result = useInventoryItem(inventory, slotIndex, {
     hp: gameState.hp,
     maxHp: gameState.maxHp,
-    reserveAmmo: weapons.reserveAmmo,
+    reserveAmmo: 0,
     maxReserveAmmo: 180,
   });
 
@@ -925,14 +911,19 @@ function handleUseInventorySlot(slotIndex) {
     gameState.hp = Math.min(gameState.maxHp, gameState.hp + eff.heal);
   }
   if (eff.ammo > 0) {
-    weapons.addAmmo(eff.ammo);
-    sfx.playAmmoPickup();
-    showWhisper(`+${eff.ammo} rounds loaded to reserve`, 2.0);
+    if (playerKit.maxAmmo > 0 && playerKit.ammo < playerKit.maxAmmo) {
+      playerKit.triggerReload('ui');
+      sfx.playAmmoPickup();
+      showWhisper('reloading magazine', 2.0);
+    } else {
+      sfx.playAmmoPickup();
+      showWhisper('magazines reload freely [r]', 2.0);
+    }
   }
   if (eff.shrinkDuration > 0) {
-    controls.applyShrinkEffect(eff.shrinkDuration);
+    // No shrink equivalent in PlayerKit — keep item's heal effect only
     sfx.playWaferCrunch();
-    showWhisper('shrunk — slip beneath the arches', 2.6);
+    showWhisper(eff.heal > 0 ? `ate wafer · +${eff.heal} vitality` : 'ate wafer', 2.2);
   } else if (eff.heal > 0 && eff.ammo === 0) {
     sfx.playPotionDrink();
     showWhisper(`drank vial · +${eff.heal} vitality`, 2.2);
@@ -948,17 +939,18 @@ function handleUseInventorySlot(slotIndex) {
 }
 
 function handleDropInventorySlot(slotIndex) {
-  if (!controls || !worldItems) return;
+  if (!playerKit || !worldItems) return;
   const res = dropInventoryItem(inventory, slotIndex);
   if (!res.dropped) return;
 
-  // Drop physically onto the obsidian floor ~1.25m in front of the player
+  // Drop physically onto the floor ~1.25m in front of the player at groundY = 0
   const dropDist = 1.25;
-  const dx = -Math.sin(controls.yaw) * dropDist;
-  const dz = -Math.cos(controls.yaw) * dropDist;
-  const dropX = THREE.MathUtils.clamp(controls.position.x + dx, -17.4, 17.4);
-  const dropZ = THREE.MathUtils.clamp(controls.position.z + dz, -17.4, 17.4);
-  worldItems.spawn(res.itemId, dropX, controls.groundY, dropZ, 1);
+  const pos = playerKit.position;
+  const dx = -Math.sin(playerKit.yaw) * dropDist;
+  const dz = -Math.cos(playerKit.yaw) * dropDist;
+  const dropX = THREE.MathUtils.clamp(pos.x + dx, -17.4, 17.4);
+  const dropZ = THREE.MathUtils.clamp(pos.z + dz, -17.4, 64.5);
+  worldItems.spawn(res.itemId, dropX, 0, dropZ, 1);
 
   sfx.playItemDrop();
   showWhisper(`dropped ${res.item.name}`, 2.0);
@@ -967,30 +959,26 @@ function handleDropInventorySlot(slotIndex) {
 }
 
 function getDisplayWeaponName() {
-  if (!weapons) return 'unarmed';
-  const w = weapons.activeWeapon;
-  if (w === 'glock' && !(weapons.pistolOwned && weapons.weaponsUnlocked?.glock)) return 'unarmed';
-  if (w === 'sword' && !(weapons.swordOwned && weapons.weaponsUnlocked?.sword)) return 'unarmed';
-  return w || 'unarmed';
+  if (!playerKit) return 'unarmed';
+  return playerKit.displayWeaponName;
 }
 
 function syncBodyDataset() {
-  const displayWeapon = getDisplayWeaponName();
+  const kitState = playerKit ? playerKit.getState() : null;
+  const kitWeaponId = kitState ? kitState.weaponId : 'unarmed';
   document.body.dataset.state = gameState.phase;
   document.body.dataset.mode = transformer ? transformer.mode : 'exploration';
   document.body.dataset.floor = transformer ? String(transformer.floor) : '0';
   document.body.dataset.hp = String(Math.round(gameState.hp));
-  document.body.dataset.weapon = displayWeapon;
-  document.body.dataset.pistolOwned = weapons && weapons.pistolOwned ? 'true' : 'false';
-  document.body.dataset.swordOwned = weapons && weapons.swordOwned ? 'true' : 'false';
-  document.body.dataset.ammo = weapons
-    ? displayWeapon === 'shotgun'
-      ? `${weapons.shotgunAmmoInMag}/${weapons.shotgunReserve}`
-      : displayWeapon === 'glock'
-        ? `${weapons.ammoInMag}/${weapons.reserveAmmo}`
-        : displayWeapon === 'sword' || displayWeapon === 'knife'
-          ? 'blade'
-          : 'unarmed'
+  document.body.dataset.weapon = kitWeaponId;
+  document.body.dataset.pistolOwned = 'true';
+  document.body.dataset.swordOwned = 'true';
+  document.body.dataset.ammo = kitState
+    ? kitState.maxAmmo > 0
+      ? `${kitState.ammo}/${kitState.maxAmmo}`
+      : kitWeaponId === 'sword'
+        ? 'blade'
+        : kitWeaponId
     : 'unarmed';
   document.body.dataset.mazeDiscs = levelOneState ? String(levelOneState.mazeDiscsCollected || 0) : '0';
   document.body.dataset.mazeDiscsRequired = levelOneState ? String(levelOneState.mazeDiscsRequired || 3) : '3';
@@ -1006,67 +994,40 @@ function syncBodyDataset() {
     transformer && transformer.trapdoorOpenAmount > 0.5 ? 'open' : 'closed';
   document.body.dataset.inventory = gameState.phase === 'inventory' ? 'open' : 'closed';
   document.body.dataset.satchelCount = String(countUsedSlots(inventory));
-  document.body.dataset.climbing = controls && controls.isClimbing ? 'true' : 'false';
-  document.body.dataset.posture = controls
-    ? controls.shrinkTimer > 0
-      ? 'shrunk'
-      : controls.isCrawling
+  document.body.dataset.climbing = 'false';
+  document.body.dataset.posture = kitState
+    ? kitState.isSliding
+      ? 'sliding'
+      : kitState.isCrouching
         ? 'crawling'
         : 'standing'
     : 'standing';
-}
-
-function updateHandcheckHud() {
-  if (!dom.handcheckHud || !weapons || !weapons.handsEngine || dom.handcheckHud.classList.contains('hidden')) return;
-  let mode = 'hip';
-  if (weapons.activeWeapon === 'sword') mode = 'sword';
-  else if (controls && controls.isAiming) mode = 'ads';
-  else if (weapons.shotgunAnimator && weapons.shotgunAnimator.pumpTravel01 > 0.05) mode = 'pump';
-  dom.handcheckHud.textContent = weapons.handsEngine.formatTelemetry(mode);
 }
 
 function updateHudReadouts() {
   renderHealthScratches(gameState.hp);
   dom.lowHpVig.style.opacity = gameState.hp <= 35 ? String((35 - gameState.hp) / 35) : '0';
 
-  const usedSlots = countUsedSlots(inventory);
-
-  if (controls) {
+  if (playerKit) {
+    const st = playerKit.getState();
     const cues = [];
-    if (controls.isClimbing) cues.push('climbing');
-    else if (controls.shrinkTimer > 0) cues.push(`shrunk ${controls.shrinkTimer.toFixed(0)}s`);
-    else if (controls.isCrawling) cues.push('sneaking');
-    else if (controls.staminaState && controls.staminaState.exhausted) cues.push('winded');
+    if (st.isSliding) cues.push('sliding');
+    else if (st.isCrouching) cues.push('crouching');
+    else if (st.isSprinting) cues.push('sprinting');
     if (!gameState.flashlightOn) cues.push('light off');
     if (gameState.timeSlowTimer > 0) cues.push(`time slowed ${gameState.timeSlowTimer.toFixed(0)}s`);
     dom.postureLabel.textContent = cues.join(' · ');
-  }
 
-  if (weapons) {
-    const displayWeapon = getDisplayWeaponName();
-    if (displayWeapon === 'unarmed') {
+    const label = playerKit.displayWeaponName;
+    dom.weaponLabel.textContent = label;
+    if (st.weaponId === 'unarmed') {
       dom.ammoMain.textContent = '';
-      dom.weaponLabel.textContent = 'unarmed';
-    } else if (weapons.holstered) {
-      dom.ammoMain.textContent = 'holstered';
-      dom.weaponLabel.textContent =
-        displayWeapon === 'shotgun' ? 'balistucia' : displayWeapon;
-    } else if (displayWeapon === 'shotgun') {
-      dom.ammoMain.textContent = weapons.reloading
-        ? 'reloading...'
-        : `${weapons.shotgunAmmoInMag} / ${weapons.shotgunReserve}`;
-      dom.weaponLabel.textContent = 'balistucia';
-    } else if (displayWeapon === 'sword') {
+    } else if (st.weaponId === 'sword') {
       dom.ammoMain.textContent = 'blade';
-      dom.weaponLabel.textContent = 'sword';
-    } else if (displayWeapon === 'glock') {
-      dom.ammoMain.textContent = weapons.reloading
-        ? 'reloading...'
-        : `${weapons.ammoInMag} / ${weapons.reserveAmmo}`;
-      dom.weaponLabel.textContent = 'glock';
+    } else if (st.weaponId === 'flashlight') {
+      dom.ammoMain.textContent = st.flashlightOn ? 'lit' : 'off';
     } else {
-      dom.ammoMain.textContent = 'blade';
-      dom.weaponLabel.textContent = 'knife';
+      dom.ammoMain.textContent = st.isReloading ? 'reloading...' : `${st.ammo} / ${st.maxAmmo}`;
     }
   }
 
@@ -1083,8 +1044,6 @@ function updateHudReadouts() {
       dom.bruteReadoutFill.style.width = `${pct}%`;
     }
   }
-
-  updateHandcheckHud();
 
   if (dom.discCounterWrap && dom.discCounterLabel) {
     const inMaze =
@@ -1130,7 +1089,7 @@ function setPhase(nextPhase) {
   satchelUI.setVisible(nextPhase === 'inventory', inventory);
   mapOverlay.setVisible(nextPhase === 'map');
   if (nextPhase === 'map') {
-    mapOverlay.render({ library, transformer, controls });
+    mapOverlay.render({ library, transformer, controls: playerKit });
   }
 
   dom.pauseOverlay.classList.toggle('hidden', nextPhase !== 'paused');
@@ -1139,16 +1098,11 @@ function setPhase(nextPhase) {
   dom.gameoverOverlay.classList.toggle('hidden', nextPhase !== 'gameover');
   dom.gameoverOverlay.classList.toggle('flex', nextPhase === 'gameover');
 
-  if (controls) {
-    controls.enabled = nextPhase === 'playing';
+  if (playerKit) {
+    playerKit.setPlaying(nextPhase === 'playing');
     if (nextPhase !== 'playing') {
-      controls.clearInputs();
-      controls.exitPointerLock();
+      playerKit.exitPointerLock();
     }
-  }
-
-  if (weapons) {
-    weapons.root.visible = nextPhase === 'playing' && !(controls && controls.isClimbing);
   }
 
   if (nextPhase !== 'drive' && driveVaultUI.visible) {
@@ -1243,12 +1197,14 @@ function startNewRun(lockPointer = true, cinemaReel = null) {
       1
     );
   }
-  if (weapons) weapons.reset();
-  if (controls) {
-    controls.resetSpawn();
-    controls.yaw = Math.PI;
-    controls.movementLocked = false;
-    controls.worldBounds = LEVEL_ONE_WORLD_BOUNDS;
+  if (playerKit) {
+    playerKit.resetSpawn({
+      position: new THREE.Vector3(0, playerKit.standEyeHeight, -5.2),
+      yaw: Math.PI,
+      pitch: -0.02,
+      flashlightOn: true,
+    });
+    gameState.flashlightOn = playerKit.flashlightOn;
   }
 
   // Always transition to playing immediately so scene is ready underneath the movie reel
@@ -1256,15 +1212,15 @@ function startNewRun(lockPointer = true, cinemaReel = null) {
   updateHudReadouts();
 
   if (cinemaReel) {
-    controls.enabled = false;
+    playerKit?.setPlaying(false);
     cinemaLoader.play(cinemaReel, () => {
       if (gameState.phase === 'playing') {
-        controls.enabled = true;
-        if (lockPointer) controls.requestPointerLock();
+        playerKit?.setPlaying(true);
+        if (lockPointer) playerKit?.requestPointerLock();
       }
     });
-  } else if (lockPointer && controls) {
-    controls.requestPointerLock();
+  } else if (lockPointer && playerKit) {
+    playerKit.requestPointerLock();
   }
 }
 
@@ -1280,7 +1236,7 @@ function submitTerminalSeed(rawSeed) {
   // STRICT TURN 1 RULE: NO black cut or full-screen loader on Floor 1 activation!
   // Watch the lights flicker crimson, trapdoor split open, and bookshelves slide in real time!
   setPhase('playing');
-  if (controls) controls.requestPointerLock();
+  if (playerKit) playerKit.requestPointerLock();
   sfx.setAmbienceMode('survival');
   transformer.activateSurvival(chosenSeed);
   refreshArchiveShadows(renderer); // trapdoor opened — re-bake static shadows once
@@ -1306,15 +1262,16 @@ function triggerTrapdoorDescent() {
   if (transformer.floor >= 2) {
     hdriLighting.setZone('basement');
   }
-  controls.position.set(0, controls.standEyeHeight, 3.1);
-  controls.groundY = 0;
+  if (playerKit) {
+    playerKit.setPose({ position: { x: 0, y: playerKit.standEyeHeight, z: 3.1 } });
+  }
   updateHudReadouts();
 
   // Play cinematic movie chapter intertitle for Floor 2+ descents!
-  controls.enabled = false;
+  playerKit?.setPlaying(false);
   cinemaLoader.play(CINEMA_REELS.floorDescent(transformer.floor), () => {
     if (gameState.phase === 'playing') {
-      controls.enabled = true;
+      playerKit?.setPlaying(true);
       showWhisper(`floor ${transformer.floor} · ${transformer.seed}`, 2.8);
     }
   });
@@ -1326,7 +1283,7 @@ document.getElementById('btn-try-again').addEventListener('click', () => {
 });
 document.getElementById('btn-resume').addEventListener('click', () => {
   setPhase('playing');
-  controls?.requestPointerLock();
+  playerKit?.requestPointerLock();
 });
 document.getElementById('btn-pause-drive').addEventListener('click', () => {
   openDriveVault('paused');
@@ -1350,7 +1307,7 @@ document.getElementById('btn-terminal-drive').addEventListener('click', () => {
 });
 document.getElementById('btn-terminal-cancel').addEventListener('click', () => {
   setPhase('playing');
-  controls?.requestPointerLock();
+  playerKit?.requestPointerLock();
 });
 dom.terminalForm.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -1359,16 +1316,6 @@ dom.terminalForm.addEventListener('submit', (e) => {
 
 // Global hotkeys
 window.addEventListener('keydown', (e) => {
-  // Dev toggle (director ruling, Nov 25, 2026): Ctrl+Alt+A flips the fps
-  // arms meshes on/off live (hidden by default — the rig hands render
-  // badly). preventDefault so the browser never treats the combo as its
-  // own command. Weapons, flashlight and HUD are never gated by it.
-  if (isArmsToggleCombo(e)) {
-    e.preventDefault();
-    if (weapons) weapons.toggleArmsVisible();
-    return;
-  }
-
   if (cinemaLoader.active) {
     if (e.code === 'Space' || e.code === 'Enter' || e.code === 'Escape') {
       e.preventDefault();
@@ -1410,7 +1357,7 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'Tab' || e.code === 'KeyI' || e.code === 'Escape') {
       e.preventDefault();
       setPhase('playing');
-      controls?.requestPointerLock();
+      playerKit?.requestPointerLock();
     } else if (e.code === 'KeyU' || e.code === 'Enter') {
       e.preventDefault();
       handleUseInventorySlot(inventory.selectedSlot);
@@ -1429,7 +1376,7 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyM' || e.code === 'Escape') {
       e.preventDefault();
       setPhase('playing');
-      controls?.requestPointerLock();
+      playerKit?.requestPointerLock();
     }
     return;
   }
@@ -1438,12 +1385,17 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyP' || e.code === 'Escape') {
       e.preventDefault();
       setPhase('paused');
-    } else if (e.code === 'KeyM' && !(controls && controls.isClimbing)) {
+    } else if (e.code === 'KeyM') {
       e.preventDefault();
       setPhase('map');
-    } else if ((e.code === 'Tab' || e.code === 'KeyI') && !(controls && controls.isClimbing)) {
+    } else if (e.code === 'Tab' || e.code === 'KeyI') {
       e.preventDefault();
       setPhase('inventory');
+    } else if (e.code === 'KeyN' && !e.repeat) {
+      const interactable = findActiveInteractable();
+      if (interactable && interactable.type === 'vinyl') {
+        vinylPlayer.cycleCaseTrack(interactable.id);
+      }
     }
     return;
   }
@@ -1452,7 +1404,7 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyP' || e.code === 'Escape') {
       e.preventDefault();
       setPhase('playing');
-      controls?.requestPointerLock();
+      playerKit?.requestPointerLock();
     }
   }
 });
@@ -1464,7 +1416,8 @@ const _camForward = new THREE.Vector3();
 const _toInteract = new THREE.Vector3();
 
 function findActiveInteractable() {
-  if (!library || !controls) return null;
+  if (!library || !playerKit) return null;
+  const playerPos = playerKit.position;
   camera.getWorldDirection(_camForward);
   let best = null;
   let bestScore = Infinity;
@@ -1476,7 +1429,7 @@ function findActiveInteractable() {
   for (let i = 0; i < candidates.length; i++) {
     const it = candidates[i];
     if (!it.active) continue;
-    const dist = controls.position.distanceTo(it.position);
+    const dist = playerPos.distanceTo(it.position);
     if (dist > it.radius) continue;
 
     _toInteract.copy(it.position).sub(camera.position).normalize();
@@ -1493,19 +1446,6 @@ function findActiveInteractable() {
     }
   }
   return best;
-}
-
-function isNearCrawlArch() {
-  if (!library || !controls || controls.isCrawling || controls.shrinkTimer > 0) return false;
-  for (let i = 0; i < library.crawlUnderColliders.length; i++) {
-    const b = library.crawlUnderColliders[i];
-    const cx = (b.minX + b.maxX) * 0.5;
-    const cz = (b.minZ + b.maxZ) * 0.5;
-    if (Math.hypot(controls.position.x - cx, controls.position.z - cz) < 2.2) {
-      return true;
-    }
-  }
-  return false;
 }
 
 // ============================================================================
@@ -1529,15 +1469,15 @@ window.__archiveTest = {
     hdriZone: hdriLighting.activeZone,
     cameraPos: camera.position.toArray(),
     cameraRot: [camera.rotation.x, camera.rotation.y, camera.rotation.z],
-    armsLoaded: weapons ? weapons.armsLoaded : false,
+    armsLoaded: Boolean(playerKit),
     activeWeapon: getDisplayWeaponName(),
-    pistolOwned: weapons ? Boolean(weapons.pistolOwned) : false,
-    swordOwned: weapons ? Boolean(weapons.swordOwned) : false,
-    glockMounted: weapons ? weapons._mountedGlockOnArms : false,
+    weaponId: playerKit ? playerKit.weaponId : 'unarmed',
+    pistolOwned: true,
+    swordOwned: true,
     mazeDiscsCollected: levelOneState ? levelOneState.mazeDiscsCollected : 0,
     mazeDiscsRequired: levelOneState ? levelOneState.mazeDiscsRequired : 3,
     mazeExitUnlocked: levelOneState ? Boolean(levelOneState.mazeExitUnlocked) : false,
-    ammo: weapons ? `${weapons.ammoInMag}/${weapons.reserveAmmo}` : '15/60',
+    ammo: playerKit ? `${playerKit.ammo}/${playerKit.maxAmmo}` : '0/0',
     bloodPoolCount: enemies ? enemies.bloodPools.length : 0,
     bloodPoolScales: enemies ? enemies.bloodPools.map((bp) => Number(bp.mesh.scale.x.toFixed(2))) : [],
     zombies: enemies
@@ -1557,61 +1497,48 @@ window.__archiveTest = {
       : [],
   }),
   getStartupStage: () => startupSequence.getCurrentStage(),
-  getGrabState: () => (weapons ? weapons.getGrabState() : null),
-  startGrab: (opts) => (weapons ? weapons.startGrab(opts) : false),
-  getShotgunAnimState: () => (weapons ? weapons.getShotgunAnimState() : null),
-  getHandCheck: () => {
-    if (!weapons || !weapons.handsEngine) return null;
-    const pumpTravel01 = weapons.shotgunAnimator ? weapons.shotgunAnimator.pumpTravel01 : 0;
-    const mode = weapons.activeWeapon === 'sword' ? 'sword' : controls && controls.isAiming ? 'ads' : pumpTravel01 > 0.05 ? 'pump' : 'hip';
-    return weapons.handsEngine.measureHandContact(mode);
-  },
-  setHandCheckPose: (pose) => {
-    if (!weapons || !weapons.handsEngine) return false;
-    const { aim = 0, pumpTravel01 = 0 } = pose || {};
-    if (weapons.shotgunAnimator && weapons.shotgunAnimator.debugHoldPump01 !== undefined) {
-      weapons.shotgunAnimator.debugHoldPump01 = pumpTravel01;
-    }
-    if (weapons.handsEngine) {
-      weapons.handsEngine.syncShotgunPose();
-    }
-    weapons._aimAmount = aim;
+  skipStartup: () => startupSequence.skip(),
+  switchWeapon: (id) => playerKit?.switchWeapon(id, 'ui'),
+  triggerPrimary: () => {
+    if (!playerKit) return false;
+    playerKit.fireShot('ui');
     return true;
   },
-  triggerPrimary: () => (weapons ? weapons.triggerPrimary(enemies, null) : false),
   jumpToStartupStage: (stage) => {
     setPhase('startup');
     return startupSequence.jumpToStage(stage);
   },
-  skipStartup: () => startupSequence.skip(),
   getTitleState: () => titleMenu.getStateSnapshot(),
   getAudioDiagnostics: () => cathedralBus.getDiagnostics(),
   activateSurvival: (seed = 'CHECK-PASS') => submitTerminalSeed(seed),
   aimAtNearestZombie: (placeAtDist = null, zombieId = null) => {
-    if (!enemies || !controls) return false;
+    if (!enemies || !playerKit) return false;
     const z =
       zombieId != null
         ? enemies.enemies.find((e) => e.id === zombieId)
         : enemies.enemies.find((e) => e.kind === 'zombie' && e.alive);
     if (!z) return false;
+    const pos = playerKit.position;
     if (typeof placeAtDist === 'number') {
-      const fx = -Math.sin(controls.yaw);
-      const fz = -Math.cos(controls.yaw);
+      const fx = -Math.sin(playerKit.yaw);
+      const fz = -Math.cos(playerKit.yaw);
       z.group.position.set(
-        controls.position.x + fx * placeAtDist,
+        pos.x + fx * placeAtDist,
         0,
-        controls.position.z + fz * placeAtDist
+        pos.z + fz * placeAtDist
       );
       z.alerted = true;
     }
-    const dx = z.group.position.x - controls.position.x;
-    const dz = z.group.position.z - controls.position.z;
-    controls.yaw = Math.atan2(-dx, -dz);
-    controls.pitch = z.dying ? -0.34 : -0.05;
+    const dx = z.group.position.x - pos.x;
+    const dz = z.group.position.z - pos.z;
+    playerKit.setPose({
+      yaw: Math.atan2(-dx, -dz),
+      pitch: z.dying ? -0.34 : -0.05,
+    });
     return z.id;
   },
   fireShot: () => {
-    if (controls) controls.actions.fire = true;
+    if (playerKit) playerKit.fireShot('ui');
   },
   descendFloor: () => triggerTrapdoorDescent(),
   getPerfTelemetry: () => chromebookProfiler.getTelemetry(),
@@ -1677,17 +1604,6 @@ async function bootstrap() {
   const params = new URLSearchParams(window.location.search);
   const autoStart = params.get('autostart') === '1';
 
-  if (params.get('handcheck') === '1' && dom.handcheckHud) {
-    dom.handcheckHud.classList.remove('hidden');
-  }
-
-  // Arms-visibility dev toggle (director ruling, Nov 25, 2026): ?arms=1
-  // boots with the fps arms meshes shown; the default is OFF (the rig
-  // hands render badly). This sets the ONE module-level flag in
-  // armsVisibility.js; WeaponSystem applies it whenever the arms rig
-  // loads/binds, so ordering against the async GLB load does not matter.
-  setArmsVisibleFlag(parseArmsVisibleParam(window.location.search));
-
   // Playtest-only virtual gamepad (opt-in): ?virtualpad=1 installs a synthetic
   // Xbox pad + window.__virtualPad driver so a script/AI can pass the controller
   // gate and simulate input. Without the param this import never happens and
@@ -1716,7 +1632,7 @@ async function bootstrap() {
       if (blackBox.door) blackBox.door.hide();
       setPhase('startup');
       try {
-        if (controls) controls.requestPointerLock();
+        if (playerKit) playerKit.requestPointerLock();
         else if (renderer.domElement.requestPointerLock) {
           const p = renderer.domElement.requestPointerLock();
           if (p && p.catch) p.catch(() => {});
@@ -1842,14 +1758,14 @@ async function bootstrap() {
       get convolver() { return cathedralBus.convolver; },
     },
     hallVinyls,
-    onGroundRumble: (strength) => controls.addTrauma(strength),
+    onGroundRumble: (strength) => playerKit?.addTrauma(strength),
     onCrackCase: (caseId) => {
       const entry = vinylPlayer.cases.find((c) => c.slotId === caseId);
       if (entry) flashCaseCrack(entry.slotIndex);
     },
     onSpawnFirstLevelEnemies: () => {
-      if (transformer && transformer.currentMaze) {
-        enemies.spawnFloorWave(transformer.currentMaze, controls.position);
+      if (transformer && transformer.currentMaze && playerKit) {
+        enemies.spawnFloorWave(transformer.currentMaze, playerKit.groundPosition);
       }
     },
     onEnterLevel: () => {
@@ -1868,74 +1784,121 @@ async function bootstrap() {
     worldRayMeshes.push(levelOneCorridor.barrelMesh);
   }
 
-  controls = new PlayerControls(camera, renderer.domElement, {
-    onPointerUnlock: () => {},
-  });
-  controls.worldBounds = LEVEL_ONE_WORLD_BOUNDS;
+  const handleBarrelShot = (barrelObj) => {
+    if (levelOneState.barrelDestroyed) return;
+    if (levelOneState.step === LEVEL_ONE_STEPS.PORTAL_RUMBLE) {
+      levelOneState = advanceLevelOne(levelOneState, 'enter_white_aether').state;
+    }
+    if (levelOneState.step === LEVEL_ONE_STEPS.WHITE_AETHER) {
+      levelOneState = advanceLevelOne(levelOneState, 'enter_castle_room_1').state;
+    }
+    const res = advanceLevelOne(levelOneState, 'shoot_barrel');
+    levelOneState = res.state;
+    playLevelOneEvents(res.events);
+    if (barrelObj) {
+      barrelObj.visible = false;
+      const idx = worldRayMeshes.indexOf(barrelObj);
+      if (idx >= 0) worldRayMeshes.splice(idx, 1);
+      enemies?.spawnBurst(barrelObj.position, 22, 0x5c3a21, 3.8, 9.2);
+    }
+    sfx.playFleshImpact?.(false);
+    if (worldItems) {
+      const { darkoDrop, swordDrop } = LEVEL_ONE_SPAWNS.castleRoom1;
+      worldItems.spawn('darko_drink', darkoDrop.x, darkoDrop.y, darkoDrop.z, 1);
+      worldItems.spawn('sword_pickup', swordDrop.x, swordDrop.y, swordDrop.z, 1);
+    }
+    showWhisper('barrel shattered — claim DARKO and the Sword', 3.0);
+    updateHudReadouts();
+  };
 
-  weapons = new WeaponSystem(camera, {
-    controls,
-    onRecoil: (pitch) => controls.addCameraPunch(pitch),
-    onShake: (trauma) => controls.addTrauma(trauma),
-    onGunshotNoise: () => {
-      if (enemies && controls) {
-        enemies.alertNearbyZombies(controls.position, 24);
-      }
-    },
+  playerKit = new PlayerKitAdapter({
+    scene,
+    camera,
+    domElement: renderer.domElement,
     onHitFeedback: (kind) => {
       triggerCrosshairFeedback(kind);
       if (kind === 'kill') {
         gameState.hitstop = 0.045;
       }
     },
-    onAmmoChanged: () => {
-      updateHudReadouts();
+    onBarrelShot: handleBarrelShot,
+    onInteract: () => {
+      handlePlayerInteract();
     },
-    onReloadStarted: () => {
-      killTaunts?.trigger(TAUNT_POOLS.RELOAD);
-    },
-    onOutOfAmmo: () => {
-      showWhisper('out of shells — draw the sword [y]', 2.6);
-      updateHudReadouts();
-    },
-    onBarrelShot: (barrelObj) => {
-      if (levelOneState.barrelDestroyed) return;
-      if (levelOneState.step === LEVEL_ONE_STEPS.PORTAL_RUMBLE) {
-        levelOneState = advanceLevelOne(levelOneState, 'enter_white_aether').state;
+    onSoundEvent: (payload) => {
+      if (!playerKit || gameState.phase !== 'playing') return;
+      const ev = payload.event;
+      if (ev === 'fire') {
+        sfx.playGunshot();
+        enemies?.alertNearbyZombies(playerKit.groundPosition, 24);
+        const suppressId =
+          levelOneState.step === LEVEL_ONE_STEPS.ROOM_2_ADS_TUTORIAL &&
+          levelOneState.adsPhase === ADS_TUTORIAL_PHASE.AWAITING_AIM
+            ? 'room2_tutorial_zombie'
+            : null;
+        playerKit.resolveDamageHit({
+          isBladeHit: false,
+          weaponId: payload.weaponId,
+          enemyManager: enemies,
+          worldMeshes: worldRayMeshes,
+          suppressEnemyId: suppressId,
+        });
+        pulseRumble(
+          payload.weaponId === 'futuristic' || payload.weaponId === 'rustShotgun'
+            ? 'shotgun_blast'
+            : 'glock',
+          null
+        );
+        updateHudReadouts();
+      } else if (ev === 'blade_hit') {
+        playerKit.resolveDamageHit({
+          isBladeHit: true,
+          weaponId: payload.weaponId,
+          enemyManager: enemies,
+          worldMeshes: worldRayMeshes,
+        });
+      } else if (ev === 'swing') {
+        sfx.playKnifeSlash();
+      } else if (ev === 'pump') {
+        sfx.playShellDrop?.('shotgun');
+      } else if (ev === 'reload_start') {
+        sfx.playReload();
+        killTaunts?.trigger(TAUNT_POOLS.RELOAD);
+        updateHudReadouts();
+      } else if (ev === 'reload_end' || ev === 'weapon_switch') {
+        updateHudReadouts();
+      } else if (ev === 'dry_fire') {
+        sfx.playDryFire();
+        if (levelOneZones?.currentZone === LEVEL_ONE_ZONES.LION_ROOM) {
+          showWhisper('out of shells — draw the sword [6]', 2.4);
+        }
+      } else if (ev === 'footstep') {
+        sfx.playFootstep(playerKit.isSprinting, playerKit.isCrouching);
+      } else if (ev === 'jump') {
+        sfx.playFootstep(true, false);
+      } else if (ev === 'land') {
+        if ((payload.intensity ?? 1) > 0.35) {
+          sfx.playMantleFinish();
+        }
+      } else if (ev === 'slide') {
+        sfx.playCrawlGrunt();
+      } else if (ev === 'flashlight_on' || ev === 'flashlight_off') {
+        sfx.playFlashlightClick();
+        gameState.flashlightOn = ev === 'flashlight_on';
+        updateHudReadouts();
       }
-      if (levelOneState.step === LEVEL_ONE_STEPS.WHITE_AETHER) {
-        levelOneState = advanceLevelOne(levelOneState, 'enter_castle_room_1').state;
-      }
-      const res = advanceLevelOne(levelOneState, 'shoot_barrel');
-      levelOneState = res.state;
-      playLevelOneEvents(res.events);
-      if (barrelObj) {
-        barrelObj.visible = false;
-        const idx = worldRayMeshes.indexOf(barrelObj);
-        if (idx >= 0) worldRayMeshes.splice(idx, 1);
-        enemies?.spawnBurst(barrelObj.position, 22, 0x5c3a21, 3.8, 9.2);
-      }
-      sfx.playFleshImpact?.(false);
-      if (worldItems) {
-        const { darkoDrop, swordDrop } = LEVEL_ONE_SPAWNS.castleRoom1;
-        worldItems.spawn('darko_drink', darkoDrop.x, darkoDrop.y, darkoDrop.z, 1);
-        worldItems.spawn('sword_pickup', swordDrop.x, swordDrop.y, swordDrop.z, 1);
-      }
-      showWhisper('barrel shattered — claim DARKO and the Sword', 3.0);
-      updateHudReadouts();
     },
   });
-  weapons.root.visible = false;
 
   enemies = new EnemyManager(scene, {
-    controls,
+    controls: playerKit,
     get levelOneZones() { return levelOneZones; },
     onPlayerDamaged: (amount) => {
       if (gameState.phase !== 'playing' || gameState.dyingDelay > 0) return;
       gameState.hp = Math.max(0, gameState.hp - amount);
       gameState.damageFlash = 0.95;
       horrorOverlay.triggerDamage(1.0);
-      controls.addTrauma(0.55);
+      playerKit?.addTrauma(0.55);
       sfx.playPlayerHurt();
       updateHudReadouts();
 
@@ -1984,9 +1947,11 @@ async function bootstrap() {
       worldItems.spawn('level_disc', pos.x, 0, pos.z, 1);
       showWhisper(`floor ${level} cleared — a disc rises`, 3.2);
     },
-    onAmmoPickup: (amount) => {
-      weapons.addAmmo(amount);
-      showWhisper(`+${amount} rounds`, 1.6);
+    onAmmoPickup: () => {
+      if (playerKit && playerKit.maxAmmo > 0 && playerKit.ammo < playerKit.maxAmmo) {
+        playerKit.triggerReload('ui');
+      }
+      showWhisper('magazines topped up', 1.6);
       updateHudReadouts();
     },
   });
@@ -2055,7 +2020,7 @@ async function bootstrap() {
       return levelOneState.allLesserEnemiesDead && levelOneState.lesserEnemiesAliveCount === 0;
     },
     onCaseRiseStart: () => {
-      triggerLevelOneRumble((k) => pulseRumble(k, controls), 'case_rise');
+      triggerLevelOneRumble((k) => pulseRumble(k, playerKit), 'case_rise');
       sfx.playTrapdoorMechanism();
     },
     onCaseRiseComplete: () => {
@@ -2078,10 +2043,10 @@ async function bootstrap() {
   });
 
   transformer = new MazeTransformer(scene, library, {
-    onShake: (amt) => controls.addTrauma(amt),
+    onShake: (amt) => playerKit?.addTrauma(amt),
     onDustBurst: (pos, count) => enemies.spawnBurst(pos, count, 0x9b9488, 3.2, 4.2),
     onFloorReady: (maze) => {
-      enemies.spawnFloorWave(maze, controls.position);
+      enemies.spawnFloorWave(maze, playerKit.groundPosition);
       const lesserCount = enemies.enemies.filter((e) => e.kind !== 'lion' && e.alive).length;
       levelOneState = advanceLevelOne(levelOneState, 'set_lesser_enemies_count', { count: lesserCount }).state;
       updateHudReadouts();
@@ -2126,6 +2091,117 @@ function afterDraw(cb) {
   frameId = window.setTimeout(poll, 5);
 }
 
+const _shootableScratch = [];
+let _prevGpView = false;
+let _prevGpMenu = false;
+
+function handlePlayerInteract() {
+  if (gameState.phase !== 'playing') return;
+  if (levelOneState && levelOneState.villainCutsceneActive) return;
+  const interactable = findActiveInteractable();
+  if (!interactable) return;
+
+  if (interactable.type === 'portal') {
+    portalEntered[interactable.gate] = true;
+    interactable.active = false;
+    portalFlashLevel = 0.9;
+    sfx.playTrapdoorMechanism();
+  } else if (interactable.type === 'pickup') {
+    if (interactable.itemId === 'first_disc') {
+      worldItems.removeById(interactable.id);
+      sfx.playAmmoPickup();
+      showWhisper('first disc taken — place it in the unlocked case', 2.6);
+      if (levelOneState) {
+        levelOneState = advanceLevelOne(levelOneState, 'pickup_first_disc').state;
+      }
+    } else if (interactable.itemId === 'golden_vinyl' || interactable.itemId === 'level_disc') {
+      worldItems.removeById(interactable.id);
+      gameState.discsClaimed = (gameState.discsClaimed || 0) + 1;
+      sfx.playAmmoPickup();
+      showWhisper('golden vinyl claimed — return to the hall', 3.0);
+      if (levelOneState) {
+        levelOneState = advanceLevelOne(levelOneState, 'claim_golden_vinyl').state;
+      }
+    } else if (interactable.itemId === 'maze_disc') {
+      worldItems.removeById(interactable.id);
+      sfx.playAmmoPickup();
+      if (levelOneState) {
+        const res = advanceLevelOne(levelOneState, 'collect_maze_disc');
+        levelOneState = res.state;
+        playLevelOneEvents(res.events);
+        const collected = levelOneState.mazeDiscsCollected;
+        const required = levelOneState.mazeDiscsRequired;
+        showWhisper(
+          levelOneState.mazeExitUnlocked
+            ? `maze disc ${collected}/${required} — north trap-door unsealed`
+            : `maze disc ${collected}/${required}`,
+          2.6
+        );
+      }
+    } else if (interactable.itemId === 'pistol_pickup' || interactable.itemId === 'glock_pickup') {
+      worldItems.removeById(interactable.id);
+      sfx.playAmmoPickup();
+      playerKit?.switchWeapon('pistol9mm', 'ui');
+      showWhisper('acquired 9mm pistol', 2.6);
+    } else if (interactable.itemId === 'shotgun_pickup') {
+      worldItems.removeById(interactable.id);
+      sfx.playAmmoPickup();
+      showWhisper('acquired shotgun', 2.6);
+      playerKit?.switchWeapon('futuristic', 'ui');
+      if (levelOneState) {
+        const res = advanceLevelOne(levelOneState, 'pickup_shotgun');
+        levelOneState = res.state;
+        playLevelOneEvents(res.events);
+      }
+    } else if (interactable.itemId === 'sword_pickup') {
+      worldItems.removeById(interactable.id);
+      sfx.playAmmoPickup();
+      showWhisper('acquired sword', 2.6);
+      playerKit?.switchWeapon('sword', 'ui');
+      if (levelOneState) {
+        const res = advanceLevelOne(levelOneState, 'pickup_sword');
+        levelOneState = res.state;
+        playLevelOneEvents(res.events);
+      }
+    } else if (interactable.itemId === 'red_shells' || interactable.itemId === 'shotgun_ammo') {
+      worldItems.removeById(interactable.id);
+      const shells = interactable.qty || 6;
+      if (playerKit && playerKit.maxAmmo > 0 && playerKit.ammo < playerKit.maxAmmo) {
+        playerKit.triggerReload('ui');
+      }
+      sfx.playAmmoPickup();
+      showWhisper(`+${shells} shells — magazines reload freely [r]`, 2.0);
+    } else {
+      const addRes = addItemToInventory(inventory, interactable.itemId, interactable.qty);
+      if (addRes.added > 0) {
+        worldItems.removeById(interactable.id);
+        sfx.playAmmoPickup();
+        if (interactable.itemId === 'darko_drink') {
+          if (levelOneState) {
+            levelOneState = advanceLevelOne(levelOneState, 'pickup_darko_drink').state;
+          }
+          const quip = playerQuips?.triggerQuip('darko_can_pickup');
+          if (!quip) {
+            showWhisper(`pocketed ${interactable.def.name}`, 2.0);
+          }
+        } else {
+          showWhisper(`pocketed ${interactable.def.name}`, 2.0);
+        }
+      } else {
+        showWhisper('satchel is full — drop something [tab]', 2.6);
+      }
+    }
+    updateHudReadouts();
+  } else if (interactable.type === 'vinyl') {
+    handleVinylCaseInteract(interactable.id);
+  } else if (interactable.type === 'terminal') {
+    openTerminalModal();
+  } else if (interactable.type === 'trapdoor') {
+    triggerTrapdoorDescent();
+    updateHudReadouts();
+  }
+}
+
 function stepSimulation(dt) {
   elapsed += dt;
 
@@ -2147,14 +2223,14 @@ function stepSimulation(dt) {
   library.updateEnvironment(
     elapsed,
     dt,
-    isPlayingActive && controls ? controls.position : null,
-    isPlayingActive && controls ? controls.stealth.scattersBats : false
+    isPlayingActive && playerKit ? playerKit.groundPosition : null,
+    isPlayingActive && playerKit ? playerKit.getStealth().scattersBats : false
   );
   horrorOverlay.update(dt);
   vinylPlayer.update(dt);
   worldItems.update(dt, elapsed);
   if (levelOneZones) {
-    levelOneZones.update(dt, controls ? controls.position : camera.position);
+    levelOneZones.update(dt, playerKit ? playerKit.groundPosition : camera.position);
   }
 
   // Motivated lighting: low HDRI PBR fill + player Flashlight leads in the darkened archive
@@ -2223,7 +2299,7 @@ function stepSimulation(dt) {
   }
 
   if (gameState.phase === 'map') {
-    mapOverlay.render({ library, transformer, controls });
+    mapOverlay.render({ library, transformer, controls: playerKit });
     return;
   }
 
@@ -2270,7 +2346,7 @@ function stepSimulation(dt) {
   // without it registering; there was no visible portal moment). The first
   // crossing through the opened gate fires a one-shot white-out so the
   // passage reads as a place, not a corridor.
-  if (!aetherFlashFired && portalOpen && controls && controls.position && controls.position.z > 7.2) {
+  if (!aetherFlashFired && portalOpen && playerKit && playerKit.position.z > 7.2) {
     aetherFlashFired = true;
     aetherFlashLevel = 0.95;
   }
@@ -2313,10 +2389,9 @@ function stepSimulation(dt) {
     !levelOneSpawnFlags.hallBruteSpawned &&
     levelOneState.goldenVinylClaimed &&
     !levelOneState.lionAlive &&
-    controls &&
-    controls.position &&
-    controls.position.z < 7.0 &&
-    Math.abs(controls.position.x) <= 12.0
+    playerKit &&
+    playerKit.position.z < 7.0 &&
+    Math.abs(playerKit.position.x) <= 12.0
   ) {
     levelOneSpawnFlags.hallBruteSpawned = true;
     if (enemies) enemies.spawnHallBrute();
@@ -2375,8 +2450,8 @@ function stepSimulation(dt) {
   // idea what it wanted). A closed gate states its price when the player is
   // close enough to be pushing on it. One whisper at a time, per-gate
   // cooldown so it reminds without nagging.
-  if (levelOneState && controls && controls.position && whisperTimer <= 0) {
-    const p = controls.position;
+  if (levelOneState && playerKit && whisperTimer <= 0) {
+    const p = playerKit.position;
     const gates = [
       {
         id: 'portal',
@@ -2438,16 +2513,31 @@ function stepSimulation(dt) {
       : []
   );
   const prevPosture = document.body.dataset.posture;
-  const prevClimbing = controls.isClimbing;
+  let hudDirty = false;
 
-  if (controls && weapons) {
-    controls.aimLocked = weapons.isCycleLocked;
+  if (playerKit) {
+    playerKit.updateBounds({
+      portalOpen,
+      aetherGateOpen,
+      room1NorthOpen,
+      room2Open: !room2NorthLocked,
+      mazeExitOpen,
+      returnStairOpen,
+    });
+    _shootableScratch.length = 0;
+    if (enemies) {
+      const targets = enemies.getRaycastTargets();
+      for (let i = 0; i < targets.length; i++) _shootableScratch.push(targets[i]);
+    }
+    for (let i = 0; i < worldRayMeshes.length; i++) _shootableScratch.push(worldRayMeshes[i]);
+    playerKit.setShootableMeshes(_shootableScratch);
+    playerKit.update(simDt);
+    gameState.flashlightOn = playerKit.flashlightOn;
   }
-  controls.update(simDt, elapsed, allColliders, library.crawlUnderColliders, library.climbZones);
 
   // VOID FALL: First-person plummet, SPLAT on the pure black bottom, then respawn at current compartment entrance
-  if (controls && controls.position) {
-    const p = controls.position;
+  if (playerKit) {
+    const p = playerKit.position;
     const inHall = p.z <= 7.0 && Math.abs(p.x) <= 12.5;
     const onReturnStair = (p.x >= -17.5 && p.x <= -6.5 && p.z >= 7.0 && p.z <= 65.5);
     const isFalling = p.y < -1.8;
@@ -2457,15 +2547,13 @@ function stepSimulation(dt) {
       voidFallState.active = true;
       voidFallState.phase = 'plummet';
       voidFallState.timer = 0;
-      // Director's ruling (Nov 24, 2026): falling out of the Lion Room
-      // mid-fight resets the fight. Captured here, applied at respawn.
       voidFallState.resetLionFight = Boolean(
         levelOneZones &&
           levelOneZones.currentZone === LEVEL_ONE_ZONES.LION_ROOM &&
           levelOneZones.lionBossStarted &&
           !levelOneZones.lionBossDefeated
       );
-      controls.movementLocked = true;
+      playerKit.setMovementLocked(true);
       const cz = levelOneZones ? levelOneZones.currentZone : 'castle_of_the_dead';
       voidFallState.respawnPoint = COMPARTMENT_RESPAWNS[cz] || COMPARTMENT_RESPAWNS.castle_of_the_dead;
       const vf = getVoidFallOverlay();
@@ -2480,31 +2568,18 @@ function stepSimulation(dt) {
       const vf = getVoidFallOverlay();
 
       if (voidFallState.phase === 'plummet') {
-        const fallSpeed = Math.min(-26.0, (controls.velocity?.y || -4.0) - 44.0 * simDt);
-        if (controls.velocity) controls.velocity.y = fallSpeed;
-        controls.position.y += fallSpeed * simDt;
-
-        if (camera) {
-          camera.rotation.x = THREE.MathUtils.lerp(camera.rotation.x, -Math.PI * 0.44, 0.1);
-        }
-
         if (vf.overlayEl) {
           const darkT = Math.min(0.95, voidFallState.timer / 1.0);
           vf.overlayEl.style.opacity = String(darkT);
         }
-
-        if (controls.position.y <= -20.0 || voidFallState.timer >= 1.25) {
+        if (voidFallState.timer >= 1.25) {
           voidFallState.phase = 'splat';
           voidFallState.timer = 0;
-          controls.position.y = -22.0;
-          if (controls.velocity) controls.velocity.set(0, 0, 0);
-
           try {
             sfx.playBoneBreak?.();
             sfx.playCinemaBoom?.();
           } catch {}
-          controls.addTrauma?.(1.0);
-
+          playerKit.addTrauma(1.0);
           if (vf.overlayEl && vf.splatEl) {
             vf.overlayEl.style.opacity = '1.0';
             vf.splatEl.style.opacity = '1.0';
@@ -2513,10 +2588,11 @@ function stepSimulation(dt) {
       } else if (voidFallState.phase === 'splat') {
         if (voidFallState.timer >= 0.75) {
           const respawn = voidFallState.respawnPoint;
-          controls.position.set(respawn.x, respawn.y, respawn.z);
-          controls.velocity?.set(0, 0, 0);
-          if (camera) camera.rotation.x = 0;
-          controls.movementLocked = false;
+          playerKit.setPose({
+            position: { x: respawn.x, y: playerKit.standEyeHeight, z: respawn.z },
+            pitch: 0,
+          });
+          playerKit.setMovementLocked(false);
           voidFallState.active = false;
           voidFallState.phase = 'idle';
           if (voidFallState.resetLionFight) {
@@ -2543,9 +2619,10 @@ function stepSimulation(dt) {
 
   // §A.5 / P1: Castle Room 2 entry — spawn lone tutorial zombie + start diegetic LT->RT ADS tutorial
   if (
+    playerKit &&
     !levelOneSpawnFlags.room2Triggered &&
-    controls.position.z >= LEVEL_ONE_SPAWNS.castleRoom2.bounds.minZ &&
-    controls.position.z < LEVEL_ONE_SPAWNS.castleRoom2.bounds.maxZ
+    playerKit.position.z >= LEVEL_ONE_SPAWNS.castleRoom2.bounds.minZ &&
+    playerKit.position.z < LEVEL_ONE_SPAWNS.castleRoom2.bounds.maxZ
   ) {
     levelOneSpawnFlags.room2Triggered = true;
     const tutZ = enemies.spawnRoom2TutorialZombie();
@@ -2557,25 +2634,24 @@ function stepSimulation(dt) {
     levelOneState = tutRes.state;
     playLevelOneEvents(tutRes.events);
     if (levelOneState.step === LEVEL_ONE_STEPS.ROOM_2_ADS_TUTORIAL) {
-      if (weapons.weaponsUnlocked.shotgun && weapons.activeWeapon !== 'shotgun') {
-        weapons.equip('shotgun');
+      const wId = playerKit.weaponId;
+      if (wId === 'flashlight' || wId === 'unarmed' || wId === 'sword') {
+        playerKit.switchWeapon('futuristic', 'ui');
       }
       if (tutZ) {
-        const dx = tutZ.group.position.x - controls.position.x;
-        const dz = tutZ.group.position.z - controls.position.z;
-        controls.yaw = Math.atan2(-dx, -dz);
-        controls.pitch = -0.02;
+        const p = playerKit.position;
+        const dx = tutZ.group.position.x - p.x;
+        const dz = tutZ.group.position.z - p.z;
+        playerKit.setPose({ yaw: Math.atan2(-dx, -dz), pitch: -0.02 });
       }
-      controls.movementLocked = true;
+      playerKit.setMovementLocked(true);
     }
   }
 
   if (levelOneState && levelOneState.villainCutsceneActive) {
-    if (controls) {
-      controls.enabled = false;
-    }
-    if (weapons) {
-      weapons.root.visible = false;
+    if (playerKit) {
+      playerKit.setMovementLocked(true);
+      playerKit.setViewmodelVisible(false);
     }
 
     // Check gamepad skip (A or Start)
@@ -2608,7 +2684,6 @@ function stepSimulation(dt) {
           );
 
       if (levelOneState.villainCutscenePhase === VILLAIN_CUTSCENE_PHASE.IDLE) {
-        // Beat 1: Low-angle wide establishing shot framing archway and distant lion
         if (lion) {
           lion.state = LION_STATES.IDLE;
           lion.setCutsceneStalk(false);
@@ -2616,7 +2691,6 @@ function stepSimulation(dt) {
         camera.position.set(0, 1.2, 53);
         camera.lookAt(lionPos.x, 1.4, lionPos.z);
       } else if (levelOneState.villainCutscenePhase === VILLAIN_CUTSCENE_PHASE.APPROACH) {
-        // Beat 2: Slow tracking shot, lion stalks forward under LUNGE flag
         if (lion) {
           lion.state = LION_STATES.LUNGE;
           lion.setCutsceneStalk(true);
@@ -2625,7 +2699,6 @@ function stepSimulation(dt) {
         camera.position.set(Math.sin(t * 0.9) * 1.5, 1.35, 54 + t * 0.8);
         camera.lookAt(lionPos.x, 1.3, lionPos.z);
       } else if (levelOneState.villainCutscenePhase === VILLAIN_CUTSCENE_PHASE.ROAR) {
-        // Beat 3: Medium-close angle with micro-shake (<= 0.04) tied to roar peak
         if (lion) {
           lion.state = LION_STATES.ROAR;
           lion.setCutsceneStalk(false);
@@ -2634,7 +2707,6 @@ function stepSimulation(dt) {
         camera.position.set(shake, 1.35 + shake, lionPos.z - 3.5);
         camera.lookAt(lionPos.x, 1.4, lionPos.z);
       } else if (levelOneState.villainCutscenePhase === VILLAIN_CUTSCENE_PHASE.LUNGE) {
-        // Beat 4: Pullback tactical frame
         if (lion) {
           lion.state = LION_STATES.LUNGE;
           lion.setCutsceneStalk(false);
@@ -2646,62 +2718,52 @@ function stepSimulation(dt) {
           lion.state = LION_STATES.IDLE;
           lion.setCutsceneStalk(false);
         }
-        if (controls) {
-          controls.enabled = true;
-        }
-        if (weapons) {
-          weapons.root.visible = true;
+        if (playerKit) {
+          playerKit.setMovementLocked(false);
+          playerKit.setViewmodelVisible(true);
         }
       }
     }
+  } else if (playerKit) {
+    playerKit.setViewmodelVisible(true);
   }
 
-  // Hide weapon viewmodel while climbing hand-over-hand so first-person gloved hands own the view
-  weapons.root.visible = !controls.isClimbing && (!levelOneState || !levelOneState.villainCutsceneActive);
-
-  const act = controls.actions;
-  let hudDirty = prevClimbing !== controls.isClimbing;
-
-  if (act.togglePause) {
-    controls.resetFrameActions();
-    setPhase('paused');
-    return;
+  // Gamepad View (8 = Map) / Menu (9 = Pause)
+  let useXboxIcons = false;
+  const pads = navigator.getGamepads ? navigator.getGamepads() : null;
+  if (pads) {
+    for (let i = 0; i < pads.length; i++) {
+      const pad = pads[i];
+      if (!pad || !pad.connected) continue;
+      useXboxIcons = true;
+      const viewPressed = Boolean(pad.buttons?.[8]?.pressed);
+      const menuPressed = Boolean(pad.buttons?.[9]?.pressed);
+      if (menuPressed && !_prevGpMenu) {
+        _prevGpMenu = true;
+        _prevGpView = viewPressed;
+        setPhase('paused');
+        return;
+      }
+      if (viewPressed && !_prevGpView) {
+        _prevGpView = true;
+        _prevGpMenu = menuPressed;
+        setPhase('map');
+        return;
+      }
+      _prevGpView = viewPressed;
+      _prevGpMenu = menuPressed;
+      break;
+    }
   }
 
-  if (act.toggleMap && !controls.isClimbing) {
-    controls.resetFrameActions();
-    setPhase('map');
-    return;
-  }
-
-  if (act.toggleInventory && !controls.isClimbing) {
-    controls.resetFrameActions();
-    setPhase('inventory');
-    return;
-  }
-
-  if (act.flashlight) {
-    // Flashlight owner (overlap O1, Nov 24, 2026): main toggles the
-    // state and the frame loop damps the shared light's intensity.
-    // weapons.js has a dormant second consumer of this same flag —
-    // it stays inert ONLY because resetFrameActions() runs before
-    // weapons.update() in the frame loop. That order is pinned by
-    // loopFixes.test.mjs; do not reorder without retiring a consumer.
-    gameState.flashlightOn = !gameState.flashlightOn;
-    sfx.playFlashlightClick();
-    hudDirty = true;
-  }
-
-  const useXboxIcons = controls.gamepadConnected;
-  let tutorialBlockedFire = false;
+  const firedThisFrame = playerKit ? playerKit.consumeFiredThisFrame() : false;
 
   // Room 2 diegetic ADS tutorial (input-gated LT -> LT+RT -> brain splatter -> unskippable wipe)
   if (levelOneState.step === LEVEL_ONE_STEPS.ROOM_2_ADS_TUTORIAL) {
-    controls.movementLocked = true;
-    tutorialBlockedFire = true;
+    playerKit?.setMovementLocked(true);
     const adsRes = stepAdsTutorial(levelOneState, {
-      ltHeld: Boolean(controls.isAiming),
-      rtPressed: Boolean(act.fire),
+      ltHeld: Boolean(playerKit?.isAds),
+      rtPressed: firedThisFrame,
     });
     levelOneState = adsRes.state;
 
@@ -2717,7 +2779,6 @@ function stepSimulation(dt) {
 
     if (adsRes.events.some((e) => e.type === 'zombie_headshot')) {
       if (dom.adsTutorialBanner) dom.adsTutorialBanner.style.opacity = '0';
-      weapons.triggerPrimary(enemies, worldRayMeshes);
       const tutZ = levelOneSpawnFlags.room2TutorialZombie;
       if (tutZ && tutZ.alive) {
         camera.getWorldDirection(_camForward);
@@ -2735,19 +2796,17 @@ function stepSimulation(dt) {
       }
       const wipeStart = advanceLevelOne(levelOneState, 'start_brain_wipe');
       levelOneState = wipeStart.state;
-      weapons.startGrab({ profile: 'fast', pose: 'open' });
       hudDirty = true;
     }
   } else if (levelOneState.step === LEVEL_ONE_STEPS.BRAIN_WIPE) {
-    controls.movementLocked = true;
-    tutorialBlockedFire = true;
+    playerKit?.setMovementLocked(true);
     const wipeRes = stepBrainWipe(levelOneState, dt, 1.35);
     levelOneState = wipeRes.state;
     if (dom.brainSplatterOverlay) {
       dom.brainSplatterOverlay.style.opacity = String(Math.max(0, levelOneState.brainSplatterOpacity));
     }
     if (levelOneState.step === LEVEL_ONE_STEPS.MAZE_ONE) {
-      controls.movementLocked = false;
+      playerKit?.setMovementLocked(false);
       if (dom.brainSplatterOverlay) dom.brainSplatterOverlay.style.opacity = '0';
       playLevelOneEvents(wipeRes.events);
       showWhisper('visor clear — Maze One lies ahead', 2.8);
@@ -2757,64 +2816,12 @@ function stepSimulation(dt) {
     dom.adsTutorialBanner.style.opacity = '0';
   }
 
-  if (!controls.isClimbing) {
-    if (act.holster) {
-      weapons.toggleHolster();
-      hudDirty = true;
-    }
-    if (act.inspect) {
-      weapons.triggerInspect();
-    }
-    if (act.shove) {
-      if (controls.consumeShoveStamina()) {
-        weapons.triggerShove();
-        sfx.playShoveGrunt();
-        camera.getWorldDirection(_camForward);
-        const hitShove = enemies.handleShove(camera.position, _camForward, 2.65);
-        controls.addTrauma(hitShove ? 0.28 : 0.14);
-        hudDirty = true;
-      } else {
-        showWhisper('out of breath', 1.4);
-      }
-    }
-    if (act.equipGlock && weapons.pistolOwned) {
-      weapons.equip('glock');
-      hudDirty = true;
-    }
-    if (act.equipKnife) {
-      weapons.equip('knife');
-      hudDirty = true;
-    }
-    if (act.swapWeapon) {
-      weapons.swap();
-      hudDirty = true;
-    }
-    if (act.reload) {
-      if (weapons.startReload()) hudDirty = true;
-    }
-    if (act.quickKnife) {
-      weapons.triggerKnifeSlash(true);
-      hudDirty = true;
-    }
-    if (act.fire && !tutorialBlockedFire && !weapons.isCycleLocked) {
-      if (weapons.triggerPrimary(enemies, worldRayMeshes)) hudDirty = true;
-    }
-  }
-
-  // Contextual prompts: Interactable pickup/vinyl/terminal/trapdoor OR Climb ledge OR Crawl arch
+  // Contextual prompts: Interactable pickup/vinyl/terminal/trapdoor OR barrel hint
   const interactable = findActiveInteractable();
-  const climbCandidate = controls.findClimbableLedge(library.climbZones);
   gameState.currentInteractable = interactable;
-  controls.interactContextAvailable = Boolean(interactable);
 
   if (interactable) {
     dom.interactText.innerHTML = formatPromptHtml(interactable.getPrompt(), useXboxIcons);
-    dom.interactPrompt.style.opacity = '1';
-  } else if (climbCandidate) {
-    dom.interactText.innerHTML = formatPromptHtml('[space] climb ledge', useXboxIcons);
-    dom.interactPrompt.style.opacity = '1';
-  } else if (isNearCrawlArch()) {
-    dom.interactText.innerHTML = formatPromptHtml('[c] duck to crawl under', useXboxIcons);
     dom.interactPrompt.style.opacity = '1';
   } else if (
     levelOneState.step === LEVEL_ONE_STEPS.CASTLE_ROOM_1 &&
@@ -2828,166 +2835,19 @@ function stepSimulation(dt) {
     dom.interactPrompt.style.opacity = '0';
   }
 
-  if (act.cycleVinyl && interactable && interactable.type === 'vinyl' && !controls.isClimbing) {
-    vinylPlayer.cycleCaseTrack(interactable.id);
-  }
-
-  if (act.interact && interactable && !controls.isClimbing) {
-    if (interactable.type === 'portal') {
-      // Press-X portal entry (Lotty, Nov 23, 2026): the latch opens the
-      // gate — mesh and collider follow in the gate block next frame.
-      portalEntered[interactable.gate] = true;
-      interactable.active = false;
-      // Transit event (HL/Halo portal trace adopt #5, visual half): a
-      // brief purple arrival shimmer as the press-X jump lands. The
-      // transit zap SOUND is an Audio Engine follow-up — not built here.
-      portalFlashLevel = 0.9;
-      sfx.playTrapdoorMechanism();
-    } else if (interactable.type === 'pickup') {
-      const applyPickupEffect = () => {
-        if (interactable.itemId === 'first_disc') {
-          worldItems.removeById(interactable.id);
-          sfx.playAmmoPickup();
-          showWhisper('first disc taken — place it in the unlocked case', 2.6);
-          if (levelOneState) {
-            levelOneState = advanceLevelOne(levelOneState, 'pickup_first_disc').state;
-          }
-          hudDirty = true;
-        } else if (interactable.itemId === 'golden_vinyl' || interactable.itemId === 'level_disc') {
-          // Post-boss level disc is claimed, never pocketed — advances claim_golden_vinyl (NOT pickup_first_disc).
-          worldItems.removeById(interactable.id);
-          gameState.discsClaimed = (gameState.discsClaimed || 0) + 1;
-          sfx.playAmmoPickup();
-          showWhisper('golden vinyl claimed — return to the hall', 3.0);
-          if (levelOneState) {
-            levelOneState = advanceLevelOne(levelOneState, 'claim_golden_vinyl').state;
-          }
-          hudDirty = true;
-        } else if (interactable.itemId === 'maze_disc') {
-          worldItems.removeById(interactable.id);
-          sfx.playAmmoPickup();
-          if (levelOneState) {
-            const res = advanceLevelOne(levelOneState, 'collect_maze_disc');
-            levelOneState = res.state;
-            playLevelOneEvents(res.events);
-            const collected = levelOneState.mazeDiscsCollected;
-            const required = levelOneState.mazeDiscsRequired;
-            showWhisper(
-              levelOneState.mazeExitUnlocked
-                ? `maze disc ${collected}/${required} — north trap-door unsealed`
-                : `maze disc ${collected}/${required}`,
-              2.6
-            );
-          }
-          hudDirty = true;
-        } else if (interactable.itemId === 'pistol_pickup' || interactable.itemId === 'glock_pickup') {
-          worldItems.removeById(interactable.id);
-          sfx.playAmmoPickup();
-          weapons.unlockWeapon('glock');
-          showWhisper('acquired glock 19', 2.6);
-          hudDirty = true;
-        } else if (interactable.itemId === 'shotgun_pickup') {
-          worldItems.removeById(interactable.id);
-          sfx.playAmmoPickup();
-          showWhisper('acquired Balistucia shotgun', 2.6);
-          weapons.unlockWeapon('shotgun');
-          if (levelOneState) {
-            const res = advanceLevelOne(levelOneState, 'pickup_shotgun');
-            levelOneState = res.state;
-            playLevelOneEvents(res.events);
-          }
-          hudDirty = true;
-        } else if (interactable.itemId === 'sword_pickup') {
-          worldItems.removeById(interactable.id);
-          sfx.playAmmoPickup();
-          showWhisper('acquired hero sword', 2.6);
-          weapons.unlockWeapon('sword');
-          if (levelOneState) {
-            const res = advanceLevelOne(levelOneState, 'pickup_sword');
-            levelOneState = res.state;
-            playLevelOneEvents(res.events);
-          }
-          hudDirty = true;
-        } else if (interactable.itemId === 'red_shells' || interactable.itemId === 'shotgun_ammo') {
-          worldItems.removeById(interactable.id);
-          const shells = interactable.qty || 6;
-          weapons.shotgunReserve = Math.min(48, weapons.shotgunReserve + shells);
-          sfx.playAmmoPickup();
-          showWhisper(`+${shells} shells loaded`, 2.0);
-          hudDirty = true;
-        } else {
-          const addRes = addItemToInventory(inventory, interactable.itemId, interactable.qty);
-          if (addRes.added > 0) {
-            worldItems.removeById(interactable.id);
-            sfx.playAmmoPickup();
-            if (interactable.itemId === 'darko_drink') {
-              if (levelOneState) {
-                levelOneState = advanceLevelOne(levelOneState, 'pickup_darko_drink').state;
-              }
-              const quip = playerQuips?.triggerQuip('darko_can_pickup');
-              if (!quip) {
-                showWhisper(`pocketed ${interactable.def.name}`, 2.0);
-              }
-            } else {
-              showWhisper(`pocketed ${interactable.def.name}`, 2.0);
-            }
-            hudDirty = true;
-          } else {
-            showWhisper('satchel is full — drop something [tab]', 2.6);
-          }
-        }
-        // Flush HUD immediately so async grab onClose callbacks update weapon, ammo, and disc counters.
-        updateHudReadouts();
-      };
-
-      // Hero pickups play the unskippable first-person grab (Stage 4 Slot 2);
-      // the effect lands at the take moment (onClose), not at button press.
-      // Small curiosities keep the instant take.
-      const GRAB_PICKUPS = {
-        first_disc: { profile: 'fast', pose: 'discPinch' },
-        golden_vinyl: { profile: 'fast', pose: 'discPinch' },
-        level_disc: { profile: 'fast', pose: 'discPinch' },
-        maze_disc: { profile: 'fast', pose: 'discPinch' },
-        pistol_pickup: { profile: 'fast', pose: 'gripWrap' },
-        glock_pickup: { profile: 'fast', pose: 'gripWrap' },
-        shotgun_pickup: { profile: 'fast', pose: 'gripWrap' },
-        sword_pickup: { profile: 'fast', pose: 'swordGrip' },
-        darko_drink: { profile: 'fast', pose: 'canGrip' },
-      };
-      const grabCfg = GRAB_PICKUPS[interactable.itemId];
-      if (interactable.grabPending) {
-        // Hands are already reaching for this one — ignore repeat presses.
-      } else if (grabCfg && weapons.startGrab({ ...grabCfg, onClose: applyPickupEffect })) {
-        interactable.grabPending = true;
-      } else {
-        applyPickupEffect();
-      }
-    } else if (interactable.type === 'vinyl') {
-      handleVinylCaseInteract(interactable.id);
-    } else if (interactable.type === 'terminal') {
-      openTerminalModal();
-    } else if (interactable.type === 'trapdoor') {
-      triggerTrapdoorDescent();
-      hudDirty = true;
-    }
-  }
-
-  if (transformer.isPlayerInTrapdoorDescent(controls.position)) {
+  if (playerKit && transformer.isPlayerInTrapdoorDescent(playerKit.groundPosition)) {
     triggerTrapdoorDescent();
     hudDirty = true;
   }
 
-  controls.resetFrameActions();
-
-  const wasReloading = weapons.reloading;
-  const wasCycleLocked = weapons.isCycleLocked;
-  weapons.update(simDt, controls, enemies, gameState.hp);
-  updateHandcheckHud();
-  if (wasReloading && !weapons.reloading) hudDirty = true;
-  if (wasCycleLocked !== weapons.isCycleLocked) hudDirty = true;
-  if (weapons.activeWeapon !== lastHudWeapon) {
-    lastHudWeapon = weapons.activeWeapon;
-    hudDirty = true;
+  if (playerKit) {
+    const st = playerKit.getState();
+    if (st.weaponId !== lastHudWeapon || st.ammo !== lastHudAmmo || st.isReloading !== lastHudReloading) {
+      lastHudWeapon = st.weaponId;
+      lastHudAmmo = st.ammo;
+      lastHudReloading = st.isReloading;
+      hudDirty = true;
+    }
   }
 
   const enemyTimeScale = levelOneState.adsPaused
@@ -2998,18 +2858,18 @@ function stepSimulation(dt) {
   enemies.update(
     simDt,
     elapsed,
-    controls.position,
+    playerKit ? playerKit.groundPosition : camera.position,
     allColliders,
     enemyTimeScale,
-    controls.stealth,
-    controls.yaw,
+    playerKit ? playerKit.getStealth() : null,
+    playerKit ? playerKit.yaw : 0,
     LEVEL_ONE_WORLD_BOUNDS
   );
 
   // Feed nearest Archive Ghost distance to horror vignette shader overlay & apply returned shake vector
-  const nearestGhostDist = enemies.getNearestGhostDistance(controls.position);
+  const nearestGhostDist = enemies.getNearestGhostDistance(playerKit ? playerKit.groundPosition : camera.position);
   const ghostShake = horrorOverlay.setNearestGhostDistance(nearestGhostDist, 4.0);
-  controls.setExternalShake(ghostShake);
+  playerKit?.setExternalShake(ghostShake);
 
   if (gameState.damageFlash > 0) {
     gameState.damageFlash = Math.max(0, gameState.damageFlash - dt * 2.4);
@@ -3043,10 +2903,17 @@ function stepSimulation(dt) {
   }
   // ADS crosshair ruling (Nov 23, 2026): hide the screen-center dot once the
   // sights are mostly up; the sight picture is the reticle in ADS.
-  dom.crosshair.classList.toggle('ads-hidden', (controls.aimAmount || 0) > 0.5);
+  dom.crosshair.classList.toggle('ads-hidden', Boolean(playerKit?.isAds));
 
-  const nextPosture = controls.shrinkTimer > 0 ? 'shrunk' : controls.isCrawling ? 'crawling' : 'standing';
-  if (hudDirty || prevPosture !== nextPosture || gameState.timeSlowTimer > 0 || controls.shrinkTimer > 0) {
+  const kitSt = playerKit ? playerKit.getState() : null;
+  const nextPosture = kitSt
+    ? kitSt.isSliding
+      ? 'sliding'
+      : kitSt.isCrouching
+        ? 'crawling'
+        : 'standing'
+    : 'standing';
+  if (hudDirty || prevPosture !== nextPosture || gameState.timeSlowTimer > 0) {
     updateHudReadouts();
   }
 }

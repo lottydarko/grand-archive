@@ -29,8 +29,7 @@ test('startNewRun reaches every subsystem clear', () => {
     'createLevelOneState(',
     'enemies.resetStats()',
     'worldItems.spawnArchiveStashes()',
-    'weapons.reset()',
-    'controls.resetSpawn()',
+    'playerKit.resetSpawn(',
   ]) {
     assert.ok(body.includes(call), `startNewRun must call ${call}`);
   }

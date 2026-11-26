@@ -17,20 +17,12 @@ import {
 
 const srcDir = fileURLToPath(new URL('..', import.meta.url));
 
-test('model completeness: the src scan enumerates the weapon models the loaders request', () => {
+test('model completeness: the src scan enumerates the runtime models the loaders request', () => {
   const modelPaths = collectRuntimeModelPaths(srcDir);
-  // The exact regression: these two paths are requested by weapons.js and
-  // pickups.js and must always be in the enumerated set.
   assert.ok(
     modelPaths.includes('models/weapons/balistucia.glb'),
     'scan must find models/weapons/balistucia.glb among the tryLoadModel paths in src/'
   );
-  assert.ok(
-    modelPaths.includes('models/weapons/shotgun_shell.glb'),
-    'scan must find models/weapons/shotgun_shell.glb among the tryLoadModel paths in src/'
-  );
-  // Spot-check the hero routes too, so a scanner regression cannot pass
-  // by enumerating only the weapons directory.
   assert.ok(modelPaths.includes('models/heroes/zombie.glb'));
   assert.ok(modelPaths.includes('models/heroes/glock.glb'));
 });
