@@ -28,6 +28,7 @@ import {
 } from './world/lightingConfig.js';
 import { WorldItemManager } from './world/pickups.js';
 import { createSoftRadialTexture } from './world/textures.js';
+import { CinematicPostProcessor } from './fps/playerKit.ts';
 import { PlayerKitAdapter } from './player/kitAdapter.js';
 import {
   createInventory,
@@ -122,6 +123,7 @@ scene.add(camera);
 // Motivated Player Flashlight (SpotLight + floating beam motes)
 const playerAuraLight = new THREE.PointLight(0xdcc8ad, 0.0, 4.2, 2.0);
 playerAuraLight.position.set(0.1, -0.06, -0.18);
+playerAuraLight.layers.enable(1);
 camera.add(playerAuraLight);
 
 const flashlight = new THREE.SpotLight(0xeef3fa, 0, FLASHLIGHT_DISTANCE, FLASHLIGHT_ANGLE, FLASHLIGHT_PENUMBRA, FLASHLIGHT_DECAY);
@@ -207,6 +209,12 @@ viewportEl.appendChild(renderer.domElement);
 
 // Low-intensity real HDRI PMREM lighting (abandoned hall main floors, boiler room basement Floor 2+)
 const hdriLighting = new HdriLightingManager(renderer, scene);
+
+const postProcessor = new CinematicPostProcessor(renderer, window.innerWidth, window.innerHeight);
+let lastPostPixelRatio = renderer.getPixelRatio();
+let postProcessRenderCount = 0;
+let peakPostFlashIntensity = 0;
+let lastPostParams = null;
 
 renderer.domElement.addEventListener('webglcontextlost', (e) => {
   e.preventDefault();
@@ -1478,6 +1486,12 @@ window.__archiveTest = {
     mazeDiscsRequired: levelOneState ? levelOneState.mazeDiscsRequired : 3,
     mazeExitUnlocked: levelOneState ? Boolean(levelOneState.mazeExitUnlocked) : false,
     ammo: playerKit ? `${playerKit.ammo}/${playerKit.maxAmmo}` : '0/0',
+    postProcess: {
+      active: Boolean(postProcessor),
+      renderCount: postProcessRenderCount,
+      peakFlashIntensity: peakPostFlashIntensity,
+      lastParams: lastPostParams,
+    },
     bloodPoolCount: enemies ? enemies.bloodPools.length : 0,
     bloodPoolScales: enemies ? enemies.bloodPools.map((bp) => Number(bp.mesh.scale.x.toFixed(2))) : [],
     zombies: enemies
@@ -1598,6 +1612,8 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setPixelRatio(resScaler.scale); // Hold the PS2 render scale across resizes
   renderer.setSize(window.innerWidth, window.innerHeight);
+  postProcessor.setSize(window.innerWidth, window.innerHeight);
+  lastPostPixelRatio = renderer.getPixelRatio();
 });
 
 async function bootstrap() {
@@ -2941,7 +2957,39 @@ function tick() {
     }
   } else if (library) {
     if (resScaler.shouldRender()) {
-      renderer.render(scene, camera);
+      const curPr = renderer.getPixelRatio();
+      if (curPr !== lastPostPixelRatio) {
+        postProcessor.setSize(window.innerWidth, window.innerHeight);
+        lastPostPixelRatio = curPr;
+      }
+      if (gameState.phase === 'drive') {
+        renderer.render(scene, camera);
+      } else {
+        const kitSt = gameState.phase === 'playing' && playerKit ? playerKit.getState() : null;
+        const postParams = kitSt
+          ? {
+              motionX: kitSt.cameraMotionX,
+              motionY: kitSt.cameraMotionY,
+              speedBlur: kitSt.speedBlur,
+              flashIntensity: kitSt.flashIntensity,
+              splitViewmodelLayer: true,
+              elapsed,
+            }
+          : {
+              motionX: 0,
+              motionY: 0,
+              speedBlur: 0,
+              flashIntensity: 0,
+              splitViewmodelLayer: true,
+              elapsed,
+            };
+        postProcessor.render(scene, camera, postParams);
+        if (kitSt) {
+          postProcessRenderCount += 1;
+          peakPostFlashIntensity = Math.max(peakPostFlashIntensity, kitSt.flashIntensity);
+          lastPostParams = postParams;
+        }
+      }
       renderedWebGl = true;
     }
   }
@@ -2961,6 +3009,7 @@ function startLoop() {
 window.addEventListener('beforeunload', () => {
   cancelAnimationFrame(frameId);
   clearTimeout(frameId);
+  postProcessor.dispose();
   renderer.dispose();
 });
 

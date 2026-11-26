@@ -320,6 +320,7 @@ export class PlayerKitAdapter {
       onSoundEvent: (payload) => this._handleSoundEvent(payload),
       onInteract: (source) => this._handleInteract(source),
     });
+    this.kit.setViewmodelLayer?.(1);
     this._syncViewmodelVisibility();
   }
 
